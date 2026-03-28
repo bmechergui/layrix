@@ -75,15 +75,19 @@ layrix/
 ### Prerequisites
 
 - Node.js ≥ 20
-- pnpm ≥ 9
+- pnpm ≥ 9 — **required** (`npm install` breaks the workspace)
 - Docker (for KiCad service)
+
+```bash
+npm install -g pnpm   # install pnpm if needed
+```
 
 ### Install
 
 ```bash
 git clone https://github.com/bmechergui/layrix.git
 cd layrix
-pnpm install
+pnpm install          # always use pnpm — never npm install
 ```
 
 ### Environment Variables
