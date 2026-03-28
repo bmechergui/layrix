@@ -1,0 +1,44 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash install.sh typescript)",
+      "Bash(bash install.sh python)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(xargs curl:*)",
+      "Bash(mkdir -p \"C:/Users/Mechegui/.claude/skills/prompt-master\")",
+      "Bash(mv \"C:/Users/Mechegui/.claude/skills/prompt-master.md\" \"C:/Users/Mechegui/.claude/skills/prompt-master/SKILL.md\")",
+      "WebFetch(domain:skills.sh)",
+      "Bash(npx skills:*)",
+      "Bash(\"C:/Users/Mechegui/Desktop/dev/layrix/.prettierrc\":*)",
+      "Bash(xargs grep:*)",
+      "Bash(/dev/null find:*)",
+      "Bash(pnpm install:*)",
+      "Bash(npm --version)",
+      "Bash(grep -r \"shadcn\\\\|@radix-ui\\\\|components/ui\" C:/Users/Mechegui/Desktop/dev/layrix/apps/ --include=*.tsx --include=*.ts -l)",
+      "Bash(grep:*)",
+      "Bash(npx shadcn@latest init --defaults --yes)",
+      "Bash(pkill -f \"next dev\")",
+      "Bash(cd:*)",
+      "Bash(pnpm type-check:*)",
+      "Bash(netstat -ano)",
+      "Bash(findstr \":300\")",
+      "Bash(npm run:*)",
+      "Bash(findstr \":3333\")",
+      "Bash(taskkill /PID 34800 /F)",
+      "Bash(cmd /c \"taskkill /PID 34800 /F\")",
+      "Bash(cmd /c \"taskkill /PID 34800 /F 2>&1\")",
+      "Bash(cmd /c \"taskkill /F /PID 34800\")",
+      "Bash(powershell -Command \"Stop-Process -Id 34800 -Force -ErrorAction SilentlyContinue; Write-Host done\")",
+      "Bash(powershell -Command \"Get-NetTCPConnection -LocalPort 3333 -ErrorAction SilentlyContinue | Select-Object OwningProcess\")",
+      "Bash(powershell -Command \"Remove-Item -Recurse -Force 'C:\\\\Users\\\\Mechegui\\\\Desktop\\\\dev\\\\layrix\\\\apps\\\\landing' -ErrorAction SilentlyContinue; Remove-Item -Recurse -Force 'C:\\\\Users\\\\Mechegui\\\\Desktop\\\\dev\\\\layrix\\\\apps\\\\dashboard' -ErrorAction SilentlyContinue; Write-Host done\")",
+      "Bash(cmd /c \"rd /s /q \"\"C:\\\\Users\\\\Mechegui\\\\Desktop\\\\dev\\\\layrix\\\\apps\\\\landing\"\" && rd /s /q \"\"C:\\\\Users\\\\Mechegui\\\\Desktop\\\\dev\\\\layrix\\\\apps\\\\dashboard\"\"\")"
+    ]
+  },
+  "enabledPlugins": {
+    "skill-creator@claude-plugins-official": true,
+    "supabase@claude-plugins-official": true,
+    "pyright-lsp@claude-plugins-official": true,
+    "agent-sdk-dev@claude-plugins-official": true,
+    "mcp-server-dev@claude-plugins-official": true
+  }
+}

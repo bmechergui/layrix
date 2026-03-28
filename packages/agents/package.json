@@ -1,0 +1,27 @@
+{
+  "name": "@layrix/agents",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@layrix/db": "workspace:*",
+    "@anthropic-ai/sdk": "^0.28.0",
+    "bullmq": "^5.0.0",
+    "ioredis": "^5.3.0",
+    "zod": "^3.23.0",
+    "pino": "^9.0.0"
+  },
+  "devDependencies": {
+    "@layrix/config-typescript": "workspace:*",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}

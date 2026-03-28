@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Backgrounds */
+    --bg-base: #080808;
+    --bg-surface-1: #111111;
+    --bg-surface-2: #1a1a1a;
+    --bg-surface-3: #242424;
+
+    /* Borders */
+    --border: #2e2e2e;
+    --border-hi: #3d3d3d;
+
+    /* Cyan brand */
+    --cyan-400: #00c2ff;
+    --cyan-500: #00a3d9;
+    --cyan-600: #0082ad;
+
+    /* Copper */
+    --copper-300: #f0a855;
+    --copper-400: #d4820a;
+    --copper-500: #b06a08;
+
+    /* Semantic */
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --error: #ef4444;
+
+    /* Text */
+    --text-primary: #ffffff;
+    --text-secondary: #a1a1aa;
+    --text-muted: #71717a;
+    --text-disabled: #3f3f46;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-bg-base text-text-primary;
+    font-family: var(--font-geist-sans), system-ui, sans-serif;
+  }
+
+  /* PCB grid background utility */
+  .pcb-grid {
+    background-image:
+      linear-gradient(rgba(0, 194, 255, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 194, 255, 0.04) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  /* Glow effects */
+  .glow-cyan {
+    box-shadow: 0 0 20px rgba(0, 194, 255, 0.35);
+  }
+
+  .glow-cyan-sm {
+    box-shadow: 0 0 10px rgba(0, 194, 255, 0.2);
+  }
+
+  .text-gradient-cyan-copper {
+    background: linear-gradient(135deg, #00c2ff 0%, #d4820a 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+}
+
+@layer utilities {
+  .bg-bg-base { background-color: var(--bg-base); }
+  .bg-bg-1 { background-color: var(--bg-surface-1); }
+  .bg-bg-2 { background-color: var(--bg-surface-2); }
+  .bg-bg-3 { background-color: var(--bg-surface-3); }
+  .text-primary { color: var(--text-primary); }
+  .text-secondary { color: var(--text-secondary); }
+  .text-muted { color: var(--text-muted); }
+  .border-border { border-color: var(--border); }
+  .border-border-hi { border-color: var(--border-hi); }
+}

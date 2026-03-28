@@ -1,0 +1,31 @@
+{
+  "name": "@layrix/ui",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./globals.css": "./src/globals.css"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.0",
+    "lucide-react": "^0.400.0",
+    "tailwind-merge": "^2.3.0",
+    "pixi.js": "^8.0.0",
+    "three": "^0.165.0"
+  },
+  "devDependencies": {
+    "@layrix/config-typescript": "workspace:*",
+    "@types/three": "^0.165.0",
+    "react": "^18.3.0",
+    "typescript": "^5.5.0"
+  },
+  "peerDependencies": {
+    "react": "^18.3.0"
+  }
+}
