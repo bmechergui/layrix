@@ -14,15 +14,15 @@ export function Pricing() {
           <p className="text-muted-foreground text-lg">Pay only for what you use. No hidden fees.</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-12 pt-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-12 pt-12">
           {PRICING_PLANS.map((plan) => (
             <Card key={plan.name} className={`relative flex flex-col overflow-visible ${plan.popular ? 'border-primary glow-cyan-sm' : ''}`}>
               {plan.popular && (
-                <div className="absolute -top-5 left-1/2 -translate-x-1/2 z-10">
+                <div className="absolute -top-8 left-1/2 -translate-x-1/2 z-10">
                   <Badge className="px-4 py-1 whitespace-nowrap text-xs font-semibold shadow-lg shadow-primary/20">Most Popular</Badge>
                 </div>
               )}
-              <CardHeader className={`pb-4 ${plan.popular ? 'pt-7' : ''}`}>
+              <CardHeader className={`pb-4 ${plan.popular ? 'pt-8' : ''}`}>
                 <CardTitle className="text-base font-medium text-muted-foreground">{plan.name}</CardTitle>
                 <div className="flex items-baseline gap-1 mt-2">
                   <span className="text-3xl font-bold text-foreground">{plan.price}</span>
