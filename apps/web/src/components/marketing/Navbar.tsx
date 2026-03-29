@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
 import { Button } from '@/components/ui/button';
+import { LayrixLogo } from '@/components/ui/layrix-logo';
 
 export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
@@ -24,14 +24,7 @@ export function Navbar() {
 
         {/* Logo */}
         <Link href="/" className="flex items-center">
-          <Image
-            src="/logo.jpg"
-            alt="Layrix"
-            width={110}
-            height={32}
-            className="h-8 w-auto object-contain mix-blend-screen"
-            priority
-          />
+          <LayrixLogo height={32} />
         </Link>
 
         {/* Nav links */}

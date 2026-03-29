@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { LayrixLogo } from '@/components/ui/layrix-logo';
 import { LayoutDashboard, FolderOpen, Settings, HelpCircle, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -25,9 +26,10 @@ export function Sidebar() {
   return (
     <aside className="w-60 min-h-screen bg-[#0a0a0a] border-r border-border flex flex-col">
       {/* Logo */}
-      <div className="px-5 py-4 flex items-center gap-2">
-        <span className="font-bold text-foreground">Layrix</span>
-        <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+      <div className="px-5 py-4">
+        <Link href="/">
+          <LayrixLogo height={28} />
+        </Link>
       </div>
 
       <Separator />

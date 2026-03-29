@@ -1,5 +1,6 @@
 import { Separator } from '@/components/ui/separator';
 import { FOOTER_LINKS } from '@/lib/marketing-content';
+import { LayrixLogo } from '@/components/ui/layrix-logo';
 
 export function Footer() {
   return (
@@ -8,9 +9,8 @@ export function Footer() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
           {/* Brand */}
           <div>
-            <div className="flex items-center gap-2 mb-4">
-              <span className="text-lg font-bold text-foreground">Layrix</span>
-              <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+            <div className="mb-4">
+              <LayrixLogo height={28} />
             </div>
             <p className="text-xs text-muted-foreground leading-relaxed">
               AI PCB Design Agent — From idea to manufacturable PCB, autonomously.
