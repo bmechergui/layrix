@@ -26,9 +26,9 @@ export function Sidebar() {
   return (
     <aside className="w-60 min-h-screen bg-[#0a0a0a] border-r border-border flex flex-col">
       {/* Logo */}
-      <div className="px-5 py-4">
+      <div className="px-4 py-3">
         <Link href="/">
-          <LayrixLogo height={28} />
+          <LayrixLogo variant="icon" height={32} />
         </Link>
       </div>
 
