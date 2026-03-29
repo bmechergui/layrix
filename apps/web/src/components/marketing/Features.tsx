@@ -7,7 +7,7 @@ export function Features() {
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-16">
           <p className="pcb-label text-muted-foreground/60 mb-3">CAPABILITIES</p>
-          <h2 className="font-display text-4xl font-extrabold tracking-tight mb-4">
+          <h2 className="font-display text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight mb-4">
             Everything you need to<br />
             <span className="text-gradient">design PCBs with AI</span>
           </h2>

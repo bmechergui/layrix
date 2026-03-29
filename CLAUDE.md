@@ -156,7 +156,58 @@ Cette règle s'applique à TOUS les prompts — même les courts et les clairs.
 ## Design
 - Design system dans `doc/design/design-system.md`
 - Couleurs, typographie, composants — toujours respecter les tokens définis
-- Voir logo `docs/logo/logo.jpg` pour référence visuelle
+- Voir logo `docs/logo/logo.svg` + `docs/logo/icone.svg` pour les assets de marque (SVG natif, fond transparent)
+
+## Responsive — Règles obligatoires
+
+**ALWAYS** appliquer ces patterns à chaque composant UI :
+
+### Texte
+```tsx
+// Headings (h1, h2, h3) — JAMAIS de taille fixe
+text-2xl sm:text-3xl md:text-4xl   // sections marketing
+text-[1.8rem] sm:text-[2.4rem] md:text-[3rem]  // hero h1
+```
+
+### Layout
+```tsx
+// Grilles
+grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3  // cartes features
+grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4  // pricing plans
+grid grid-cols-2 sm:grid-cols-3                 // grilles compactes (credits)
+
+// Flex forms sur mobile
+flex flex-col sm:flex-row gap-2                 // formulaires email/input+button
+
+// Flex stats
+flex flex-wrap items-center gap-6 md:gap-8      // stats en ligne
+```
+
+### Navigation
+```tsx
+// Navbar — hamburger menu obligatoire sur mobile
+hidden md:flex   // pour les nav links desktop
+md:hidden        // pour le bouton hamburger
+
+// Dashboard sidebar — cachée sur mobile
+hidden md:block shrink-0   // wrapper du Sidebar
+```
+
+### Padding
+```tsx
+p-4 md:p-6   // main content
+px-4 md:px-6 // horizontal padding sections
+```
+
+### Breakpoints Tailwind (référence)
+- `sm` : 640px
+- `md` : 768px
+- `lg` : 1024px
+- `xl` : 1280px
+
+**NEVER** utiliser une taille de texte fixe (`text-4xl`) sur un heading visible — toujours avec responsive.
+**NEVER** oublier `flex-col sm:flex-row` pour les formulaires avec input + button côte à côte.
+**ALWAYS** tester mentalement mobile 375px avant de valider un composant.
 
 ## Dépendances critiques (valider avant de coder)
 1. Docker KiCad headless — builder l'image AVANT d'implémenter le microservice

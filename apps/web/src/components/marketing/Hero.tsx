@@ -157,7 +157,7 @@ export function Hero() {
             </div>
 
             {/* Stats — inline trace style */}
-            <div className="flex items-center gap-8">
+            <div className="flex flex-wrap items-center gap-6 md:gap-8">
               {[
                 { value: '< 5 min', label: 'per PCB' },
                 { value: '0 DRC', label: 'violations' },

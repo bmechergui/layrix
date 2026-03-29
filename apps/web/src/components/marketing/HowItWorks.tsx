@@ -6,7 +6,7 @@ export function HowItWorks() {
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-16">
           <p className="pcb-label text-muted-foreground/60 mb-3">HOW IT WORKS</p>
-          <h2 className="font-display text-4xl font-extrabold tracking-tight mb-4">
+          <h2 className="font-display text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight mb-4">
             From prompt to PCB<br />
             <span className="text-gradient">in minutes</span>
           </h2>

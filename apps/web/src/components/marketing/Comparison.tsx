@@ -6,7 +6,7 @@ export function Comparison() {
     <section className="py-24 px-6 border-t border-border">
       <div className="max-w-4xl mx-auto">
         <div className="text-center mb-12">
-          <h2 className="text-4xl font-bold tracking-tight mb-4">How Layrix compares</h2>
+          <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight mb-4">How Layrix compares</h2>
         </div>
 
         <div className="overflow-x-auto">

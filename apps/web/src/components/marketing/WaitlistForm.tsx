@@ -37,7 +37,7 @@ export function WaitlistForm() {
           <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-slow" />
           Early Access
         </div>
-        <h2 className="text-4xl font-bold tracking-tight mb-4">Be first to design PCBs with AI</h2>
+        <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight mb-4">Be first to design PCBs with AI</h2>
         <p className="text-muted-foreground mb-8">Join 500+ engineers already on the waitlist.</p>
 
         {state === 'success' ? (
@@ -47,7 +47,7 @@ export function WaitlistForm() {
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            <form onSubmit={handleSubmit} className="flex gap-2">
+            <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-2">
               <Input
                 type="email"
                 placeholder="your@email.com"

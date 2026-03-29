@@ -10,7 +10,7 @@ export function Pricing() {
     <section id="pricing" className="py-24 px-6 border-t border-border scroll-mt-14">
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-16">
-          <h2 className="text-4xl font-bold tracking-tight mb-4">Simple, transparent pricing</h2>
+          <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight mb-4">Simple, transparent pricing</h2>
           <p className="text-muted-foreground text-lg">Pay only for what you use. No hidden fees.</p>
         </div>
 
@@ -49,7 +49,7 @@ export function Pricing() {
         {/* Credits breakdown */}
         <div className="max-w-2xl mx-auto bg-[#111111] border border-border rounded-xl p-6">
           <h3 className="text-sm font-semibold text-foreground mb-4">Credits per action</h3>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {CREDIT_COSTS.map(([action, cost]) => (
               <div key={action} className="flex items-center justify-between gap-1 bg-[#1a1a1a] rounded-md px-3 py-2">
                 <span className="text-xs text-muted-foreground truncate">{action}</span>
