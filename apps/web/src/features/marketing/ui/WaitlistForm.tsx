@@ -22,7 +22,17 @@ export function WaitlistForm() {
     setState('loading');
     setErrorMsg('');
     try {
-      await new Promise((r) => setTimeout(r, 1000)); // mock — replace with real API call
+      const res = await fetch('/api/waitlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json() as { success: boolean; error?: string };
+      if (!res.ok) {
+        setErrorMsg(data.error === 'already_registered' ? "You're already on the list!" : 'Something went wrong. Please try again.');
+        setState('error');
+        return;
+      }
       setState('success');
     } catch {
       setErrorMsg('Something went wrong. Please try again.');
