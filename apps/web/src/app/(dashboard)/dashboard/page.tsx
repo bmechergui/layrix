@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import { Plus, CircuitBoard } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { ProjectCard } from '@/features/dashboard/ui/ProjectCard';
@@ -27,6 +28,15 @@ function EmptyState() {
 
 function ProjectsGrid() {
   const projects = useAppStore((s) => s.projects);
+  const loading = useAppStore((s) => s.projectsLoading);
+
+  if (loading) {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {[...Array(3)].map((_, i) => <ProjectCardSkeleton key={i} />)}
+      </div>
+    );
+  }
 
   if (projects.length === 0) return <EmptyState />;
 
@@ -41,6 +51,11 @@ function ProjectsGrid() {
 
 export default function DashboardPage() {
   const projects = useAppStore((s) => s.projects);
+  const fetchProjects = useAppStore((s) => s.fetchProjects);
+
+  useEffect(() => {
+    void fetchProjects();
+  }, [fetchProjects]);
 
   return (
     <div className="space-y-6">

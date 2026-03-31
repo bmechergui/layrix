@@ -1,23 +1,24 @@
 import { create } from 'zustand';
 import type { Project, Message, Credits, PCBStatus } from '@layrix/types';
-import { MOCK_PROJECTS, MOCK_MESSAGES, MOCK_CREDITS } from '@/shared/lib/mock-data';
 
 interface AppState {
   // Projets
   projects: Project[];
+  projectsLoading: boolean;
   selectedProjectId: string | null;
 
   // Messages du chat (par projet)
   messagesByProject: Record<string, Message[]>;
 
   // Crédits
-  credits: Credits;
+  credits: Credits | null;
 
   // Agent
   isAgentRunning: boolean;
   agentStep: 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
 
   // Actions
+  fetchProjects: () => Promise<void>;
   setSelectedProjectId: (id: string | null) => void;
   addProject: (project: Project) => void;
   updateProjectStatus: (id: string, status: PCBStatus) => void;
@@ -27,12 +28,26 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set) => ({
-  projects: MOCK_PROJECTS,
+  projects: [],
+  projectsLoading: false,
   selectedProjectId: null,
-  messagesByProject: { '1': MOCK_MESSAGES },
-  credits: MOCK_CREDITS,
+  messagesByProject: {},
+  credits: null,
   isAgentRunning: false,
   agentStep: null,
+
+  fetchProjects: async () => {
+    set({ projectsLoading: true });
+    try {
+      const res = await fetch('/api/projects');
+      const json = await res.json() as { success: boolean; data?: Project[] };
+      if (json.success && json.data) {
+        set({ projects: json.data });
+      }
+    } finally {
+      set({ projectsLoading: false });
+    }
+  },
 
   setSelectedProjectId: (id) => set({ selectedProjectId: id }),
 
@@ -59,6 +74,8 @@ export const useAppStore = create<AppState>((set) => ({
 
   deductCredits: (amount) =>
     set((state) => ({
-      credits: { ...state.credits, balance: Math.max(0, state.credits.balance - amount) },
+      credits: state.credits
+        ? { ...state.credits, balance: Math.max(0, state.credits.balance - amount) }
+        : null,
     })),
 }));
