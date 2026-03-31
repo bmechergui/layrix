@@ -207,6 +207,31 @@ importers:
         specifier: ^5.5.0
         version: 5.9.3
 
+  packages/logger:
+    dependencies:
+      pino:
+        specifier: ^9.0.0
+        version: 9.14.0
+    devDependencies:
+      '@layrix/config-typescript':
+        specifier: workspace:*
+        version: link:../config-typescript
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.37
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+
+  packages/types:
+    devDependencies:
+      '@layrix/config-typescript':
+        specifier: workspace:*
+        version: link:../config-typescript
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+
   packages/ui:
     dependencies:
       class-variance-authority:
@@ -231,12 +256,31 @@ importers:
       '@layrix/config-typescript':
         specifier: workspace:*
         version: link:../config-typescript
+      '@types/react':
+        specifier: ^18.3.0
+        version: 18.3.28
       '@types/three':
         specifier: ^0.165.0
         version: 0.165.0
       react:
         specifier: ^18.3.0
         version: 18.3.1
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+
+  packages/utils:
+    dependencies:
+      clsx:
+        specifier: ^2.1.0
+        version: 2.1.1
+      tailwind-merge:
+        specifier: ^2.3.0
+        version: 2.6.1
+    devDependencies:
+      '@layrix/config-typescript':
+        specifier: workspace:*
+        version: link:../config-typescript
       typescript:
         specifier: ^5.5.0
         version: 5.9.3

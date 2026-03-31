@@ -1,10 +1,10 @@
 'use client';
 
 import { use } from 'react';
-import { ChatPanel } from '@/components/dashboard/ChatPanel';
-import { ViewerPanel } from '@/components/dashboard/ViewerPanel';
-import { AgentProgressBar } from '@/components/dashboard/AgentProgressBar';
-import { useAppStore } from '@/store/app-store';
+import { ChatPanel } from '@/features/dashboard/ui/ChatPanel';
+import { ViewerPanel } from '@/features/dashboard/ui/ViewerPanel';
+import { AgentProgressBar } from '@/features/dashboard/ui/AgentProgressBar';
+import { useAppStore } from '@/shared/store/app-store';
 
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);

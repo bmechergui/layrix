@@ -1,11 +1,11 @@
-import { Navbar } from '@/components/marketing/Navbar';
-import { Hero } from '@/components/marketing/Hero';
-import { Features } from '@/components/marketing/Features';
-import { HowItWorks } from '@/components/marketing/HowItWorks';
-import { Pricing } from '@/components/marketing/Pricing';
-import { Comparison } from '@/components/marketing/Comparison';
-import { WaitlistForm } from '@/components/marketing/WaitlistForm';
-import { Footer } from '@/components/marketing/Footer';
+import { Navbar } from '@/features/marketing/ui/Navbar';
+import { Hero } from '@/features/marketing/ui/Hero';
+import { Features } from '@/features/marketing/ui/Features';
+import { HowItWorks } from '@/features/marketing/ui/HowItWorks';
+import { Pricing } from '@/features/marketing/ui/Pricing';
+import { Comparison } from '@/features/marketing/ui/Comparison';
+import { WaitlistForm } from '@/features/marketing/ui/WaitlistForm';
+import { Footer } from '@/features/marketing/ui/Footer';
 
 export default function HomePage() {
   return (

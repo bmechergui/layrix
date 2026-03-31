@@ -71,7 +71,16 @@
       "mcp__plugin_chrome-devtools-mcp_chrome-devtools__resize_page",
       "mcp__plugin_chrome-devtools-mcp_chrome-devtools__take_screenshot",
       "mcp__plugin_chrome-devtools-mcp_chrome-devtools__evaluate_script",
-      "Skill(commit-commands:commit-push-pr)"
+      "Skill(commit-commands:commit-push-pr)",
+      "Bash(cp -r components/ui/. shared/ui/)",
+      "Bash(cp -r components/marketing/. features/marketing/ui/)",
+      "Bash(cp -r components/dashboard/. features/dashboard/ui/)",
+      "Bash(cp -r lib/. shared/lib/)",
+      "Bash(cp -r store/. shared/store/)",
+      "Bash(mkdir -p C:/Users/Mechegui/Desktop/dev/layrix/packages/types/src)",
+      "Bash(mkdir -p C:/Users/Mechegui/Desktop/dev/layrix/packages/logger/src)",
+      "Bash(mkdir -p C:/Users/Mechegui/Desktop/dev/layrix/packages/utils/src)",
+      "Bash(pnpm run:*)"
     ]
   },
   "hooks": {

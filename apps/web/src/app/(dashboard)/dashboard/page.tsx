@@ -1,11 +1,11 @@
 'use client';
 
 import { Plus, CircuitBoard } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { ProjectCard } from '@/components/dashboard/ProjectCard';
-import { ProjectCardSkeleton } from '@/components/ui/skeleton';
-import { ErrorBoundary } from '@/components/ui/error-boundary';
-import { useAppStore } from '@/store/app-store';
+import { Button } from '@/shared/ui/button';
+import { ProjectCard } from '@/features/dashboard/ui/ProjectCard';
+import { ProjectCardSkeleton } from '@/shared/ui/skeleton';
+import { ErrorBoundary } from '@/shared/ui/error-boundary';
+import { useAppStore } from '@/shared/store/app-store';
 
 function EmptyState() {
   return (

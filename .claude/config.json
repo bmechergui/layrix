@@ -1,0 +1,10 @@
+{
+  "model": "claude-sonnet-4-6",
+  "temperature": 0.1,
+  "autoMode": true,
+  "respectWorkflow": true,
+  "skillsDir": ".claude/skills",
+  "alwaysStartWith": ["prompt-master", "layrix-prompt-improver"],
+  "requireTypeCheck": true,
+  "autoCommitPR": true
+}
