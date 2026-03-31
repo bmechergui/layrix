@@ -53,11 +53,16 @@ export function Navbar() {
           <span className="hidden lg:block pcb-label text-muted-foreground/30 mr-2 animate-flicker">
             v0.1.0-beta
           </span>
-          <Link href="/dashboard" className="hidden sm:block">
+          <Link href="/login" className="hidden sm:block">
             <Button variant="ghost" size="sm" className="text-sm">Sign in</Button>
           </Link>
-          <Link href="#waitlist">
+          <Link href="/signup" className="hidden sm:block">
             <Button size="sm" className="glow-cyan-sm hover:glow-cyan font-semibold">
+              Get started
+            </Button>
+          </Link>
+          <Link href="#waitlist" className="sm:hidden">
+            <Button size="sm" className="glow-cyan-sm font-semibold">
               Join Waitlist
             </Button>
           </Link>
@@ -86,9 +91,12 @@ export function Navbar() {
               {label}
             </Link>
           ))}
-          <div className="pt-2 border-t border-border mt-2">
-            <Link href="/dashboard" onClick={() => setMenuOpen(false)}>
+          <div className="pt-2 border-t border-border mt-2 flex flex-col gap-2">
+            <Link href="/login" onClick={() => setMenuOpen(false)}>
               <Button variant="ghost" size="sm" className="w-full justify-start text-sm">Sign in</Button>
+            </Link>
+            <Link href="/signup" onClick={() => setMenuOpen(false)}>
+              <Button size="sm" className="w-full font-semibold">Get started</Button>
             </Link>
           </div>
         </div>
