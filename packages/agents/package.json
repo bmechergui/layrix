@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@layrix/types": "workspace:*",
     "@layrix/db": "workspace:*",
     "@anthropic-ai/sdk": "^0.28.0",
     "bullmq": "^5.0.0",

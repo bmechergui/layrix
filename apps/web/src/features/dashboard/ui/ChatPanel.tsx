@@ -5,7 +5,7 @@ import { Send, Bot, User } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import { useAppStore } from '@/shared/store/app-store';
-import type { Message } from '@/shared/lib/mock-data';
+import type { Message } from '@layrix/types';
 
 interface ChatPanelProps {
   projectId: string;

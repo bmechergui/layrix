@@ -1,35 +1,5 @@
-export type PCBStatus =
-  | 'INITIAL'
-  | 'SCHEMA_DONE'
-  | 'PLACEMENT_DONE'
-  | 'ROUTING_DONE'
-  | 'DRC_CLEAN'
-  | 'PCB_LIVRÉ';
-
-export type Plan = 'free' | 'maker' | 'pro' | 'enterprise';
-
-export interface Project {
-  id: string;
-  name: string;
-  description: string;
-  status: PCBStatus;
-  iteration_count: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: string;
-}
-
-export interface Credits {
-  balance: number;
-  plan: Plan;
-  daily_limit: number | null;
-}
+export type { PCBStatus, Plan, Project, Message, Credits } from '@layrix/types';
+import type { Project, Message, Credits } from '@layrix/types';
 
 export const MOCK_PROJECTS: Project[] = [
   { id: '1', name: 'ESP32 Weather Station', description: 'BLE + WiFi, BME280, SSD1306 OLED, LiPo', status: 'DRC_CLEAN', iteration_count: 7, created_at: '2026-03-25', updated_at: '2026-03-27' },

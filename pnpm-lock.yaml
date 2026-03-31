@@ -72,6 +72,9 @@ importers:
       '@layrix/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@layrix/types':
+        specifier: workspace:*
+        version: link:../../packages/types
       '@radix-ui/react-dialog':
         specifier: ^1.1.0
         version: 1.1.15(@types/react-dom@18.3.7(@types/react@18.3.28))(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -90,6 +93,12 @@ importers:
       '@radix-ui/react-tooltip':
         specifier: ^1.1.0
         version: 1.2.8(@types/react-dom@18.3.7(@types/react@18.3.28))(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@supabase/ssr':
+        specifier: ^0.4.0
+        version: 0.4.1(@supabase/supabase-js@2.100.1)
+      '@supabase/supabase-js':
+        specifier: ^2.43.0
+        version: 2.100.1
       class-variance-authority:
         specifier: ^0.7.0
         version: 0.7.1
@@ -151,6 +160,9 @@ importers:
       '@layrix/db':
         specifier: workspace:*
         version: link:../db
+      '@layrix/types':
+        specifier: workspace:*
+        version: link:../types
       bullmq:
         specifier: ^5.0.0
         version: 5.71.1
@@ -190,6 +202,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@layrix/types':
+        specifier: workspace:*
+        version: link:../types
       '@supabase/ssr':
         specifier: ^0.4.0
         version: 0.4.1(@supabase/supabase-js@2.100.1)

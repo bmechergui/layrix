@@ -1,5 +1,5 @@
 import { Badge } from '@/shared/ui/badge';
-import type { PCBStatus } from '@/shared/lib/mock-data';
+import type { PCBStatus } from '@layrix/types';
 
 const STATUS_CONFIG: Record<PCBStatus, { label: string; variant: 'default' | 'secondary' | 'success' | 'warning' | 'destructive' | 'copper' | 'outline'; pulse?: boolean }> = {
   INITIAL: { label: 'New', variant: 'secondary' },

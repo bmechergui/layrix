@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Clock, Cpu } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { StatusBadge } from './StatusBadge';
-import type { Project } from '@/shared/lib/mock-data';
+import type { Project } from '@layrix/types';
 
 interface ProjectCardProps {
   project: Project;

@@ -2,7 +2,7 @@
 
 import { use } from 'react';
 import { ChatPanel } from '@/features/dashboard/ui/ChatPanel';
-import { ViewerPanel } from '@/features/dashboard/ui/ViewerPanel';
+import { ViewerPanel } from '@/widgets/viewer';
 import { AgentProgressBar } from '@/features/dashboard/ui/AgentProgressBar';
 import { useAppStore } from '@/shared/store/app-store';
 

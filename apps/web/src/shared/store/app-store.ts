@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Project, Message, Credits, PCBStatus } from '@/shared/lib/mock-data';
+import type { Project, Message, Credits, PCBStatus } from '@layrix/types';
 import { MOCK_PROJECTS, MOCK_MESSAGES, MOCK_CREDITS } from '@/shared/lib/mock-data';
 
 interface AppState {
