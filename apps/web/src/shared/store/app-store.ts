@@ -1,7 +1,18 @@
 import { create } from 'zustand';
 import type { Project, Message, Credits, PCBStatus } from '@layrix/types';
+import { createSupabaseBrowserClient } from '@/shared/lib/supabase-browser';
+
+interface AuthUser {
+  id: string;
+  email: string;
+  full_name: string | null;
+  avatar_url: string | null;
+}
 
 interface AppState {
+  // Auth
+  user: AuthUser | null;
+
   // Projets
   projects: Project[];
   projectsLoading: boolean;
@@ -18,6 +29,7 @@ interface AppState {
   agentStep: 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
 
   // Actions
+  fetchUser: () => Promise<void>;
   fetchProjects: () => Promise<void>;
   fetchCredits: () => Promise<void>;
   setSelectedProjectId: (id: string | null) => void;
@@ -29,6 +41,7 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set) => ({
+  user: null,
   projects: [],
   projectsLoading: false,
   selectedProjectId: null,
@@ -36,6 +49,21 @@ export const useAppStore = create<AppState>((set) => ({
   credits: null,
   isAgentRunning: false,
   agentStep: null,
+
+  fetchUser: async () => {
+    const supabase = createSupabaseBrowserClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      set({
+        user: {
+          id: user.id,
+          email: user.email ?? '',
+          full_name: (user.user_metadata['full_name'] as string | undefined) ?? null,
+          avatar_url: (user.user_metadata['avatar_url'] as string | undefined) ?? null,
+        },
+      });
+    }
+  },
 
   fetchCredits: async () => {
     const res = await fetch('/api/credits');
