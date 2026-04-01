@@ -36,6 +36,24 @@ Chaîne : layrix-prompt-improver → plan → TDD → code →
 **NEVER** committer sans que `pnpm type-check` retourne 0 erreurs.
 **NEVER** écrire `[Skill : X]` en texte sans appeler le `Skill` tool réellement.
 
+### 5. Prochaine étape — obligatoire après chaque tâche terminée
+
+**TOUJOURS** terminer chaque réponse de fin de tâche par un bloc `## Prochaine étape recommandée` :
+
+```
+## Prochaine étape recommandée
+
+**[Numéro Phase] — [Nom de la tâche]**
+[Description courte de ce qu'il faut faire ensuite, pourquoi c'est la priorité, et les fichiers concernés]
+
+Confirme pour que je démarre.
+```
+
+- Baser la recommandation sur `PLAN.md` (phase en cours) + ce qui vient d'être livré
+- Toujours proposer **1 seule prochaine étape** — pas une liste de 5
+- Si plusieurs candidats : choisir celle qui débloque le plus de valeur
+- **NEVER** terminer sans ce bloc après un commit/PR
+
 ### 2. Niveau de planification — voir `rules/planning.md`
 
 ### 3. Autonomie totale
