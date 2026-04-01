@@ -153,7 +153,7 @@ export async function* runOrchestrator(
         toolInput = {};
       }
 
-      const result = await executeToolStub(tool.name, toolInput);
+      const result = await executeToolStub(tool.name, toolInput, options.projectId);
       const resultStr = JSON.stringify(result);
 
       yield {
