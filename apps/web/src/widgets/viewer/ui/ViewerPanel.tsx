@@ -1,7 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Layers, Box, Download, ZoomIn, ZoomOut, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { useAppStore } from '@/shared/store/app-store';
@@ -27,6 +27,24 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
   const pcbState = useAppStore((s) =>
     projectId ? s.pcbStateByProject[projectId] ?? null : null
   );
+  const setPcbState = useAppStore((s) => s.setPcbState);
+
+  // Load persisted PCB state from DB on mount
+  useEffect(() => {
+    if (!projectId) return;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/pcb-state`);
+        if (!res.ok) return;
+        const json = await res.json() as { success: boolean; data: Record<string, unknown> | null };
+        if (json.success && json.data) {
+          setPcbState(projectId, json.data);
+        }
+      } catch {
+        // Non-blocking — viewer still works without persisted state
+      }
+    })();
+  }, [projectId, setPcbState]);
 
   const toggleLayer = (layer: string) => {
     setLayerVisibility((prev) => ({ ...prev, [layer]: !prev[layer] }));

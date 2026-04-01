@@ -74,6 +74,15 @@ export async function POST(req: NextRequest) {
         })) {
           send(event);
 
+          // Persist PCB state to DB whenever the orchestrator emits one
+          if (event.type === 'pcb_state') {
+            await supabase
+              .from('projects')
+              .update({ pcb_state: event.state, updated_at: new Date().toISOString() })
+              .eq('id', body.projectId)
+              .eq('user_id', user.id);
+          }
+
           // Deduct credits on successful completion
           if (event.type === 'done') {
             await supabase.rpc('deduct_credits', {
