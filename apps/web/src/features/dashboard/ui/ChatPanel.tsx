@@ -170,10 +170,14 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
               }
               setStreamingText('');
             } else if (event.type === 'error') {
+              const errorContent =
+                event.message === 'insufficient_credits'
+                  ? 'Not enough credits. Please top up your balance.'
+                  : `Error: ${event.message}`;
               addMessage(projectId, {
                 id: Date.now().toString(),
                 role: 'assistant',
-                content: `Error: ${event.message}`,
+                content: errorContent,
                 timestamp: new Date().toLocaleTimeString('en-GB', {
                   hour: '2-digit',
                   minute: '2-digit',
