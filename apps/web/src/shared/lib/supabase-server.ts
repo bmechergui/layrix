@@ -1,5 +1,15 @@
+import { createClient } from '@supabase/supabase-js';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+
+/** Admin client — bypasses RLS. Use only in trusted server contexts (webhooks, crons). */
+export function createAdminClient() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+}
 
 export async function createRouteHandlerClient() {
   const cookieStore = await cookies();

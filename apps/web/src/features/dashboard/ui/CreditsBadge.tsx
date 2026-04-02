@@ -25,11 +25,23 @@ export function CreditsBadge() {
           ? 'text-amber-400'
           : 'text-red-400';
 
+  const isLow = color === 'text-red-400' || color === 'text-amber-400';
+
   return (
-    <div className={`flex items-center gap-1.5 text-xs font-mono font-medium ${color}`}>
-      <Coins size={13} />
-      <span>{credits.balance}</span>
-      <span className="text-muted-foreground font-normal">cr · {credits.plan}</span>
+    <div className="flex items-center gap-2">
+      <div className={`flex items-center gap-1.5 text-xs font-mono font-medium ${color}`}>
+        <Coins size={13} />
+        <span>{credits.balance}</span>
+        <span className="text-muted-foreground font-normal">cr · {credits.plan}</span>
+      </div>
+      {isLow && (
+        <a
+          href="/dashboard/billing"
+          className="text-xs text-primary hover:underline font-medium"
+        >
+          Recharge →
+        </a>
+      )}
     </div>
   );
 }
