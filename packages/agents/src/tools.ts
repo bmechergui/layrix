@@ -155,9 +155,28 @@ export async function executeToolStub(
       const desc = String(input['user_description'] ?? '');
       const complexity = String(input['complexity'] ?? 'simple');
 
-      // Parse components from description if the agent provides them,
-      // otherwise fall back to a sensible default for the complexity
-      const schema = parseSchemaFromDescription(desc, complexity);
+      // 1. Try to parse schema_json if orchestrator passes one directly
+      let schema: SchemaJson | null = null;
+      const schemaJsonRaw = input['schema_json'];
+      if (schemaJsonRaw) {
+        try {
+          const parsed = JSON.parse(String(schemaJsonRaw)) as SchemaJson;
+          if (Array.isArray(parsed.components) && parsed.components.length > 0) {
+            schema = parsed;
+          }
+        } catch { /* fall through */ }
+      }
+
+      // 2. Call Claude Haiku 4.5 to generate schema from the real description
+      if (!schema && desc) {
+        schema = await generateSchemaWithHaiku(desc);
+      }
+
+      // 3. Fallback to hardcoded defaults based on complexity
+      if (!schema) {
+        schema = parseSchemaFromDescription(desc, complexity);
+      }
+
       const engine = selectEngine(schema);
       _pcbStateCache.set(projectId, { schema, boardW: 50, boardH: 50 });
 
@@ -275,6 +294,42 @@ export async function executeToolStub(
 
     default:
       return { status: 'error', message: `Outil inconnu: ${toolName}` };
+  }
+}
+
+// --- Haiku schema generator ----------------------------------------------
+
+async function generateSchemaWithHaiku(description: string): Promise<SchemaJson | null> {
+  const apiKey = process.env['ANTHROPIC_API_KEY'];
+  if (!apiKey) return null;
+
+  try {
+    const client = new Anthropic({ apiKey });
+    const response = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1024,
+      system: `You are a PCB schematic generator. Given a circuit description, return a JSON object with:
+- "components": array of { "ref": string, "value": string, "footprint": string, "lcsc"?: string }
+- "nets": array of net name strings
+
+Footprint must be one of: "0402", "0603", "0805", "1206", "SOT-23", "SOT-23-5", "TSSOP-8", "DIP-8", "LED"
+Reference designators: R (resistor), C (capacitor), U (IC), LED (LED), J (connector), Q (transistor), D (diode).
+Keep it to ≤ 20 components for simple circuits.
+Return ONLY valid JSON, no markdown fences, no explanation.`,
+      messages: [{ role: 'user', content: `Circuit: ${description}` }],
+    });
+
+    const text = response.content[0]?.type === 'text' ? response.content[0].text.trim() : '';
+    if (!text) return null;
+
+    const parsed = JSON.parse(text) as SchemaJson;
+    if (Array.isArray(parsed.components) && parsed.components.length > 0) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    // Graceful fallback — never let a Haiku failure block the pipeline
+    return null;
   }
 }
 
