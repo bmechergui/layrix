@@ -1,21 +1,8 @@
 // Types générés depuis le schéma Supabase
 // Regénérer avec : pnpm db:generate
-
-export type PCBStatus =
-  | 'INITIAL'
-  | 'SCHEMA_DONE'
-  | 'PLACEMENT_DONE'
-  | 'ROUTING_DONE'
-  | 'DRC_CLEAN'
-  | 'PCB_LIVRÉ';
-
-export type Plan = 'free' | 'maker' | 'pro' | 'enterprise';
-
-export type FootprintSource =
-  | 'kicad_official'
-  | 'snapmagic'
-  | 'octopart'
-  | 'ai_generated';
+// Types partagés importés depuis @layrix/types (source de vérité unique)
+import type { PCBStatus, Plan, FootprintSource } from '@layrix/types';
+export type { PCBStatus, Plan, FootprintSource };
 
 export interface Database {
   public: {

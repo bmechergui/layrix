@@ -1,0 +1,14 @@
+{
+  "name": "@layrix/types",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@layrix/config-typescript": "workspace:*",
+    "typescript": "^5.5.0"
+  }
+}

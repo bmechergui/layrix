@@ -12,6 +12,7 @@
     "db:generate": "supabase gen types typescript --local > src/types.ts"
   },
   "dependencies": {
+    "@layrix/types": "workspace:*",
     "@supabase/supabase-js": "^2.43.0",
     "@supabase/ssr": "^0.4.0",
     "zod": "^3.23.0"

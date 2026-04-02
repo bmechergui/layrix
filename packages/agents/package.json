@@ -4,7 +4,9 @@
   "private": true,
   "main": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./engines/tscircuit-engine": "./src/engines/tscircuit-engine.ts",
+    "./engines/engine-router": "./src/engines/engine-router.ts"
   },
   "scripts": {
     "lint": "eslint .",
@@ -12,12 +14,16 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@layrix/db": "workspace:*",
     "@anthropic-ai/sdk": "^0.28.0",
+    "@layrix/db": "workspace:*",
+    "@layrix/types": "workspace:*",
     "bullmq": "^5.0.0",
+    "circuit-json": "^0.0.406",
+    "circuit-json-to-gerber": "^0.0.48",
     "ioredis": "^5.3.0",
-    "zod": "^3.23.0",
-    "pino": "^9.0.0"
+    "jszip": "^3.10.1",
+    "pino": "^9.0.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
     "@layrix/config-typescript": "workspace:*",

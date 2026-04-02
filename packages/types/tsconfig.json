@@ -1,0 +1,7 @@
+{
+  "extends": "@layrix/config-typescript/tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src"]
+}
