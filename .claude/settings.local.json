@@ -57,7 +57,11 @@
       "Bash(git pull:*)",
       "Bash(git tag:*)",
       "Bash(git stash:*)",
-      "Bash(git fetch:*)"
+      "Bash(git fetch:*)",
+      "Bash(pnpm --filter @layrix/types type-check)",
+      "Bash(pnpm --filter @layrix/agents type-check)",
+      "Bash(pnpm --filter @layrix/web test)",
+      "mcp__supabase__execute_sql"
     ]
   },
   "hooks": {
