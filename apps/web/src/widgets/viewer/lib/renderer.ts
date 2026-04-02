@@ -102,6 +102,23 @@ export class PCBRenderer {
     stage.on('pointerupoutside', stopPan);
 
     canvas.style.cursor = 'grab';
+
+    // Wheel zoom — centered on cursor position
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+      const newScale = Math.min(Math.max(this.viewport.scale.x * factor, MIN_SCALE), MAX_SCALE);
+
+      // Zoom toward cursor: adjust viewport position so the point under
+      // the cursor stays fixed after scaling
+      const rect    = canvas.getBoundingClientRect();
+      const mouseX  = e.clientX - rect.left;
+      const mouseY  = e.clientY - rect.top;
+      const ratio   = newScale / this.viewport.scale.x;
+      this.viewport.x = mouseX - ratio * (mouseX - this.viewport.x);
+      this.viewport.y = mouseY - ratio * (mouseY - this.viewport.y);
+      this.viewport.scale.set(newScale);
+    }, { passive: false });
   }
 
   render(state: PCBState | null, layerVisibility: Record<string, boolean> = {}): void {
