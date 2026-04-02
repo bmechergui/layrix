@@ -18,80 +18,122 @@ interface PlacementData {
   board_height_mm?: number;
 }
 
+export interface ZoomControls {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  resetZoom: () => void;
+}
+
 const BOARD_BG   = 0x0d1a00;
 const COMP_LINE  = 0x888888;
 const DRC_ERROR  = 0xff2222;
 const DRC_WARN   = 0xffaa00;
+const ZOOM_STEP  = 1.3;
+const MIN_SCALE  = 0.1;
+const MAX_SCALE  = 20;
 
 // Map tscircuit logical layer names → KiCad layer names used in LAYER_COLORS
 function toKicadLayer(layer: string | undefined, forSilk = false): string {
   if (!layer) return forSilk ? 'F.SilkS' : 'F.Cu';
   if (layer === 'top')    return forSilk ? 'F.SilkS' : 'F.Cu';
   if (layer === 'bottom') return forSilk ? 'B.SilkS' : 'B.Cu';
-  return layer; // already a KiCad name (e.g. 'F.Cu', 'Edge.Cuts')
+  return layer;
 }
 
 export class PCBRenderer {
   private app: Application;
+
+  // Viewport container — holds all layers, scaled/translated for zoom + auto-fit
+  private viewport      = new Container();
   private boardLayer    = new Container();
   private componentLayer = new Container();
   private drcLayer      = new Container();
   private labelLayer    = new Container();
 
+  // Board dimensions in px (set after render so zoomIn/zoomOut can re-center)
+  private boardWpx = 0;
+  private boardHpx = 0;
+  private baseScale = 1;
+
   constructor(app: Application) {
     this.app = app;
-    app.stage.addChild(this.boardLayer);
-    app.stage.addChild(this.componentLayer);
-    app.stage.addChild(this.drcLayer);
-    app.stage.addChild(this.labelLayer);
+    this.viewport.addChild(this.boardLayer);
+    this.viewport.addChild(this.componentLayer);
+    this.viewport.addChild(this.drcLayer);
+    this.viewport.addChild(this.labelLayer);
+    app.stage.addChild(this.viewport);
   }
 
   render(state: PCBState | null, layerVisibility: Record<string, boolean> = {}): void {
     this.clearAll();
 
-    // Prefer circuit-json rendering when available
     if (Array.isArray(state?.circuit_json) && state.circuit_json.length > 0) {
       this.renderFromCircuitJson(state.circuit_json, layerVisibility);
+      this.autoFit();
       if (state.drcViolations?.length) {
-        const boardW = mmToPx(state.board_width_mm ?? 50);
-        const boardH = mmToPx(state.board_height_mm ?? 50);
-        const ox = (this.app.screen.width  - boardW) / 2;
-        const oy = (this.app.screen.height - boardH) / 2;
-        for (const v of state.drcViolations) {
-          this.renderDRCMarker(v, ox, oy);
-        }
+        for (const v of state.drcViolations) this.renderDRCMarker(v);
       }
       return;
     }
 
-    // Fallback: placement-based rendering
     if (!state?.placement) {
       this.renderPlaceholder();
       return;
     }
 
     const placement = state.placement as PlacementData;
-    const boardW = mmToPx(placement.board_width_mm ?? 50);
-    const boardH = mmToPx(placement.board_height_mm ?? 50);
-    const offsetX = (this.app.screen.width  - boardW) / 2;
-    const offsetY = (this.app.screen.height - boardH) / 2;
-
-    this.renderBoard(boardW, boardH, offsetX, offsetY);
-
+    this.boardWpx = mmToPx(placement.board_width_mm ?? 50);
+    this.boardHpx = mmToPx(placement.board_height_mm ?? 50);
+    this.renderBoard(this.boardWpx, this.boardHpx);
     if (placement.placements) {
-      for (const comp of placement.placements) {
-        this.renderComponent(comp, offsetX, offsetY);
-      }
+      for (const comp of placement.placements) this.renderComponent(comp);
     }
-
+    this.autoFit();
     if (state.drcViolations?.length) {
-      for (const v of state.drcViolations) {
-        this.renderDRCMarker(v, offsetX, offsetY);
-      }
+      for (const v of state.drcViolations) this.renderDRCMarker(v);
     }
   }
 
-  // --- Circuit-json rendering --------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Zoom controls — exposed via ZoomControls interface
+  // ---------------------------------------------------------------------------
+
+  zoomIn(): void {
+    const s = Math.min(this.viewport.scale.x * ZOOM_STEP, MAX_SCALE);
+    this.applyScale(s);
+  }
+
+  zoomOut(): void {
+    const s = Math.max(this.viewport.scale.x / ZOOM_STEP, MIN_SCALE);
+    this.applyScale(s);
+  }
+
+  resetZoom(): void {
+    this.applyScale(this.baseScale);
+  }
+
+  private applyScale(s: number): void {
+    this.viewport.scale.set(s);
+    // Re-center around the board
+    this.viewport.x = (this.app.screen.width  - this.boardWpx * s) / 2;
+    this.viewport.y = (this.app.screen.height - this.boardHpx * s) / 2;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Auto-fit: scale the viewport so the board fills ~85% of the canvas
+  // ---------------------------------------------------------------------------
+
+  private autoFit(): void {
+    if (this.boardWpx <= 0 || this.boardHpx <= 0) return;
+    const scaleX = (this.app.screen.width  * 0.85) / this.boardWpx;
+    const scaleY = (this.app.screen.height * 0.85) / this.boardHpx;
+    this.baseScale = Math.min(scaleX, scaleY, MAX_SCALE);
+    this.applyScale(this.baseScale);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Circuit-json rendering (all coords relative to board origin 0,0)
+  // ---------------------------------------------------------------------------
 
   private renderFromCircuitJson(
     elements: unknown[],
@@ -99,22 +141,12 @@ export class PCBRenderer {
   ): void {
     type AnyEl = { type: string; layer?: string; [k: string]: unknown };
 
-    // Locate board dimensions
     const boardEl = elements.find(
       (e) => (e as AnyEl).type === 'pcb_board'
     ) as { width: number; height: number } | undefined;
 
-    const boardW   = boardEl?.width  ?? 50;
-    const boardH   = boardEl?.height ?? 50;
-    const boardWpx = mmToPx(boardW);
-    const boardHpx = mmToPx(boardH);
-    const ox = (this.app.screen.width  - boardWpx) / 2;
-    const oy = (this.app.screen.height - boardHpx) / 2;
-
-    // Board background fill
-    const bg = new Graphics();
-    bg.rect(ox, oy, boardWpx, boardHpx).fill({ color: BOARD_BG });
-    this.boardLayer.addChild(bg);
+    this.boardWpx = mmToPx(boardEl?.width  ?? 50);
+    this.boardHpx = mmToPx(boardEl?.height ?? 50);
 
     for (const raw of elements) {
       const el = raw as AnyEl;
@@ -124,7 +156,9 @@ export class PCBRenderer {
         case 'pcb_board': {
           if (layerVisibility['Edge.Cuts'] === false) break;
           const g = new Graphics();
-          g.rect(ox, oy, boardWpx, boardHpx)
+          g.rect(0, 0, this.boardWpx, this.boardHpx)
+            .fill({ color: BOARD_BG });
+          g.rect(0, 0, this.boardWpx, this.boardHpx)
             .stroke({ color: LAYER_COLORS['Edge.Cuts'] ?? 0xffff00, width: 1.5 });
           this.boardLayer.addChild(g);
           break;
@@ -137,7 +171,7 @@ export class PCBRenderer {
           const pw = mmToPx(pad.width);
           const ph = mmToPx(pad.height);
           const g = new Graphics();
-          g.rect(ox + mmToPx(pad.x) - pw / 2, oy + mmToPx(pad.y) - ph / 2, pw, ph)
+          g.rect(mmToPx(pad.x) - pw / 2, mmToPx(pad.y) - ph / 2, pw, ph)
             .fill({ color: LAYER_COLORS[kicad] ?? 0xff5555, alpha: 0.85 });
           this.componentLayer.addChild(g);
           break;
@@ -147,13 +181,13 @@ export class PCBRenderer {
           const kicad = toKicadLayer(el.layer);
           if (layerVisibility[kicad] === false) break;
           const comp = el as unknown as { center: { x: number; y: number } };
-          const cx = ox + mmToPx(comp.center.x);
-          const cy = oy + mmToPx(comp.center.y);
-          const r  = mmToPx(0.35);
+          const cx = mmToPx(comp.center.x);
+          const cy = mmToPx(comp.center.y);
+          const r  = mmToPx(0.5);
           const g = new Graphics();
           g.moveTo(cx - r, cy).lineTo(cx + r, cy);
           g.moveTo(cx, cy - r).lineTo(cx, cy + r);
-          g.stroke({ color: LAYER_COLORS[kicad] ?? 0xff5555, width: 1 });
+          g.stroke({ color: LAYER_COLORS[kicad] ?? 0xff5555, width: 1.5 });
           this.componentLayer.addChild(g);
           break;
         }
@@ -166,10 +200,8 @@ export class PCBRenderer {
           const [first, ...rest] = path.route;
           if (!first) break;
           const g = new Graphics();
-          g.moveTo(ox + mmToPx(first.x), oy + mmToPx(first.y));
-          for (const pt of rest) {
-            g.lineTo(ox + mmToPx(pt.x), oy + mmToPx(pt.y));
-          }
+          g.moveTo(mmToPx(first.x), mmToPx(first.y));
+          for (const pt of rest) g.lineTo(mmToPx(pt.x), mmToPx(pt.y));
           g.stroke({ color: LAYER_COLORS[kicad] ?? 0xffffff, width: 0.75 });
           this.componentLayer.addChild(g);
           break;
@@ -187,10 +219,8 @@ export class PCBRenderer {
           const [first, ...rest] = trace.route;
           if (!first) break;
           const g = new Graphics();
-          g.moveTo(ox + mmToPx(first.x), oy + mmToPx(first.y));
-          for (const pt of rest) {
-            g.lineTo(ox + mmToPx(pt.x), oy + mmToPx(pt.y));
-          }
+          g.moveTo(mmToPx(first.x), mmToPx(first.y));
+          for (const pt of rest) g.lineTo(mmToPx(pt.x), mmToPx(pt.y));
           g.stroke({ color: LAYER_COLORS[kicad] ?? 0xff5555, width: traceW });
           this.componentLayer.addChild(g);
           break;
@@ -202,19 +232,21 @@ export class PCBRenderer {
     }
   }
 
-  // --- Placement-based rendering (fallback) ------------------------------
+  // ---------------------------------------------------------------------------
+  // Placement-based rendering (fallback, coords relative to board origin 0,0)
+  // ---------------------------------------------------------------------------
 
-  private renderBoard(w: number, h: number, ox: number, oy: number): void {
+  private renderBoard(w: number, h: number): void {
     const g = new Graphics();
-    g.rect(ox, oy, w, h)
+    g.rect(0, 0, w, h)
       .fill({ color: BOARD_BG })
       .stroke({ color: LAYER_COLORS['Edge.Cuts'] ?? 0xffff00, width: 1.5 });
     this.boardLayer.addChild(g);
   }
 
-  private renderComponent(comp: PlacementItem, ox: number, oy: number): void {
-    const cx = ox + mmToPx(comp.x_mm);
-    const cy = oy + mmToPx(comp.y_mm);
+  private renderComponent(comp: PlacementItem): void {
+    const cx   = mmToPx(comp.x_mm);
+    const cy   = mmToPx(comp.y_mm);
     const isIC = comp.ref.startsWith('U') || comp.ref.startsWith('IC');
     const size = mmToPx(isIC ? 8 : 3);
 
@@ -241,11 +273,11 @@ export class PCBRenderer {
     this.labelLayer.addChild(label);
   }
 
-  private renderDRCMarker(v: DRCViolation, ox: number, oy: number): void {
-    const cx = ox + mmToPx(v.x_mm);
-    const cy = oy + mmToPx(v.y_mm);
+  private renderDRCMarker(v: DRCViolation): void {
+    const cx    = mmToPx(v.x_mm);
+    const cy    = mmToPx(v.y_mm);
     const color = v.severity === 'error' ? DRC_ERROR : DRC_WARN;
-    const r = mmToPx(1);
+    const r     = mmToPx(1);
 
     const g = new Graphics();
     g.circle(cx, cy, r).stroke({ color, width: 2 });
@@ -257,13 +289,14 @@ export class PCBRenderer {
   }
 
   private renderPlaceholder(): void {
-    const cx = this.app.screen.width  / 2;
-    const cy = this.app.screen.height / 2;
+    const cx    = this.app.screen.width  / 2;
+    const cy    = this.app.screen.height / 2;
     const style = new TextStyle({ fontSize: 12, fill: 0x444444, fontFamily: 'monospace' });
     const label = new Text({ text: 'Waiting for PCB data…', style });
     label.x = cx - label.width  / 2;
     label.y = cy - label.height / 2;
-    this.boardLayer.addChild(label);
+    // Placeholder bypasses viewport — render directly on stage
+    this.app.stage.addChild(label);
   }
 
   private clearAll(): void {
@@ -271,10 +304,15 @@ export class PCBRenderer {
     this.componentLayer.removeChildren();
     this.drcLayer.removeChildren();
     this.labelLayer.removeChildren();
+    // Remove any direct stage children (placeholder text)
+    while (this.app.stage.children.length > 1) {
+      this.app.stage.removeChildAt(this.app.stage.children.length - 1);
+    }
   }
 
   destroy(): void {
     this.clearAll();
+    this.app.destroy(true);
   }
 }
 

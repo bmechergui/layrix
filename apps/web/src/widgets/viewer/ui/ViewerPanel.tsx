@@ -2,10 +2,11 @@
 
 import dynamic from 'next/dynamic';
 import { useState, useEffect } from 'react';
-import { Layers, Box, Download, ZoomIn, ZoomOut, Eye, EyeOff } from 'lucide-react';
+import { Layers, Box, Download, ZoomIn, ZoomOut, Maximize2, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { useAppStore } from '@/shared/store/app-store';
 import { LAYER_COLORS, DEFAULT_LAYER_VISIBILITY, colorToHex } from '../lib/layers';
+import type { ZoomControls } from '../lib/renderer';
 
 // PixiJS ne fonctionne pas côté serveur → dynamic import obligatoire
 const PixiCanvas = dynamic(() => import('./PixiCanvas').then((m) => m.PixiCanvas), {
@@ -23,6 +24,7 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
   const [mode, setMode] = useState<ViewMode>('2d');
   const [layerVisibility, setLayerVisibility] =
     useState<Record<string, boolean>>(DEFAULT_LAYER_VISIBILITY);
+  const [zoomControls, setZoomControls] = useState<ZoomControls | null>(null);
 
   const pcbState = useAppStore((s) =>
     projectId ? s.pcbStateByProject[projectId] ?? null : null
@@ -82,11 +84,26 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
         </div>
 
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Zoom in" disabled>
+          <Button
+            variant="ghost" size="icon" className="h-7 w-7" aria-label="Zoom in"
+            disabled={!zoomControls}
+            onClick={() => zoomControls?.zoomIn()}
+          >
             <ZoomIn size={13} />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Zoom out" disabled>
+          <Button
+            variant="ghost" size="icon" className="h-7 w-7" aria-label="Zoom out"
+            disabled={!zoomControls}
+            onClick={() => zoomControls?.zoomOut()}
+          >
             <ZoomOut size={13} />
+          </Button>
+          <Button
+            variant="ghost" size="icon" className="h-7 w-7" aria-label="Reset zoom"
+            disabled={!zoomControls}
+            onClick={() => zoomControls?.resetZoom()}
+          >
+            <Maximize2 size={13} />
           </Button>
           <Button
             variant="ghost"
@@ -106,7 +123,11 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
       {/* Viewer area */}
       <div className="flex-1 relative overflow-hidden">
         {mode === '2d' ? (
-          <PixiCanvas pcbState={pcbState} layerVisibility={layerVisibility} />
+          <PixiCanvas
+            pcbState={pcbState}
+            layerVisibility={layerVisibility}
+            onReady={setZoomControls}
+          />
         ) : (
           <PCBViewer3DPlaceholder />
         )}
