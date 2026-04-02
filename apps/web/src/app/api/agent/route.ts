@@ -85,6 +85,22 @@ export async function POST(req: NextRequest) {
         })) {
           send(event);
 
+          // Pre-step credit guard — check balance before each PCB tool executes
+          if (event.type === 'tool_call') {
+            const action = TOOL_ACTION_MAP[event.tool];
+            if (action) {
+              const { data: currentCredits } = await supabase
+                .from('credits')
+                .select('balance')
+                .eq('user_id', user.id)
+                .single();
+              if (!currentCredits || currentCredits.balance < CREDIT_COSTS[action]) {
+                send({ type: 'error', message: 'insufficient_credits' });
+                break;
+              }
+            }
+          }
+
           // Persist PCB state to DB whenever the orchestrator emits one
           if (event.type === 'pcb_state') {
             await supabase
