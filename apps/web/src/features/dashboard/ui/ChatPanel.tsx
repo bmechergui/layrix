@@ -102,25 +102,47 @@ function StreamingBubble({ text }: { text: string }) {
   );
 }
 
-const PROMPT_SUGGESTIONS = [
-  'Add USB-C power input',
-  'Add 100nF decoupling on all VCC',
-  'Switch to 4-layer board',
-  'Run DRC and fix violations',
-  'Export Gerbers for JLCPCB',
-] as const;
+const PROMPT_SUGGESTIONS: Array<{ label: string; hint: string; prompt: string }> = [
+  {
+    label: 'Add USB-C',
+    hint: 'power input with ESD protection',
+    prompt: 'Add a USB-C power input with 5.1kΩ CC resistors and TVS ESD protection',
+  },
+  {
+    label: '100nF decoupling',
+    hint: 'on all IC VCC — prevents power noise',
+    prompt: 'Add 100nF decoupling capacitors on every IC VCC pin, placed as close as possible',
+  },
+  {
+    label: '4-layer board',
+    hint: 'dedicated GND + power planes reduce EMI',
+    prompt: 'Switch to a 4-layer stackup with dedicated GND and power planes',
+  },
+  {
+    label: 'Run DRC',
+    hint: 'check clearances, unconnected nets, silkscreen',
+    prompt: 'Run DRC and fix all violations',
+  },
+  {
+    label: 'Export Gerbers',
+    hint: 'ready for JLCPCB fabrication',
+    prompt: 'Export Gerbers, BOM and CPL for JLCPCB',
+  },
+];
 
 function PromptSuggestions({ onSelect }: { onSelect: (text: string) => void }) {
   return (
     <div className="flex gap-2 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      {PROMPT_SUGGESTIONS.map((suggestion) => (
+      {PROMPT_SUGGESTIONS.map((s) => (
         <button
-          key={suggestion}
+          key={s.label}
           type="button"
-          onClick={() => onSelect(suggestion)}
-          className="shrink-0 px-3 py-1.5 text-xs rounded-full border border-border bg-[#141414] text-[#A1A1AA] hover:border-[#3D3D3D] hover:text-white transition-colors whitespace-nowrap"
+          onClick={() => onSelect(s.prompt)}
+          title={s.hint}
+          className="shrink-0 flex flex-col items-start px-3 py-1.5 text-xs rounded-lg border border-border bg-[#141414] hover:border-[#3D3D3D] hover:bg-[#1a1a1a] transition-colors text-left"
         >
-          {suggestion}
+          <span className="text-[#E4E4E7] font-medium whitespace-nowrap">{s.label}</span>
+          <span className="text-[#71717A] whitespace-nowrap">{s.hint}</span>
         </button>
       ))}
     </div>
