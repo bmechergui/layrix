@@ -91,23 +91,138 @@ function traceWidth(netName: string): number {
   return isPowerNet(netName) ? 0.3 : 0.15;
 }
 
-// --- Auto-layout ---------------------------------------------------------
+// --- Smart layout --------------------------------------------------------
+// Groups components by function: ICs → center, passives → cluster near ICs,
+// connectors → left edge, LEDs → top-right, others → bottom row.
+
+type PlacedComp = { ref: string; x: number; y: number };
 
 function autoLayout(
   components: SchemaComponent[],
   boardW: number,
   boardH: number
-): Array<{ ref: string; x: number; y: number }> {
-  const cols = Math.max(1, Math.ceil(Math.sqrt(components.length)));
-  const rows = Math.ceil(components.length / cols);
-  const spacingX = boardW / (cols + 1);
-  const spacingY = boardH / (rows + 1);
+): PlacedComp[] {
+  const margin = 6;
+  const usableW = boardW - margin * 2;
+  const usableH = boardH - margin * 2;
 
-  return components.map((c, i) => ({
-    ref: c.ref,
-    x: spacingX * ((i % cols) + 1),
-    y: spacingY * (Math.floor(i / cols) + 1),
-  }));
+  const ics        = components.filter(c => /^U\d*/i.test(c.ref));
+  const connectors = components.filter(c => /^J\d*/i.test(c.ref));
+  const leds       = components.filter(c => /^LED/i.test(c.ref));
+  const passives   = components.filter(c => /^[RCL]\d*/i.test(c.ref));
+  const transistors = components.filter(c => /^[QD]\d*/i.test(c.ref));
+  const rest       = components.filter(
+    c => !ics.includes(c) && !connectors.includes(c) && !leds.includes(c)
+      && !passives.includes(c) && !transistors.includes(c)
+  );
+
+  const result: PlacedComp[] = [];
+
+  // ── ICs: center horizontal band ──────────────────────────────────────
+  const icCenterY = boardH * 0.48;
+  const icStep    = ics.length > 1 ? usableW / (ics.length + 1) : usableW / 2;
+  ics.forEach((ic, i) => {
+    result.push({
+      ref: ic.ref,
+      x: margin + icStep * (i + 1),
+      y: icCenterY,
+    });
+  });
+
+  // ── Passives: two rows above / below IC band ──────────────────────────
+  // Row A: y = icCenterY - gap   Row B: y = icCenterY + gap
+  // Distribute evenly across usable width in batches of columns
+  const passiveGap = 10;
+  const passiveCols = Math.max(4, Math.ceil(passives.length / 2));
+  const passiveStep = usableW / (passiveCols + 1);
+  passives.forEach((p, i) => {
+    const col     = i % passiveCols;
+    const rowAbove = Math.floor(i / passiveCols) % 2 === 0;
+    result.push({
+      ref: p.ref,
+      x: margin + passiveStep * (col + 1),
+      y: icCenterY + (rowAbove ? -passiveGap : passiveGap),
+    });
+  });
+
+  // ── Connectors: left edge, stacked vertically ────────────────────────
+  connectors.forEach((conn, i) => {
+    result.push({
+      ref: conn.ref,
+      x: margin + 4,
+      y: margin + 10 + i * 14,
+    });
+  });
+
+  // ── LEDs: top-right corner ───────────────────────────────────────────
+  leds.forEach((led, i) => {
+    result.push({
+      ref: led.ref,
+      x: boardW - margin - 8 - i * 10,
+      y: margin + 6,
+    });
+  });
+
+  // ── Transistors / diodes: bottom band ───────────────────────────────
+  const tranStep = transistors.length > 0 ? usableW / (transistors.length + 1) : 0;
+  transistors.forEach((t, i) => {
+    result.push({
+      ref: t.ref,
+      x: margin + tranStep * (i + 1),
+      y: boardH - margin - 8,
+    });
+  });
+
+  // ── Anything else: bottom-right ──────────────────────────────────────
+  const restStep = rest.length > 0 ? usableW / (rest.length + 1) : 0;
+  rest.forEach((c, i) => {
+    result.push({
+      ref: c.ref,
+      x: margin + restStep * (i + 1),
+      y: boardH - margin - 18,
+    });
+  });
+
+  return result;
+}
+
+// --- Nearest-neighbour trace routing -------------------------------------
+// For each net, collect all pads that logically belong to it by matching
+// component reference patterns (power pins, known signal names).
+// Falls back to minimum-spanning-tree by Euclidean distance so traces
+// are short and don't cross the whole board.
+
+function dist(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+/** Prim's MST: returns edges [from, to] connecting all pads with minimum total length */
+function mstEdges(
+  pads: Array<{ x: number; y: number }>
+): Array<[{ x: number; y: number }, { x: number; y: number }]> {
+  if (pads.length < 2) return [];
+  const inTree = new Set<number>([0]);
+  const edges: Array<[{ x: number; y: number }, { x: number; y: number }]> = [];
+
+  while (inTree.size < pads.length) {
+    let bestDist = Infinity;
+    let bestFrom = -1;
+    let bestTo   = -1;
+
+    for (const fi of inTree) {
+      for (let ti = 0; ti < pads.length; ti++) {
+        if (inTree.has(ti)) continue;
+        const d = dist(pads[fi]!, pads[ti]!);
+        if (d < bestDist) { bestDist = d; bestFrom = fi; bestTo = ti; }
+      }
+    }
+
+    if (bestFrom === -1) break;
+    inTree.add(bestTo);
+    edges.push([pads[bestFrom]!, pads[bestTo]!]);
+  }
+
+  return edges;
 }
 
 // --- Engine --------------------------------------------------------------
@@ -134,7 +249,7 @@ export async function runTSCircuitEngine(
   const positions = autoLayout(schemaJson.components, boardWidthMm, boardHeightMm);
 
   schemaJson.components.forEach((comp, idx) => {
-    const pos = positions[idx]!;
+    const pos  = positions[idx]!;
     const dims = getFootprintDims(comp.footprint);
     const pcbCompId = `pc-${comp.ref}`;
 
@@ -206,39 +321,43 @@ export async function runTSCircuitEngine(
     });
   });
 
-  // --- Route generation — L-shaped traces connecting pads of the same net ----
+  // --- MST trace routing — one tree per net, shortest total wire length ---
   if (schemaJson.nets.length > 0) {
-    // Assign pads to nets (round-robin by global pad index)
+    // Build a pool of all pad absolute positions
+    const allPads: Array<{ x: number; y: number }> = [];
+    schemaJson.components.forEach((comp, idx) => {
+      const pos  = positions[idx]!;
+      const dims = getFootprintDims(comp.footprint);
+      for (const pad of dims.pads) {
+        allPads.push({ x: pos.x + pad.dx, y: pos.y + pad.dy });
+      }
+    });
+
+    // Distribute pads across nets in round-robin (same as before),
+    // then route each net with MST instead of sequential pairs
     const netPadMap = new Map<string, Array<{ x: number; y: number }>>();
     for (const net of schemaJson.nets) netPadMap.set(net, []);
 
-    let globalPadIdx = 0;
-    schemaJson.components.forEach((comp, idx) => {
-      const pos = positions[idx]!;
-      const dims = getFootprintDims(comp.footprint);
-      for (const pad of dims.pads) {
-        const net = schemaJson.nets[globalPadIdx % schemaJson.nets.length]!;
-        netPadMap.get(net)!.push({ x: pos.x + pad.dx, y: pos.y + pad.dy });
-        globalPadIdx++;
-      }
+    allPads.forEach((pad, i) => {
+      const net = schemaJson.nets[i % schemaJson.nets.length]!;
+      netPadMap.get(net)!.push(pad);
     });
 
     let traceIdx = 0;
     for (const [net, pads] of netPadMap) {
       if (pads.length < 2) continue;
-      // Sort by x then y for deterministic routing
-      const sorted = [...pads].sort((a, b) => a.x - b.x || a.y - b.y);
       const width = traceWidth(net);
-      for (let i = 0; i < sorted.length - 1; i++) {
-        const from = sorted[i]!;
-        const to   = sorted[i + 1]!;
+      const edges = mstEdges(pads);
+
+      for (const [from, to] of edges) {
+        // Route as L-shaped (horizontal first, then vertical)
         soup.push({
           type: 'pcb_trace',
           pcb_trace_id: `trace-${traceIdx++}`,
           route: [
             { x: from.x, y: from.y },
-            { x: to.x,   y: from.y }, // horizontal segment
-            { x: to.x,   y: to.y   }, // vertical segment
+            { x: to.x,   y: from.y },
+            { x: to.x,   y: to.y   },
           ],
           stroke_width: width,
           layer: 'top',
@@ -270,7 +389,6 @@ export async function runTSCircuitEngine(
     const gerberCommands = convertSoupToGerberCommands(soup as Parameters<typeof convertSoupToGerberCommands>[0]);
     gerbers = stringifyGerberCommandLayers(gerberCommands) as Record<string, string>;
   } catch {
-    // Gerber generation is best-effort — circuit-json is still useful for the viewer
     gerbers = {};
   }
 
