@@ -101,11 +101,22 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // Persist PCB state to DB whenever the orchestrator emits one
+          // Persist PCB state to DB — merge with existing so circuit_json is never lost
+          // (DRC/export results don't carry circuit_json; a plain replace would wipe it)
           if (event.type === 'pcb_state') {
+            const { data: current } = await supabase
+              .from('projects')
+              .select('pcb_state')
+              .eq('id', body.projectId)
+              .eq('user_id', user.id)
+              .single();
+            const merged = {
+              ...(current?.pcb_state as Record<string, unknown> ?? {}),
+              ...event.state,
+            };
             await supabase
               .from('projects')
-              .update({ pcb_state: event.state, updated_at: new Date().toISOString() })
+              .update({ pcb_state: merged, updated_at: new Date().toISOString() })
               .eq('id', body.projectId)
               .eq('user_id', user.id);
           }

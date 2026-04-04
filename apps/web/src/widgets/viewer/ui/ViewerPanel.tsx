@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { useState, useEffect } from 'react';
-import { Layers, Box, Download, ZoomIn, ZoomOut, Maximize2, Eye, EyeOff, Cpu, Ruler, Activity } from 'lucide-react';
+import { Layers, Box, Download, ZoomIn, ZoomOut, Maximize2, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { useAppStore } from '@/shared/store/app-store';
 import { LAYER_COLORS, DEFAULT_LAYER_VISIBILITY, colorToHex } from '../lib/layers';
@@ -131,9 +131,11 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
               layerVisibility={layerVisibility}
               onReady={setZoomControls}
             />
-            {!(pcbState?.circuit_json?.length) && (
-              <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0d0d0d]/90 pointer-events-none">
-                <PCBMetadataPanel pcbState={pcbState} agentStep={agentStep} />
+            {pcbState?.circuit_json?.length ? (
+              <PCBInfoBadge pcbState={pcbState} />
+            ) : (
+              <div className="absolute inset-0 z-10">
+                <PCBEmptyState agentStep={agentStep} />
               </div>
             )}
           </>
@@ -196,79 +198,99 @@ const STEP_LABELS: Record<NonNullable<AgentStep>, string> = {
   EXPORT:    'Exporting Gerbers…',
 };
 
-function PCBMetadataPanel({
-  pcbState,
-  agentStep,
-}: {
-  pcbState: PCBState | null;
-  agentStep: AgentStep;
-}) {
-  const placement = pcbState?.placement as { placements?: unknown[] } | undefined;
-  const componentCount = placement?.placements?.length ?? 0;
-  const boardW = pcbState?.board_width_mm;
-  const boardH = pcbState?.board_height_mm;
-  const status = pcbState?.status ?? 'INITIAL';
-  const iteration = pcbState?.iteration ?? 0;
+const EXAMPLE_CIRCUITS = [
+  '3.3 V LDO regulator — TPS7333, bypass caps',
+  'ESP32-C3 minimal — USB-C, reset, decoupling',
+  'LED PWM driver — N-MOSFET, 100 mA, 10 kHz',
+];
+
+/** Full-area overlay shown when no circuit_json is available */
+function PCBEmptyState({ agentStep }: { agentStep: AgentStep }) {
+  return (
+    <div className="w-full h-full flex items-center justify-center relative overflow-hidden bg-[#0a0a0a]">
+      {/* Dot-grid background — PCB workspace feel */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          backgroundImage: 'radial-gradient(circle, #1c1c1c 1px, transparent 1px)',
+          backgroundSize: '20px 20px',
+        }}
+      />
+
+      <div className="relative z-10 flex flex-col items-center gap-6 text-center px-8 max-w-sm">
+        {agentStep ? (
+          /* Agent running */
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-[#141414] border border-border flex items-center justify-center">
+              <Layers size={22} className="text-primary/60" />
+            </div>
+            <div className="flex items-center gap-2 bg-[#111111] border border-border rounded-full px-4 py-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
+              <span className="text-xs text-[#A1A1AA] font-mono">{STEP_LABELS[agentStep]}</span>
+            </div>
+            <p className="text-[10px] text-[#3D3D3D] font-mono">PCB renders here when placement is done</p>
+          </div>
+        ) : (
+          /* INITIAL: welcoming canvas */
+          <>
+            <div className="w-14 h-14 rounded-xl bg-[#141414] border border-[#1E1E1E] flex items-center justify-center">
+              <Layers size={26} className="text-primary/25" />
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-sm text-[#52525B]">PCB canvas</p>
+              <p className="text-[11px] text-[#2E2E2E] leading-relaxed">
+                Describe your circuit in the chat.<br />
+                Schematic → placement → routing → Gerbers.
+              </p>
+            </div>
+
+            <div className="w-full space-y-1.5">
+              <p className="text-[9px] text-[#2A2A2A] font-mono uppercase tracking-wider text-left">
+                Example circuits
+              </p>
+              {EXAMPLE_CIRCUITS.map((ex) => (
+                <div
+                  key={ex}
+                  className="px-3 py-2 rounded-md border border-[#181818] bg-[#0D0D0D] text-left"
+                >
+                  <p className="text-[10px] text-[#383838] font-mono">{ex}</p>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Small info badge overlaid on the PCB canvas when circuit is rendered */
+function PCBInfoBadge({ pcbState }: { pcbState: PCBState }) {
+  const placement = pcbState.placement as { placements?: unknown[] } | undefined;
+  const componentCount = placement?.placements?.length ?? (pcbState.circuit_json?.length ? '?' : 0);
+  const boardW = pcbState.board_width_mm;
+  const boardH = pcbState.board_height_mm;
+  const status = pcbState.status;
+
+  const statusColor =
+    status === 'DRC_CLEAN' || status === 'PCB_LIVRÉ'
+      ? 'text-green-500'
+      : status === 'ROUTING_DONE' || status === 'PLACEMENT_DONE'
+        ? 'text-primary/70'
+        : 'text-[#52525B]';
 
   return (
-    <div className="pointer-events-none flex flex-col items-center gap-4">
-      <div className="w-12 h-12 rounded-xl bg-[#141414] border border-border flex items-center justify-center">
-        <Layers size={24} className="text-primary/40" />
+    <div className="absolute bottom-3 right-3 z-10 pointer-events-none">
+      <div className="flex items-center gap-3 bg-[#0D0D0D]/85 backdrop-blur-sm border border-[#1E1E1E] rounded-md px-3 py-1.5">
+        {boardW && boardH && (
+          <span className="text-[9px] text-[#3D3D3D] font-mono">{boardW}×{boardH}mm</span>
+        )}
+        {componentCount ? (
+          <span className="text-[9px] text-[#3D3D3D] font-mono">{componentCount} comp.</span>
+        ) : null}
+        <span className={`text-[9px] font-mono ${statusColor}`}>{status}</span>
       </div>
-
-      <div className="bg-[#111111] border border-border rounded-lg p-4 w-56">
-        <p className="text-[10px] text-[#52525B] font-mono uppercase tracking-wider mb-3">
-          PCB Metadata
-        </p>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-          <div className="flex items-center gap-1.5">
-            <Ruler size={10} className="text-[#52525B] shrink-0" />
-            <span className="text-[10px] text-[#71717A]">Board</span>
-          </div>
-          <span className="text-[10px] text-[#A1A1AA] font-mono text-right">
-            {boardW && boardH ? `${boardW}×${boardH}mm` : '--'}
-          </span>
-
-          <div className="flex items-center gap-1.5">
-            <Cpu size={10} className="text-[#52525B] shrink-0" />
-            <span className="text-[10px] text-[#71717A]">Components</span>
-          </div>
-          <span className="text-[10px] text-[#A1A1AA] font-mono text-right">
-            {componentCount > 0 ? componentCount : '--'}
-          </span>
-
-          <div className="flex items-center gap-1.5">
-            <Activity size={10} className="text-[#52525B] shrink-0" />
-            <span className="text-[10px] text-[#71717A]">Status</span>
-          </div>
-          <span className="text-[10px] text-[#A1A1AA] font-mono text-right truncate">
-            {status}
-          </span>
-
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] text-[#52525B]">#</span>
-            <span className="text-[10px] text-[#71717A]">Iteration</span>
-          </div>
-          <span className="text-[10px] text-[#A1A1AA] font-mono text-right">
-            {iteration}
-          </span>
-        </div>
-      </div>
-
-      {agentStep && (
-        <div className="flex items-center gap-2 bg-[#111111] border border-border rounded-full px-3 py-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
-          <span className="text-[10px] text-[#A1A1AA] font-mono">
-            {STEP_LABELS[agentStep]}
-          </span>
-        </div>
-      )}
-
-      {!agentStep && status === 'INITIAL' && (
-        <p className="text-[11px] text-[#52525B] text-center max-w-[180px]">
-          Describe your circuit in the chat to start designing
-        </p>
-      )}
     </div>
   );
 }
