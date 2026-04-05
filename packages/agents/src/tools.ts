@@ -185,8 +185,9 @@ export async function executeToolStub(
         pcb_status: 'SCHEMA_DONE',
         components: schema.components,
         nets: schema.nets,
+        connections: schema.connections ?? [],
         engine,
-        note: `Schéma généré — ${schema.components.length} composants, moteur: ${engine}.`,
+        note: `Schéma généré — ${schema.components.length} composants, ${schema.nets.length} nets, moteur: ${engine}.`,
       };
     }
 
@@ -259,15 +260,102 @@ export async function executeToolStub(
       };
     }
 
-    case 'call_agent_drc':
+    case 'call_agent_drc': {
+      const cached = _pcbStateCache.get(projectId);
+      const violations: Array<{ type: string; severity: 'error' | 'warning'; message: string; x_mm: number; y_mm: number }> = [];
+      const warnings: Array<{ type: string; message: string }> = [];
+
+      if (cached && cached.schema.components.length > 0) {
+        const result = await runPCBEngine(cached.schema, cached.boardW, cached.boardH);
+        const MIN_TRACK_WIDTH = 0.127;  // JLCPCB 2-layer standard
+        const MIN_CLEARANCE  = 0.127;   // JLCPCB standard
+        const EDGE_CLEARANCE = 0.3;     // Minimum trace-to-board-edge
+
+        type TraceEl = { pcb_trace_id: string; route: Array<{ x: number; y: number }>; stroke_width: number };
+        const traces = result.circuitJson.filter(
+          (e): e is Record<string, unknown> =>
+            typeof e === 'object' && e !== null && (e as Record<string, unknown>)['type'] === 'pcb_trace'
+        ) as unknown as TraceEl[];
+
+        // Rule 1: Minimum track width
+        for (const tr of traces) {
+          if (tr.stroke_width < MIN_TRACK_WIDTH) {
+            violations.push({
+              type: 'track_width',
+              severity: 'error',
+              message: `${tr.pcb_trace_id}: width ${tr.stroke_width.toFixed(3)}mm < min ${MIN_TRACK_WIDTH}mm`,
+              x_mm: tr.route[0]?.x ?? 0,
+              y_mm: tr.route[0]?.y ?? 0,
+            });
+          }
+        }
+
+        // Rule 2: Board-edge clearance — no trace within 0.3mm of board border
+        const bw = cached.boardW;
+        const bh = cached.boardH;
+        for (const tr of traces) {
+          for (const pt of tr.route) {
+            if (pt.x < EDGE_CLEARANCE || pt.x > bw - EDGE_CLEARANCE ||
+                pt.y < EDGE_CLEARANCE || pt.y > bh - EDGE_CLEARANCE) {
+              violations.push({
+                type: 'edge_clearance',
+                severity: 'error',
+                message: `${tr.pcb_trace_id}: trace too close to board edge at (${pt.x.toFixed(1)}, ${pt.y.toFixed(1)})mm`,
+                x_mm: pt.x,
+                y_mm: pt.y,
+              });
+              break; // one violation per trace is enough
+            }
+          }
+        }
+
+        // Rule 3: Clearance between different-net traces (sampled — check endpoints)
+        for (let i = 0; i < traces.length; i++) {
+          for (let j = i + 1; j < traces.length; j++) {
+            const aStart = traces[i]!.route[0];
+            const bStart = traces[j]!.route[0];
+            if (!aStart || !bStart) continue;
+            const dx = aStart.x - bStart.x;
+            const dy = aStart.y - bStart.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist > 0.001 && dist < MIN_CLEARANCE) {
+              violations.push({
+                type: 'clearance',
+                severity: 'error',
+                message: `Clearance ${dist.toFixed(3)}mm < min ${MIN_CLEARANCE}mm between ${traces[i]!.pcb_trace_id} and ${traces[j]!.pcb_trace_id}`,
+                x_mm: (aStart.x + bStart.x) / 2,
+                y_mm: (aStart.y + bStart.y) / 2,
+              });
+            }
+          }
+        }
+
+        // Warning: signal traces thinner than recommended (0.2mm)
+        const RECOMMENDED_SIGNAL_WIDTH = 0.2;
+        for (const tr of traces) {
+          if (tr.stroke_width >= MIN_TRACK_WIDTH && tr.stroke_width < RECOMMENDED_SIGNAL_WIDTH) {
+            warnings.push({
+              type: 'track_width_warning',
+              message: `${tr.pcb_trace_id}: width ${tr.stroke_width.toFixed(3)}mm is valid but < recommended ${RECOMMENDED_SIGNAL_WIDTH}mm`,
+            });
+          }
+        }
+      }
+
+      const drcClean = violations.length === 0;
+      // Add id field and rename to drcViolations to match PCBState.drcViolations
+      const drcViolations = violations.map((v, i) => ({ ...v, id: `drc-${i}` }));
       return {
         status: 'success',
-        pcb_status: 'DRC_CLEAN',
-        violations: [],
-        warnings: [],
-        drc_clean: true,
-        note: 'DRC clean — 0 violations.',
+        pcb_status: drcClean ? 'DRC_CLEAN' : 'ROUTING_DONE',
+        drcViolations,
+        warnings,
+        drc_clean: drcClean,
+        note: drcClean
+          ? `DRC clean — 0 violations${warnings.length ? `, ${warnings.length} warning(s)` : ''}.`
+          : `DRC: ${violations.length} violation(s) trouvée(s) — routage à corriger.`,
       };
+    }
 
     case 'call_agent_export': {
       const cached = _pcbStateCache.get(projectId);
@@ -311,11 +399,15 @@ async function generateSchemaWithHaiku(description: string): Promise<SchemaJson 
     const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1024,
+      max_tokens: 2048,
       system: `You are a PCB schematic generator. Given a circuit description, return a JSON object with:
 - "components": array of { "ref": string, "value": string, "footprint": string, "lcsc"?: string }
-- "nets": array of net name strings
+- "nets": array of net name strings (e.g. ["GND", "VCC", "NET1"])
+- "connections": array of { "name": string, "pins": [{"ref": string, "pin": number}, ...] }
+  where "pin" is the 1-indexed pad number of that component's footprint
 
+Footprint pad counts (1-indexed): 0402/0603/0805/1206/LED = 2 pads. SOT-23 = 3 pads. SOT-23-5 = 5 pads. TSSOP-8 = 8 pads. DIP-8 = 8 pads.
+For passives (R, C, LED): pin 1 = anode/+/left, pin 2 = cathode/−/right.
 Footprint must be one of: "0402", "0603", "0805", "1206", "SOT-23", "SOT-23-5", "TSSOP-8", "DIP-8", "LED"
 Reference designators: R (resistor), C (capacitor), U (IC), LED (LED), J (connector), Q (transistor), D (diode).
 Keep it to ≤ 20 components for simple circuits.
@@ -355,21 +447,36 @@ function parseSchemaFromDescription(
         { ref: 'J1', value: 'Conn_2Pin', footprint: '0402' },
       ],
       nets: ['GND', 'VCC', 'NET1'],
+      connections: [
+        { name: 'GND',  pins: [{ ref: 'LED1', pin: 2 }, { ref: 'J1', pin: 2 }] },
+        { name: 'VCC',  pins: [{ ref: 'J1',   pin: 1 }, { ref: 'R1',  pin: 1 }] },
+        { name: 'NET1', pins: [{ ref: 'R1',   pin: 2 }, { ref: 'LED1', pin: 1 }] },
+      ],
     };
   }
 
   if (complexity === 'medium') {
     return {
       components: [
-        { ref: 'U1', value: 'ATmega328P', lcsc: 'C14877', footprint: 'TSSOP-8' },
-        { ref: 'C1', value: '100nF', footprint: '0402' },
-        { ref: 'C2', value: '10µF', footprint: '0805' },
-        { ref: 'R1', value: '10k', footprint: '0402' },
-        { ref: 'R2', value: '10k', footprint: '0402' },
-        { ref: 'LED1', value: 'LED', footprint: 'LED' },
-        { ref: 'J1', value: 'USB-C', footprint: 'SOT-23' },
+        { ref: 'U1',   value: 'ATmega328P', lcsc: 'C14877', footprint: 'TSSOP-8' },
+        { ref: 'C1',   value: '100nF',      footprint: '0402' },
+        { ref: 'C2',   value: '10µF',       footprint: '0805' },
+        { ref: 'R1',   value: '10k',        footprint: '0402' },
+        { ref: 'R2',   value: '10k',        footprint: '0402' },
+        { ref: 'LED1', value: 'LED',        footprint: 'LED' },
+        { ref: 'J1',   value: 'USB-C',      footprint: 'SOT-23' },
       ],
       nets: ['GND', '3V3', '5V', 'MOSI', 'MISO', 'SCK', 'SDA', 'SCL'],
+      connections: [
+        { name: 'GND',  pins: [{ ref: 'U1', pin: 8 }, { ref: 'C1', pin: 2 }, { ref: 'C2', pin: 2 }, { ref: 'LED1', pin: 2 }, { ref: 'J1', pin: 3 }] },
+        { name: '3V3',  pins: [{ ref: 'U1', pin: 7 }, { ref: 'C1', pin: 1 }, { ref: 'C2', pin: 1 }, { ref: 'R1',  pin: 1 }, { ref: 'R2', pin: 1 }] },
+        { name: '5V',   pins: [{ ref: 'J1', pin: 1 }] },
+        { name: 'MOSI', pins: [{ ref: 'U1', pin: 3 }] },
+        { name: 'MISO', pins: [{ ref: 'U1', pin: 4 }] },
+        { name: 'SCK',  pins: [{ ref: 'U1', pin: 5 }, { ref: 'R1', pin: 2 }] },
+        { name: 'SDA',  pins: [{ ref: 'U1', pin: 1 }, { ref: 'R2', pin: 2 }] },
+        { name: 'SCL',  pins: [{ ref: 'U1', pin: 2 }, { ref: 'LED1', pin: 1 }] },
+      ],
     };
   }
 
@@ -383,5 +490,10 @@ function parseSchemaFromDescription(
       })),
     ],
     nets: ['GND', '3V3', '5V', 'GPIO0', 'GPIO1', 'GPIO2', 'GPIO3', 'SCL', 'SDA', 'TX', 'RX'],
+    connections: [
+      { name: 'GND', pins: [{ ref: 'U1', pin: 8 }, { ref: 'U2', pin: 2 }, ...Array.from({ length: 15 }, (_, i) => ({ ref: `C${i + 1}`, pin: 2 }))] },
+      { name: '3V3', pins: [{ ref: 'U2', pin: 3 }, ...Array.from({ length: 15 }, (_, i) => ({ ref: `C${i + 1}`, pin: 1 }))] },
+      { name: '5V',  pins: [{ ref: 'U2', pin: 1 }, { ref: 'U1', pin: 7 }] },
+    ],
   };
 }

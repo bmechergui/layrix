@@ -1,11 +1,11 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Bot, User } from 'lucide-react';
+import { Send, Bot, User, Check, AlertTriangle, AlertCircle } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import { useAppStore } from '@/shared/store/app-store';
-import type { Message } from '@layrix/types';
+import type { Message, DRCViolation } from '@layrix/types';
 import type { SSEEvent } from '@layrix/agents';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -77,17 +77,100 @@ function MessageBubble({ msg }: { msg: Message }) {
   );
 }
 
-function StreamingBubble({ text }: { text: string }) {
+// --- Agent pipeline timeline ---
+
+const PIPELINE_STEPS = ['SCHEMA', 'PLACEMENT', 'ROUTING', 'DRC', 'EXPORT'] as const;
+type PipelineStep = (typeof PIPELINE_STEPS)[number];
+
+const STEP_LABELS: Record<PipelineStep, string> = {
+  SCHEMA: 'Schema',
+  PLACEMENT: 'Place',
+  ROUTING: 'Route',
+  DRC: 'DRC',
+  EXPORT: 'Export',
+};
+
+function AgentTimeline({
+  activeStep,
+  completedSteps,
+}: {
+  activeStep: string | null;
+  completedSteps: Set<string>;
+}) {
+  return (
+    <div className="flex items-center gap-0.5 mb-2.5">
+      {PIPELINE_STEPS.map((step, i) => {
+        const isDone = completedSteps.has(step);
+        const isActive = activeStep === step && !isDone;
+        return (
+          <div key={step} className="flex items-center gap-0.5">
+            {i > 0 && (
+              <div
+                className={`w-4 h-px transition-colors ${
+                  completedSteps.has(PIPELINE_STEPS[i - 1]!) || isDone
+                    ? 'bg-emerald-500/40'
+                    : 'bg-[#2E2E2E]'
+                }`}
+              />
+            )}
+            <div className="flex flex-col items-center gap-0.5">
+              <div
+                className={`w-5 h-5 rounded-full flex items-center justify-center transition-all ${
+                  isDone
+                    ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-400'
+                    : isActive
+                      ? 'bg-primary/15 border border-primary/50 text-primary animate-pulse'
+                      : 'bg-[#111111] border border-[#2A2A2A] text-[#3D3D3D]'
+                }`}
+              >
+                {isDone ? (
+                  <Check size={9} strokeWidth={3} />
+                ) : (
+                  <span className="text-[8px] font-bold">{i + 1}</span>
+                )}
+              </div>
+              <span
+                className={`text-[7px] font-mono ${
+                  isDone
+                    ? 'text-emerald-400/60'
+                    : isActive
+                      ? 'text-primary/70'
+                      : 'text-[#2A2A2A]'
+                }`}
+              >
+                {STEP_LABELS[step]}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function StreamingBubble({
+  text,
+  activeStep,
+  completedSteps,
+}: {
+  text: string;
+  activeStep: string | null;
+  completedSteps: Set<string>;
+}) {
+  const showTimeline = activeStep !== null || completedSteps.size > 0;
   return (
     <div className="flex gap-3">
       <div className="w-7 h-7 rounded-full bg-[#1a1a1a] flex items-center justify-center shrink-0">
         <Bot size={14} className="text-[#A1A1AA]" />
       </div>
       <div className="max-w-[80%] rounded-xl rounded-tl-sm px-3 py-2 text-sm leading-relaxed bg-[#161616] text-[#E4E4E7] border border-border prose prose-invert prose-sm max-w-none [&_p]:text-[#E4E4E7]">
+        {showTimeline && (
+          <AgentTimeline activeStep={activeStep} completedSteps={completedSteps} />
+        )}
         {text ? (
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
         ) : (
-          <span className="flex gap-1 pt-1">
+          <span className="flex gap-1 pt-0.5">
             {[0, 1, 2].map((i) => (
               <span
                 key={i}
@@ -95,6 +178,39 @@ function StreamingBubble({ text }: { text: string }) {
                 style={{ animationDelay: `${i * 200}ms` }}
               />
             ))}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DRCPanel({ violations }: { violations: DRCViolation[] }) {
+  if (!violations.length) return null;
+  const errors = violations.filter((v) => v.severity === 'error');
+  const warnings = violations.filter((v) => v.severity === 'warning');
+  return (
+    <div className="mx-4 mb-2 rounded-lg border border-red-500/20 bg-red-500/5 p-2.5 space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <AlertCircle size={11} className="text-red-400 shrink-0" />
+        <span className="text-[10px] font-mono text-red-400 font-semibold">
+          DRC — {errors.length} error{errors.length !== 1 ? 's' : ''}{warnings.length ? `, ${warnings.length} warning${warnings.length !== 1 ? 's' : ''}` : ''}
+        </span>
+      </div>
+      <div className="space-y-0.5 max-h-24 overflow-y-auto">
+        {violations.slice(0, 8).map((v) => (
+          <div key={v.id} className="flex items-start gap-1.5">
+            {v.severity === 'error' ? (
+              <AlertCircle size={9} className="text-red-400 shrink-0 mt-0.5" />
+            ) : (
+              <AlertTriangle size={9} className="text-amber-400 shrink-0 mt-0.5" />
+            )}
+            <span className="text-[9px] font-mono text-[#A1A1AA] leading-tight">{v.message}</span>
+          </div>
+        ))}
+        {violations.length > 8 && (
+          <span className="text-[9px] font-mono text-[#52525B]">
+            +{violations.length - 8} more — see Routing tab
           </span>
         )}
       </div>
@@ -151,15 +267,30 @@ function PromptSuggestions({ onSelect }: { onSelect: (text: string) => void }) {
 
 const EMPTY_MESSAGES: Message[] = [];
 
+const PCB_STATUS_TO_STEP: Record<string, string> = {
+  SCHEMA_DONE:    'SCHEMA',
+  PLACEMENT_DONE: 'PLACEMENT',
+  ROUTING_DONE:   'ROUTING',
+  DRC_CLEAN:      'DRC',
+  'PCB_LIVRÉ':    'EXPORT',
+};
+
 export function ChatPanel({ projectId }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [streamingText, setStreamingText] = useState('');
+  const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set());
   const messages = useAppStore((s) => s.messagesByProject[projectId] ?? EMPTY_MESSAGES);
   const addMessage = useAppStore((s) => s.addMessage);
   const isAgentRunning = useAppStore((s) => s.isAgentRunning);
+  const agentStep = useAppStore((s) => s.agentStep);
   const setAgentRunning = useAppStore((s) => s.setAgentRunning);
   const deductCredits = useAppStore((s) => s.deductCredits);
   const setPcbState = useAppStore((s) => s.setPcbState);
+  const updateProjectStatus = useAppStore((s) => s.updateProjectStatus);
+  const drcViolations = useAppStore((s) => {
+    const state = s.pcbStateByProject[projectId];
+    return (state?.drcViolations ?? []) as DRCViolation[];
+  });
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -188,6 +319,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
     setInput('');
     setAgentRunning(true);
     setStreamingText('');
+    setCompletedSteps(new Set());
 
     const history = messages.map((m) => ({ role: m.role, content: m.content }));
 
@@ -242,6 +374,14 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
               setStreamingText(accumulated);
             } else if (event.type === 'pcb_state') {
               setPcbState(event.projectId, event.state as Parameters<typeof setPcbState>[1]);
+              const pcbStatus = (event.state as Record<string, unknown>)['pcb_status'];
+              if (typeof pcbStatus === 'string') {
+                updateProjectStatus(event.projectId, pcbStatus as Parameters<typeof updateProjectStatus>[1]);
+                const doneStep = PCB_STATUS_TO_STEP[pcbStatus];
+                if (doneStep) {
+                  setCompletedSteps((prev) => new Set([...prev, doneStep]));
+                }
+              }
             } else if (event.type === 'step') {
               setAgentRunning(true, event.step as Parameters<typeof setAgentRunning>[1]);
             } else if (event.type === 'done') {
@@ -292,7 +432,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
       setAgentRunning(false);
       setStreamingText('');
     }
-  }, [input, isAgentRunning, addMessage, projectId, setAgentRunning, deductCredits, setPcbState, messages]);
+  }, [input, isAgentRunning, addMessage, projectId, setAgentRunning, deductCredits, setPcbState, updateProjectStatus, setCompletedSteps, messages]);
 
   return (
     <div className="flex flex-col h-full">
@@ -320,9 +460,20 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
         {messages.map((msg) => (
           <MessageBubble key={msg.id} msg={msg} />
         ))}
-        {isAgentRunning && <StreamingBubble text={streamingText} />}
+        {isAgentRunning && (
+          <StreamingBubble
+            text={streamingText}
+            activeStep={agentStep}
+            completedSteps={completedSteps}
+          />
+        )}
         <div ref={bottomRef} />
       </div>
+
+      {/* DRC violations panel — shown after agent finishes if violations exist */}
+      {!isAgentRunning && drcViolations.length > 0 && (
+        <DRCPanel violations={drcViolations} />
+      )}
 
       {/* Input */}
       <div className="border-t border-border p-3 flex flex-col gap-2">
