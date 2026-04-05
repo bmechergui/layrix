@@ -117,9 +117,15 @@ packages/
 ├── @layrix/types   ← SOURCE DE VÉRITÉ unique (PCBStatus, Plan, AgentAction…)
 ├── @layrix/logger  ← Pino logger
 ├── @layrix/utils   ← cn() utility
-├── @layrix/db      ← Supabase client + migrations
+├── @layrix/db      ← Supabase client + migrations (migrations/001_initial.sql, 002_kicad_files_bucket.sql)
 ├── @layrix/agents  ← Orchestrateur + agents Claude SDK
+│   └── engines/    ← circuit-synth-engine.ts (primary) | tscircuit-engine.ts (fallback) | engine-router.ts
 └── @layrix/ui      ← Design system composants partagés
+
+services/
+└── kicad/          ← FastAPI Python headless KiCad
+    ├── routers/circuit_synth.py  ← /circuit-synth/generate (JSON → .kicad_sch + .kicad_pcb)
+    └── tools/      ← placement, routing, drc, export, simulation
 ```
 
 **Import paths :**
@@ -228,13 +234,11 @@ hidden md:block shrink-0
 
 Phases complétées : Phase 0 ✓ (infra) · Phase 1 ✓ (landing)
 
-Phase 2 en cours — livrées :
-- Phase D ✓ — Docs + PLAN + SKILLS + skills migrated Circuit-Synth + KiCanvas
-- Phase B ✓ — `KiCanvasViewer.tsx` créé, viewer tabs utilisent KiCanvas si `kicad_sch_url`/`kicad_pcb_url`
-
-Phase 2 restant :
-- Phase C — Supabase Storage bucket `kicad-files` + upload dans `apps/web/src/app/api/agent/route.ts`
-- Phase A — Circuit-Synth engine backend (`services/kicad/` + `packages/agents/src/engines/circuit-synth-engine.ts`)
+Phase 2 — Migration Circuit-Synth + KiCanvas complète :
+- Phase D ✓ — Docs + PLAN + SKILLS + skills migrés Circuit-Synth + KiCanvas
+- Phase B ✓ — `KiCanvasViewer.tsx`, viewer tabs bifurquent sur `kicad_sch_url`/`kicad_pcb_url`
+- Phase C ✓ — Bucket `kicad-files` Supabase Storage + upload agent route + signed URLs
+- Phase A ✓ — `circuit-synth-engine.ts` + `/circuit-synth/generate` FastAPI + engine-router priorité Circuit-Synth
 
 ---
 
