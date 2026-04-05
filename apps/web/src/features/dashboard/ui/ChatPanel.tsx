@@ -160,6 +160,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
   const setAgentRunning = useAppStore((s) => s.setAgentRunning);
   const deductCredits = useAppStore((s) => s.deductCredits);
   const setPcbState = useAppStore((s) => s.setPcbState);
+  const updateProjectStatus = useAppStore((s) => s.updateProjectStatus);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -242,6 +243,10 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
               setStreamingText(accumulated);
             } else if (event.type === 'pcb_state') {
               setPcbState(event.projectId, event.state as Parameters<typeof setPcbState>[1]);
+              const pcbStatus = (event.state as Record<string, unknown>)['pcb_status'];
+              if (typeof pcbStatus === 'string') {
+                updateProjectStatus(event.projectId, pcbStatus as Parameters<typeof updateProjectStatus>[1]);
+              }
             } else if (event.type === 'step') {
               setAgentRunning(true, event.step as Parameters<typeof setAgentRunning>[1]);
             } else if (event.type === 'done') {
@@ -292,7 +297,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
       setAgentRunning(false);
       setStreamingText('');
     }
-  }, [input, isAgentRunning, addMessage, projectId, setAgentRunning, deductCredits, setPcbState, messages]);
+  }, [input, isAgentRunning, addMessage, projectId, setAgentRunning, deductCredits, setPcbState, updateProjectStatus, messages]);
 
   return (
     <div className="flex flex-col h-full">
