@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Bot, User } from 'lucide-react';
+import { Send, Bot, User, Check } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import { useAppStore } from '@/shared/store/app-store';
@@ -77,17 +77,100 @@ function MessageBubble({ msg }: { msg: Message }) {
   );
 }
 
-function StreamingBubble({ text }: { text: string }) {
+// --- Agent pipeline timeline ---
+
+const PIPELINE_STEPS = ['SCHEMA', 'PLACEMENT', 'ROUTING', 'DRC', 'EXPORT'] as const;
+type PipelineStep = (typeof PIPELINE_STEPS)[number];
+
+const STEP_LABELS: Record<PipelineStep, string> = {
+  SCHEMA: 'Schema',
+  PLACEMENT: 'Place',
+  ROUTING: 'Route',
+  DRC: 'DRC',
+  EXPORT: 'Export',
+};
+
+function AgentTimeline({
+  activeStep,
+  completedSteps,
+}: {
+  activeStep: string | null;
+  completedSteps: Set<string>;
+}) {
+  return (
+    <div className="flex items-center gap-0.5 mb-2.5">
+      {PIPELINE_STEPS.map((step, i) => {
+        const isDone = completedSteps.has(step);
+        const isActive = activeStep === step && !isDone;
+        return (
+          <div key={step} className="flex items-center gap-0.5">
+            {i > 0 && (
+              <div
+                className={`w-4 h-px transition-colors ${
+                  completedSteps.has(PIPELINE_STEPS[i - 1]!) || isDone
+                    ? 'bg-emerald-500/40'
+                    : 'bg-[#2E2E2E]'
+                }`}
+              />
+            )}
+            <div className="flex flex-col items-center gap-0.5">
+              <div
+                className={`w-5 h-5 rounded-full flex items-center justify-center transition-all ${
+                  isDone
+                    ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-400'
+                    : isActive
+                      ? 'bg-primary/15 border border-primary/50 text-primary animate-pulse'
+                      : 'bg-[#111111] border border-[#2A2A2A] text-[#3D3D3D]'
+                }`}
+              >
+                {isDone ? (
+                  <Check size={9} strokeWidth={3} />
+                ) : (
+                  <span className="text-[8px] font-bold">{i + 1}</span>
+                )}
+              </div>
+              <span
+                className={`text-[7px] font-mono ${
+                  isDone
+                    ? 'text-emerald-400/60'
+                    : isActive
+                      ? 'text-primary/70'
+                      : 'text-[#2A2A2A]'
+                }`}
+              >
+                {STEP_LABELS[step]}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function StreamingBubble({
+  text,
+  activeStep,
+  completedSteps,
+}: {
+  text: string;
+  activeStep: string | null;
+  completedSteps: Set<string>;
+}) {
+  const showTimeline = activeStep !== null || completedSteps.size > 0;
   return (
     <div className="flex gap-3">
       <div className="w-7 h-7 rounded-full bg-[#1a1a1a] flex items-center justify-center shrink-0">
         <Bot size={14} className="text-[#A1A1AA]" />
       </div>
       <div className="max-w-[80%] rounded-xl rounded-tl-sm px-3 py-2 text-sm leading-relaxed bg-[#161616] text-[#E4E4E7] border border-border prose prose-invert prose-sm max-w-none [&_p]:text-[#E4E4E7]">
+        {showTimeline && (
+          <AgentTimeline activeStep={activeStep} completedSteps={completedSteps} />
+        )}
         {text ? (
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
         ) : (
-          <span className="flex gap-1 pt-1">
+          <span className="flex gap-1 pt-0.5">
             {[0, 1, 2].map((i) => (
               <span
                 key={i}
@@ -151,12 +234,22 @@ function PromptSuggestions({ onSelect }: { onSelect: (text: string) => void }) {
 
 const EMPTY_MESSAGES: Message[] = [];
 
+const PCB_STATUS_TO_STEP: Record<string, string> = {
+  SCHEMA_DONE:    'SCHEMA',
+  PLACEMENT_DONE: 'PLACEMENT',
+  ROUTING_DONE:   'ROUTING',
+  DRC_CLEAN:      'DRC',
+  'PCB_LIVRÉ':    'EXPORT',
+};
+
 export function ChatPanel({ projectId }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [streamingText, setStreamingText] = useState('');
+  const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set());
   const messages = useAppStore((s) => s.messagesByProject[projectId] ?? EMPTY_MESSAGES);
   const addMessage = useAppStore((s) => s.addMessage);
   const isAgentRunning = useAppStore((s) => s.isAgentRunning);
+  const agentStep = useAppStore((s) => s.agentStep);
   const setAgentRunning = useAppStore((s) => s.setAgentRunning);
   const deductCredits = useAppStore((s) => s.deductCredits);
   const setPcbState = useAppStore((s) => s.setPcbState);
@@ -189,6 +282,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
     setInput('');
     setAgentRunning(true);
     setStreamingText('');
+    setCompletedSteps(new Set());
 
     const history = messages.map((m) => ({ role: m.role, content: m.content }));
 
@@ -246,6 +340,10 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
               const pcbStatus = (event.state as Record<string, unknown>)['pcb_status'];
               if (typeof pcbStatus === 'string') {
                 updateProjectStatus(event.projectId, pcbStatus as Parameters<typeof updateProjectStatus>[1]);
+                const doneStep = PCB_STATUS_TO_STEP[pcbStatus];
+                if (doneStep) {
+                  setCompletedSteps((prev) => new Set([...prev, doneStep]));
+                }
               }
             } else if (event.type === 'step') {
               setAgentRunning(true, event.step as Parameters<typeof setAgentRunning>[1]);
@@ -297,7 +395,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
       setAgentRunning(false);
       setStreamingText('');
     }
-  }, [input, isAgentRunning, addMessage, projectId, setAgentRunning, deductCredits, setPcbState, updateProjectStatus, messages]);
+  }, [input, isAgentRunning, addMessage, projectId, setAgentRunning, deductCredits, setPcbState, updateProjectStatus, setCompletedSteps, messages]);
 
   return (
     <div className="flex flex-col h-full">
@@ -325,7 +423,13 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
         {messages.map((msg) => (
           <MessageBubble key={msg.id} msg={msg} />
         ))}
-        {isAgentRunning && <StreamingBubble text={streamingText} />}
+        {isAgentRunning && (
+          <StreamingBubble
+            text={streamingText}
+            activeStep={agentStep}
+            completedSteps={completedSteps}
+          />
+        )}
         <div ref={bottomRef} />
       </div>
 
