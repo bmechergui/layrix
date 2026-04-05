@@ -55,6 +55,9 @@ export class PCBRenderer {
   private boardHpx = 0;
   private baseScale = 1;
 
+  // Placeholder text — tracked so clearAll() can remove it cleanly
+  private placeholderLabel: Text | null = null;
+
   // Pan state
   private isPanning   = false;
   private panStartX   = 0;
@@ -177,13 +180,39 @@ export class PCBRenderer {
   }
 
   // ---------------------------------------------------------------------------
-  // Auto-fit: scale the viewport so the board fills ~85% of the canvas
+  // Auto-fit: scale the viewport so the content fills ~85% of the canvas.
+  // Fits to component+trace bounding box when components are clustered;
+  // falls back to board dimensions when content fills ≥40% of the board.
   // ---------------------------------------------------------------------------
 
   private autoFit(): void {
+    const PAD = 0.85; // visible area fraction
+
+    // Try to fit the actual rendered content (components + traces)
+    const contentBounds = this.componentLayer.getBounds();
+    const hasContent = contentBounds.width > 0 && contentBounds.height > 0;
+
+    if (hasContent) {
+      // Use content bounds — pad by 20% around the tight box
+      const cw = contentBounds.width  * 1.2;
+      const ch = contentBounds.height * 1.2;
+      const scaleX = (this.app.screen.width  * PAD) / cw;
+      const scaleY = (this.app.screen.height * PAD) / ch;
+      this.baseScale = Math.min(scaleX, scaleY, MAX_SCALE);
+
+      // Center on content midpoint
+      const cx = contentBounds.x + contentBounds.width  / 2;
+      const cy = contentBounds.y + contentBounds.height / 2;
+      this.viewport.scale.set(this.baseScale);
+      this.viewport.x = this.app.screen.width  / 2 - cx * this.baseScale;
+      this.viewport.y = this.app.screen.height / 2 - cy * this.baseScale;
+      return;
+    }
+
+    // Fallback: fit to board dimensions
     if (this.boardWpx <= 0 || this.boardHpx <= 0) return;
-    const scaleX = (this.app.screen.width  * 0.85) / this.boardWpx;
-    const scaleY = (this.app.screen.height * 0.85) / this.boardHpx;
+    const scaleX = (this.app.screen.width  * PAD) / this.boardWpx;
+    const scaleY = (this.app.screen.height * PAD) / this.boardHpx;
     this.baseScale = Math.min(scaleX, scaleY, MAX_SCALE);
     this.applyScale(this.baseScale);
   }
@@ -386,7 +415,7 @@ export class PCBRenderer {
     const label = new Text({ text: 'Waiting for PCB data…', style });
     label.x = cx - label.width  / 2;
     label.y = cy - label.height / 2;
-    // Placeholder bypasses viewport — render directly on stage
+    this.placeholderLabel = label;
     this.app.stage.addChild(label);
   }
 
@@ -395,9 +424,9 @@ export class PCBRenderer {
     this.componentLayer.removeChildren();
     this.drcLayer.removeChildren();
     this.labelLayer.removeChildren();
-    // Remove any direct stage children (placeholder text)
-    while (this.app.stage.children.length > 1) {
-      this.app.stage.removeChildAt(this.app.stage.children.length - 1);
+    if (this.placeholderLabel) {
+      this.app.stage.removeChild(this.placeholderLabel);
+      this.placeholderLabel = null;
     }
   }
 
