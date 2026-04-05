@@ -12,9 +12,21 @@ export interface SchemaComponent {
   footprint: string;
 }
 
+export interface SchemaPin {
+  ref: string;
+  pin: number; // 1-indexed pad number
+}
+
+export interface SchemaNet {
+  name: string;
+  pins: SchemaPin[];
+}
+
 export interface SchemaJson {
   components: SchemaComponent[];
   nets: string[];
+  /** Netlist connectivity — maps each net to the component pins it connects */
+  connections?: SchemaNet[];
 }
 
 export interface TSCircuitResult {
@@ -323,25 +335,46 @@ export async function runTSCircuitEngine(
 
   // --- MST trace routing — one tree per net, shortest total wire length ---
   if (schemaJson.nets.length > 0) {
-    // Build a pool of all pad absolute positions
-    const allPads: Array<{ x: number; y: number }> = [];
-    schemaJson.components.forEach((comp, idx) => {
-      const pos  = positions[idx]!;
-      const dims = getFootprintDims(comp.footprint);
-      for (const pad of dims.pads) {
-        allPads.push({ x: pos.x + pad.dx, y: pos.y + pad.dy });
-      }
-    });
-
-    // Distribute pads across nets in round-robin (same as before),
-    // then route each net with MST instead of sequential pairs
     const netPadMap = new Map<string, Array<{ x: number; y: number }>>();
     for (const net of schemaJson.nets) netPadMap.set(net, []);
 
-    allPads.forEach((pad, i) => {
-      const net = schemaJson.nets[i % schemaJson.nets.length]!;
-      netPadMap.get(net)!.push(pad);
-    });
+    if (schemaJson.connections && schemaJson.connections.length > 0) {
+      // Use actual netlist connectivity: map each net to its physical pad positions
+      const compPosMap = new Map<string, { x: number; y: number }>();
+      const compDimsMap = new Map<string, PadDimensions>();
+      schemaJson.components.forEach((comp, idx) => {
+        compPosMap.set(comp.ref, positions[idx]!);
+        compDimsMap.set(comp.ref, getFootprintDims(comp.footprint));
+      });
+
+      for (const conn of schemaJson.connections) {
+        if (!netPadMap.has(conn.name)) netPadMap.set(conn.name, []);
+        for (const { ref, pin } of conn.pins) {
+          const pos = compPosMap.get(ref);
+          const dims = compDimsMap.get(ref);
+          if (pos && dims) {
+            const pad = dims.pads[pin - 1];
+            if (pad) {
+              netPadMap.get(conn.name)!.push({ x: pos.x + pad.dx, y: pos.y + pad.dy });
+            }
+          }
+        }
+      }
+    } else {
+      // Fallback: round-robin distribution when no connectivity data is available
+      const allPads: Array<{ x: number; y: number }> = [];
+      schemaJson.components.forEach((comp, idx) => {
+        const pos = positions[idx]!;
+        const dims = getFootprintDims(comp.footprint);
+        for (const pad of dims.pads) {
+          allPads.push({ x: pos.x + pad.dx, y: pos.y + pad.dy });
+        }
+      });
+      allPads.forEach((pad, i) => {
+        const net = schemaJson.nets[i % schemaJson.nets.length]!;
+        netPadMap.get(net)!.push(pad);
+      });
+    }
 
     let traceIdx = 0;
     for (const [net, pads] of netPadMap) {

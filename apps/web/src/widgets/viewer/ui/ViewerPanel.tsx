@@ -152,7 +152,7 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
             )}
           </>
         ) : mode === 'schematic' ? (
-          <SchemaNetlistView pcbState={pcbState} netsVisible />
+          <SchemaNetlistView pcbState={pcbState} />
         ) : mode === 'components' ? (
           <ComponentsBOMView pcbState={pcbState} />
         ) : (
@@ -329,21 +329,32 @@ function PCBViewer3DPlaceholder() {
   );
 }
 
-const POWER_PREFIXES = ['GND', 'VSS', 'VCC', 'VDD', 'VIN', 'VOUT', '3V3', '5V', '12V'];
-function netClass(net: string): string {
-  const u = net.toUpperCase();
-  if (POWER_PREFIXES.some((p) => u === p || u.startsWith('GND') || u.startsWith('VSS'))) {
-    return 'border-[#1A2A1A] text-[#52A052] bg-[#0D160D]';
-  }
-  if (POWER_PREFIXES.some((p) => u.startsWith(p))) {
-    return 'border-[#2A1E0D] text-[#A07030] bg-[#160F05]';
-  }
-  return 'border-[#1E1E1E] text-[#3D3D3D] bg-[#0D0D0D]';
+interface SchemaNetConn {
+  name: string;
+  pins: Array<{ ref: string; pin: number }>;
 }
 
-function SchemaNetlistView({ pcbState, netsVisible = false }: { pcbState: PCBState | null; netsVisible?: boolean }) {
+const FOOTPRINT_PAD_COUNT: Record<string, number> = {
+  '0402': 2, '0603': 2, '0805': 2, '1206': 2, 'LED': 2,
+  'SOT-23': 3, 'SOT-23-5': 5, 'TSSOP-8': 8, 'DIP-8': 8,
+};
+
+function getPadCount(footprint: string): number {
+  const key = Object.keys(FOOTPRINT_PAD_COUNT).find(
+    (k) => footprint.toUpperCase().includes(k.toUpperCase())
+  );
+  return FOOTPRINT_PAD_COUNT[key ?? '0402'] ?? 2;
+}
+
+const NET_PALETTE = [
+  '#D4820A', '#4488FF', '#22C55E', '#F59E0B', '#A855F7',
+  '#EC4899', '#06B6D4', '#F97316', '#84CC16', '#EF4444',
+];
+
+function SchemaNetlistView({ pcbState }: { pcbState: PCBState | null }) {
   const raw = pcbState as Record<string, unknown> | null;
   const components = Array.isArray(raw?.['components']) ? (raw['components'] as SchemaComponent[]) : [];
+  const connections = Array.isArray(raw?.['connections']) ? (raw['connections'] as SchemaNetConn[]) : [];
   const nets = Array.isArray(raw?.['nets']) ? (raw['nets'] as string[]) : [];
 
   if (!components.length) {
@@ -357,42 +368,139 @@ function SchemaNetlistView({ pcbState, netsVisible = false }: { pcbState: PCBSta
     );
   }
 
-  return (
-    <div className="h-full overflow-auto p-4 space-y-5 bg-[#090909]">
-      {/* Component table */}
-      <div>
-        <p className="text-[9px] text-[#3D3D3D] font-mono uppercase tracking-wider mb-2">
-          Components — {components.length}
-        </p>
-        <div className="space-y-px">
-          <div className="grid grid-cols-[3rem_1fr_5rem_4rem] gap-2 px-2 py-1 text-[9px] text-[#2E2E2E] font-mono uppercase tracking-wider">
-            <span>Ref</span><span>Value</span><span>Footprint</span><span>LCSC</span>
-          </div>
-          {components.map((c) => (
-            <div
-              key={c.ref}
-              className="grid grid-cols-[3rem_1fr_5rem_4rem] gap-2 px-2 py-1.5 rounded bg-[#0F0F0F] border border-[#181818] text-[10px] font-mono"
-            >
-              <span className="text-primary/60 shrink-0">{c.ref}</span>
-              <span className="text-[#A1A1AA] truncate">{c.value}</span>
-              <span className="text-[#52525B] truncate">{c.footprint}</span>
-              <span className="text-[#3D3D3D]">{c.lcsc ?? '—'}</span>
-            </div>
-          ))}
-        </div>
-      </div>
+  // --- SVG layout constants ---
+  const BOX_W = 90;
+  const BOX_H = 48;
+  const GAP_X = 50;
+  const GAP_Y = 70;
+  const COLS = Math.min(5, components.length);
+  const ROWS = Math.ceil(components.length / COLS);
+  const PAD_Y = BOX_H + 8; // pins drawn below the box
 
-      {/* Net chips — only in Schematic mode */}
-      {netsVisible && nets.length > 0 && (
-        <div>
+  const svgW = COLS * (BOX_W + GAP_X) + GAP_X;
+  const svgH = ROWS * (BOX_H + GAP_Y) + GAP_Y + 20;
+
+  const compPos = components.map((_, i) => ({
+    x: (i % COLS) * (BOX_W + GAP_X) + GAP_X,
+    y: Math.floor(i / COLS) * (BOX_H + GAP_Y) + GAP_Y,
+  }));
+
+  const compIdxByRef = new Map(components.map((c, i) => [c.ref, i]));
+
+  // Pin position: evenly spaced across bottom edge of box
+  function pinPos(ref: string, pin: number): { x: number; y: number } | null {
+    const idx = compIdxByRef.get(ref);
+    if (idx === undefined) return null;
+    const pos = compPos[idx]!;
+    const total = getPadCount(components[idx]!.footprint);
+    return {
+      x: pos.x + ((pin) / (total + 1)) * BOX_W,
+      y: pos.y + PAD_Y,
+    };
+  }
+
+  return (
+    <div className="h-full overflow-auto bg-[#090909] p-4">
+      {/* SVG schematic diagram */}
+      <svg
+        width={svgW}
+        height={svgH}
+        viewBox={`0 0 ${svgW} ${svgH}`}
+        className="block"
+        style={{ minWidth: svgW }}
+      >
+        {/* Ratsnest lines */}
+        {connections.map((conn, netIdx) => {
+          const color = NET_PALETTE[netIdx % NET_PALETTE.length]!;
+          const pts = conn.pins.map((p) => pinPos(p.ref, p.pin)).filter(Boolean) as Array<{ x: number; y: number }>;
+          if (pts.length < 2) return null;
+          return (
+            <g key={conn.name}>
+              {pts.slice(1).map((pt, i) => (
+                <line
+                  key={i}
+                  x1={pts[i]!.x} y1={pts[i]!.y}
+                  x2={pt.x} y2={pt.y}
+                  stroke={color} strokeWidth={1.5}
+                  strokeDasharray="5 3" opacity={0.7}
+                />
+              ))}
+              {/* Net label near first pin */}
+              {pts[0] && (
+                <text
+                  x={pts[0].x + 3} y={pts[0].y + 11}
+                  fill={color} fontSize={7} fontFamily="monospace" opacity={0.9}
+                >
+                  {conn.name}
+                </text>
+              )}
+            </g>
+          );
+        })}
+
+        {/* Component boxes */}
+        {components.map((comp, i) => {
+          const pos = compPos[i]!;
+          const padCount = getPadCount(comp.footprint);
+          return (
+            <g key={comp.ref}>
+              {/* Box */}
+              <rect
+                x={pos.x} y={pos.y} width={BOX_W} height={BOX_H}
+                fill="#0F0F0F" stroke="#2E2E2E" strokeWidth={1} rx={4}
+              />
+              {/* Ref */}
+              <text
+                x={pos.x + BOX_W / 2} y={pos.y + 16}
+                fill="#D4820A" fontSize={10} fontFamily="monospace"
+                textAnchor="middle" fontWeight="600"
+              >
+                {comp.ref}
+              </text>
+              {/* Value */}
+              <text
+                x={pos.x + BOX_W / 2} y={pos.y + 29}
+                fill="#A1A1AA" fontSize={8} fontFamily="monospace" textAnchor="middle"
+              >
+                {comp.value.length > 12 ? comp.value.slice(0, 12) + '…' : comp.value}
+              </text>
+              {/* Footprint */}
+              <text
+                x={pos.x + BOX_W / 2} y={pos.y + 40}
+                fill="#3D3D3D" fontSize={7} fontFamily="monospace" textAnchor="middle"
+              >
+                {comp.footprint}
+              </text>
+              {/* Pin dots */}
+              {Array.from({ length: padCount }, (_, k) => {
+                const p = pinPos(comp.ref, k + 1)!;
+                return (
+                  <circle key={k} cx={p.x} cy={p.y} r={2.5}
+                    fill="#1A1A1A" stroke="#3D3D3D" strokeWidth={1}
+                  />
+                );
+              })}
+            </g>
+          );
+        })}
+      </svg>
+
+      {/* Fallback: net chips when no connections data */}
+      {connections.length === 0 && nets.length > 0 && (
+        <div className="mt-4">
           <p className="text-[9px] text-[#3D3D3D] font-mono uppercase tracking-wider mb-2">
             Nets — {nets.length}
           </p>
           <div className="flex flex-wrap gap-1.5">
-            {nets.map((net) => (
+            {nets.map((net, i) => (
               <span
                 key={net}
-                className={`px-2 py-0.5 rounded border text-[9px] font-mono ${netClass(net)}`}
+                className="px-2 py-0.5 rounded border text-[9px] font-mono"
+                style={{
+                  color: NET_PALETTE[i % NET_PALETTE.length],
+                  borderColor: `${NET_PALETTE[i % NET_PALETTE.length]}40`,
+                  backgroundColor: `${NET_PALETTE[i % NET_PALETTE.length]}10`,
+                }}
               >
                 {net}
               </span>
