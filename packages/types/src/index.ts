@@ -111,6 +111,10 @@ export interface PCBState {
   circuit_json?: unknown[];
   board_width_mm?: number;
   board_height_mm?: number;
+  /** Supabase Storage signed URL for .kicad_sch file (Circuit-Synth output) */
+  kicad_sch_url?: string;
+  /** Supabase Storage signed URL for .kicad_pcb file (Circuit-Synth output) */
+  kicad_pcb_url?: string;
 }
 
 export const CREDIT_COSTS: Record<AgentAction, number> = {

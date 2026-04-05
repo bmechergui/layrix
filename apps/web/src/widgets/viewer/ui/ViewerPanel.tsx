@@ -15,6 +15,12 @@ const PixiCanvas = dynamic(() => import('./PixiCanvas').then((m) => m.PixiCanvas
   loading: () => <PCBPlaceholder />,
 });
 
+// KiCanvas : web components browser uniquement → ssr: false obligatoire
+const KiCanvasViewer = dynamic(
+  () => import('./KiCanvasViewer').then((m) => m.KiCanvasViewer),
+  { ssr: false, loading: () => <PCBPlaceholder /> }
+);
+
 type ViewMode = 'routing' | '3d' | 'schematic' | 'components';
 
 interface ViewerPanelProps {
@@ -130,22 +136,30 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
       {/* Viewer area */}
       <div className="flex-1 relative overflow-hidden">
         {mode === 'routing' ? (
-          <>
-            <PixiCanvas
-              pcbState={pcbState}
-              layerVisibility={layerVisibility}
-              onReady={setZoomControls}
-            />
-            {pcbState?.circuit_json?.length ? (
-              <PCBInfoBadge pcbState={pcbState} />
-            ) : (
-              <div className="absolute inset-0 z-10">
-                <PCBEmptyState agentStep={agentStep} />
-              </div>
-            )}
-          </>
+          pcbState?.kicad_pcb_url ? (
+            <KiCanvasViewer src={pcbState.kicad_pcb_url} type="board" className="h-full" />
+          ) : (
+            <>
+              <PixiCanvas
+                pcbState={pcbState}
+                layerVisibility={layerVisibility}
+                onReady={setZoomControls}
+              />
+              {pcbState?.circuit_json?.length ? (
+                <PCBInfoBadge pcbState={pcbState} />
+              ) : (
+                <div className="absolute inset-0 z-10">
+                  <PCBEmptyState agentStep={agentStep} />
+                </div>
+              )}
+            </>
+          )
         ) : mode === 'schematic' ? (
-          <SchemaNetlistView pcbState={pcbState} />
+          pcbState?.kicad_sch_url ? (
+            <KiCanvasViewer src={pcbState.kicad_sch_url} type="schematic" className="h-full" />
+          ) : (
+            <SchemaNetlistView pcbState={pcbState} />
+          )
         ) : mode === 'components' ? (
           <ComponentsBOMView pcbState={pcbState} />
         ) : (
