@@ -117,7 +117,8 @@ Confirme → exécuter. Modifie → reprendre sans redemander.
 ├── footprint / kicad_mod / snapmagic / octopart       → layrix-footprint
 ├── placement / routage / freerouting / gerber         → layrix-kicad-service
 ├── viewer / kicanvas / kicad_sch / kicad_pcb / schéma  → layrix-viewer
-├── circuit-synth / python kicad / génération kicad    → layrix-kicad-service
+├── circuit-synth / @circuit / Net() / Component() / symbol mapping / KICAD_SYMBOL_DIR → layrix-circuit-synth
+├── génération kicad / python kicad / kicad_sch depuis python   → layrix-circuit-synth + layrix-kicad-service
 ├── crédit / balance / plan / lemon squeezy / top-up   → layrix-credits
 ├── DRC / violation / clearance / track width          → layrix-drc
 ├── dashboard / composant React / UI / tailwind        → /everything-claude-code:frontend-patterns
