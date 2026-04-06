@@ -400,7 +400,8 @@ function generateSchematic(
     const val   = comp.value.replace(/"/g, '\\"');
     const fp    = comp.footprint.replace(/"/g, '\\"');
 
-    lines.push(`  (symbol (lib_id "${libId}") (at ${x} ${y} 0) (unit 1)`);
+    lines.push(`  (symbol (lib_id "${libId}") (at ${x} ${y} 0) (unit 1) (in_bom yes) (on_board yes)`);
+    lines.push(`    (uuid "${uuidv4()}")`);
     lines.push(`    (property "Reference" "${ref}" (at ${x} ${y - 4} 0) (effects (font (size 1.27 1.27))))`);
     lines.push(`    (property "Value" "${val}" (at ${x} ${y + 4} 0) (effects (font (size 1.27 1.27))))`);
     lines.push(`    (property "Footprint" "${fp}" (at ${x} ${y + 8} 0) (effects (font (size 1.27 1.27)) (hide yes)))`);
@@ -429,7 +430,8 @@ function generateSchematic(
       if (powerSymbolsEmitted.has(symKey)) return;
       powerSymbolsEmitted.add(symKey);
       const ref = `#PWR${String(pwrIdx++).padStart(2, '0')}`;
-      lines.push(`  (symbol (lib_id "${libId}") (at ${px} ${py} 0) (unit 1)`);
+      lines.push(`  (symbol (lib_id "${libId}") (at ${px} ${py} 0) (unit 1) (in_bom no) (on_board no)`);
+      lines.push(`    (uuid "${uuidv4()}")`);
       lines.push(`    (property "Reference" "${ref}" (at ${px} ${py - 3} 0) (effects (font (size 1.27 1.27)) (hide yes)))`);
       lines.push(`    (property "Value" "${conn.name.replace(/"/g, '\\"')}" (at ${px} ${py + 3} 0) (effects (font (size 1.27 1.27))))`);
       lines.push('  )');
