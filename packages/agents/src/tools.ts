@@ -331,29 +331,78 @@ async function generateSchemaWithHaiku(description: string): Promise<SchemaJson 
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 2048,
-      system: `You are a PCB schematic generator. Given a circuit description, return a JSON object with:
-- "components": array of { "ref": string, "value": string, "footprint": string, "lcsc"?: string }
-- "nets": array of net name strings (e.g. ["GND", "VCC", "NET1"])
-- "connections": array of { "name": string, "pins": [{"ref": string, "pin": number}, ...] }
-  where "pin" is the 1-indexed pad number of that component's footprint
+      system: `You are a PCB netlist generator. Given a circuit description, return a single JSON object (no markdown, no comments) with exactly these three keys:
 
-Footprint pad counts (1-indexed): 0402/0603/0805/1206/LED = 2 pads. SOT-23 = 3 pads. SOT-23-5 = 5 pads. TSSOP-8 = 8 pads. DIP-8 = 8 pads.
-For passives (R, C, LED): pin 1 = anode/+/left, pin 2 = cathode/−/right.
-Footprint must be one of: "0402", "0603", "0805", "1206", "SOT-23", "SOT-23-5", "TSSOP-8", "DIP-8", "LED"
-Reference designators: R (resistor), C (capacitor), U (IC), LED (LED), J (connector), Q (transistor), D (diode).
-Keep it to ≤ 20 components for simple circuits.
-Return ONLY valid JSON, no markdown fences, no explanation.`,
+"components": array of { "ref": string, "value": string, "footprint": string, "lcsc"?: string }
+"nets": array of net name strings — every net that appears in connections MUST be listed here
+"connections": array of { "name": string, "pins": [{"ref": string, "pin": number}, ...] }
+  - EVERY net in "nets" MUST appear in "connections"
+  - "pin" is the 1-indexed pad number of that component's footprint
+  - Every component "ref" used in pins MUST exist in "components"
+  - A net with only 1 pin is valid (dangling net is better than missing net)
+
+Footprint pad counts (STRICT — never exceed):
+  0402 / 0603 / 0805 / 1206 / LED = 2 pads (pin 1 or 2 only)
+  SOT-23 = 3 pads  (pin 1, 2, or 3 only)
+  SOT-23-5 = 5 pads
+  TSSOP-8 = 8 pads
+  DIP-8 = 8 pads
+
+Footprint conventions:
+  Passives (R, C): pin 1 = +/left, pin 2 = −/right
+  LED: pin 1 = anode (+), pin 2 = cathode (−)
+  SOT-23 transistor: pin 1 = base, pin 2 = emitter, pin 3 = collector
+  Connector (J): pin 1 = first terminal, pin 2 = second terminal
+
+Reference designators: R=resistor, C=capacitor, U=IC, LED=LED, J=connector, Q=transistor, D=diode.
+Footprint must be exactly one of: "0402", "0603", "0805", "1206", "SOT-23", "SOT-23-5", "TSSOP-8", "DIP-8", "LED"
+Keep it to ≤ 20 components.
+
+Example output for "LED with current-limiting resistor on 3.3V":
+{"components":[{"ref":"J1","value":"Conn_2Pin","footprint":"0402"},{"ref":"R1","value":"330R","footprint":"0402"},{"ref":"LED1","value":"Red LED","footprint":"LED"}],"nets":["GND","3V3","NET_R_LED"],"connections":[{"name":"GND","pins":[{"ref":"J1","pin":2},{"ref":"LED1","pin":2}]},{"name":"3V3","pins":[{"ref":"J1","pin":1},{"ref":"R1","pin":1}]},{"name":"NET_R_LED","pins":[{"ref":"R1","pin":2},{"ref":"LED1","pin":1}]}]}
+
+Return ONLY valid JSON. No markdown fences. No explanation.`,
       messages: [{ role: 'user', content: `Circuit: ${description}` }],
     });
 
     const text = response.content[0]?.type === 'text' ? response.content[0].text.trim() : '';
     if (!text) return null;
 
-    const parsed = JSON.parse(text) as SchemaJson;
-    if (Array.isArray(parsed.components) && parsed.components.length > 0) {
-      return parsed;
+    // Strip accidental markdown fences if model adds them
+    const cleaned = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
+    const parsed = JSON.parse(cleaned) as SchemaJson;
+    if (!Array.isArray(parsed.components) || parsed.components.length === 0) return null;
+
+    // Validate + repair connections: remove entries with invalid pin numbers
+    const padCountMap: Record<string, number> = {
+      '0402': 2, '0603': 2, '0805': 2, '1206': 2, 'LED': 2,
+      'SOT-23': 3, 'SOT-23-5': 5, 'TSSOP-8': 8, 'DIP-8': 8,
+    };
+    const compPads = new Map(
+      parsed.components.map((c) => {
+        const key = Object.keys(padCountMap).find((k) =>
+          c.footprint.toUpperCase().includes(k.toUpperCase())
+        );
+        return [c.ref, padCountMap[key ?? '0402'] ?? 2] as [string, number];
+      })
+    );
+    const validRefs = new Set(parsed.components.map((c) => c.ref));
+
+    if (Array.isArray(parsed.connections)) {
+      parsed.connections = parsed.connections
+        .map((conn) => ({
+          ...conn,
+          pins: conn.pins.filter((p) => {
+            const maxPin = compPads.get(p.ref) ?? 2;
+            return validRefs.has(p.ref) && p.pin >= 1 && p.pin <= maxPin;
+          }),
+        }))
+        .filter((conn) => conn.name && conn.pins.length > 0);
+    } else {
+      parsed.connections = [];
     }
-    return null;
+
+    return parsed;
   } catch {
     // Graceful fallback — never let a Haiku failure block the pipeline
     return null;
