@@ -111,6 +111,7 @@ const DEFAULT_CHAT_WIDTH = 380;
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const project = useAppStore((s) => s.projects.find((p) => p.id === id));
+  const projectsLoading = useAppStore((s) => s.projectsLoading);
   const agentStep = useAppStore((s) => s.agentStep);
   const setSelectedProjectId = useAppStore((s) => s.setSelectedProjectId);
 
@@ -151,6 +152,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     document.body.style.userSelect = 'none';
   };
 
+  if (projectsLoading) return <div className="text-muted-foreground p-6 animate-pulse">Loading…</div>;
   if (!project) return <div className="text-muted-foreground p-6">Project not found</div>;
 
   return (

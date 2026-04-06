@@ -50,7 +50,7 @@ interface AppState {
 export const useAppStore = create<AppState>((set) => ({
   user: null,
   projects: [],
-  projectsLoading: false,
+  projectsLoading: true,
   selectedProjectId: null,
   messagesByProject: {},
   credits: null,
