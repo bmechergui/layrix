@@ -21,6 +21,7 @@ const KiCanvasViewer = dynamic(
   { ssr: false, loading: () => <PCBPlaceholder /> }
 );
 
+
 type ViewMode = 'routing' | '3d' | 'schematic' | 'components';
 
 interface ViewerPanelProps {
@@ -145,7 +146,7 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
                 layerVisibility={layerVisibility}
                 onReady={setZoomControls}
               />
-              {pcbState?.circuit_json?.length ? (
+              {pcbState?.components?.length ? (
                 <PCBInfoBadge pcbState={pcbState} />
               ) : (
                 <div className="absolute inset-0 z-10">

@@ -200,8 +200,8 @@ export async function executeToolStub(
         nets: schema.nets,
         connections: schema.connections ?? [],
         engine,
-        ...(kicad_sch_content !== null && { kicad_sch_content }),
-        ...(kicad_pcb_content !== null && { kicad_pcb_content }),
+        kicad_sch_content,
+        kicad_pcb_content,
         note: `Schéma généré — ${schema.components.length} composants, ${schema.nets.length} nets, moteur: ${engine}.`,
       };
     }
