@@ -145,7 +145,7 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
                 layerVisibility={layerVisibility}
                 onReady={setZoomControls}
               />
-              {pcbState?.circuit_json?.length ? (
+              {pcbState?.components?.length ? (
                 <PCBInfoBadge pcbState={pcbState} />
               ) : (
                 <div className="absolute inset-0 z-10">
@@ -291,7 +291,7 @@ function PCBEmptyState({ agentStep }: { agentStep: AgentStep }) {
 /** Small info badge overlaid on the PCB canvas when circuit is rendered */
 function PCBInfoBadge({ pcbState }: { pcbState: PCBState }) {
   const placement = pcbState.placement as { placements?: unknown[] } | undefined;
-  const componentCount = placement?.placements?.length ?? (pcbState.circuit_json?.length ? '?' : 0);
+  const componentCount = placement?.placements?.length ?? pcbState.components?.length ?? 0;
   const boardW = pcbState.board_width_mm;
   const boardH = pcbState.board_height_mm;
   const status = pcbState.status;

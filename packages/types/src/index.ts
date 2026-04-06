@@ -106,9 +106,6 @@ export interface PCBState {
   placement?: Record<string, unknown>;
   routing?: Record<string, unknown>;
   drcViolations?: DRCViolation[];
-  gerberPath?: string;
-  /** Circuit-json soup produced by TSCircuit engine */
-  circuit_json?: unknown[];
   board_width_mm?: number;
   board_height_mm?: number;
   /** Supabase Storage signed URL for .kicad_sch file (Circuit-Synth output) */

@@ -2,7 +2,7 @@
 // PixiJS v8 — API async Application, Graphics chainable
 import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
 import { mmToPx, LAYER_COLORS } from './layers';
-import type { PCBState, DRCViolation } from '@layrix/types';
+import type { PCBState, DRCViolation, SchemaComponent, SchemaNet } from '@layrix/types';
 
 interface PlacementItem {
   ref: string;
@@ -127,8 +127,8 @@ export class PCBRenderer {
   render(state: PCBState | null, layerVisibility: Record<string, boolean> = {}): void {
     this.clearAll();
 
-    if (Array.isArray(state?.circuit_json) && state.circuit_json.length > 0) {
-      this.renderFromCircuitJson(state.circuit_json, layerVisibility);
+    if (Array.isArray(state?.components) && state.components.length > 0) {
+      this.renderFromComponents(state.components, state.connections ?? [], layerVisibility);
       this.autoFit();
       if (state.drcViolations?.length) {
         for (const v of state.drcViolations) this.renderDRCMarker(v);
@@ -350,6 +350,77 @@ export class PCBRenderer {
           break;
       }
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Component-schema rendering (Circuit-Synth grid layout, PixiJS fallback)
+  // ---------------------------------------------------------------------------
+
+  private renderFromComponents(
+    components: SchemaComponent[],
+    connections: SchemaNet[],
+    _layerVisibility: Record<string, boolean>
+  ): void {
+    const BOARD_W = 50;
+    const BOARD_H = 50;
+    this.boardWpx = mmToPx(BOARD_W);
+    this.boardHpx = mmToPx(BOARD_H);
+    this.renderBoard(this.boardWpx, this.boardHpx);
+
+    const cols   = Math.max(1, Math.ceil(Math.sqrt(components.length)));
+    const margin = 5;
+    const usableW = BOARD_W - 2 * margin;
+    const usableH = BOARD_H - 2 * margin;
+
+    const positions = components.map((_, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      return {
+        x_mm: margin + (col + 0.5) * (usableW / cols),
+        y_mm: margin + (row + 0.5) * (usableH / Math.ceil(components.length / cols)),
+      };
+    });
+
+    // Draw ratsnest lines
+    const NET_COLORS = [0xD4820A, 0x4488FF, 0x22C55E, 0xF59E0B, 0xA855F7];
+    const refIdx = new Map(components.map((c, i) => [c.ref, i]));
+    connections.forEach((conn, ni) => {
+      const color = NET_COLORS[ni % NET_COLORS.length]!;
+      const pts = conn.pins.map((p) => positions[refIdx.get(p.ref) ?? 0]!);
+      if (pts.length < 2) return;
+      const g = new Graphics();
+      g.moveTo(mmToPx(pts[0]!.x_mm), mmToPx(pts[0]!.y_mm));
+      for (let k = 1; k < pts.length; k++) {
+        g.lineTo(mmToPx(pts[k]!.x_mm), mmToPx(pts[k]!.y_mm));
+      }
+      g.stroke({ color, width: 1, alpha: 0.5 });
+      this.componentLayer.addChild(g);
+    });
+
+    // Draw component boxes
+    components.forEach((comp, i) => {
+      const pos  = positions[i]!;
+      const isIC = /U\d|IC/i.test(comp.ref);
+      const size = mmToPx(isIC ? 8 : 3);
+      const cx   = mmToPx(pos.x_mm);
+      const cy   = mmToPx(pos.y_mm);
+
+      const g = new Graphics();
+      g.roundRect(cx - size / 2, cy - size / 2, size, size, isIC ? 2 : 1)
+        .fill({ color: 0x1a1a1a })
+        .stroke({ color: LAYER_COLORS['F.Cu'] ?? 0xD4820A, width: 1 });
+      this.componentLayer.addChild(g);
+
+      const style = new TextStyle({
+        fontSize: isIC ? 8 : 6,
+        fill: LAYER_COLORS['F.SilkS'] ?? 0xffffff,
+        fontFamily: 'monospace',
+      });
+      const label = new Text({ text: comp.ref, style });
+      label.x = cx - label.width / 2;
+      label.y = cy - size / 2 - 10;
+      this.labelLayer.addChild(label);
+    });
   }
 
   // ---------------------------------------------------------------------------
