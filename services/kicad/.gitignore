@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+output_*/
+kicad-symbols/
+kicad_libs/
+*.log
