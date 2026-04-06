@@ -173,11 +173,15 @@ export class PCBRenderer {
   }
 
   private applyScale(s: number): void {
-    if (!this.app?.screen) return;
-    this.viewport.scale.set(s);
-    // Re-center around the board
-    this.viewport.x = (this.app.screen.width  - this.boardWpx * s) / 2;
-    this.viewport.y = (this.app.screen.height - this.boardHpx * s) / 2;
+    if (!this.app || !this.viewport) return;
+    try {
+      const { width, height } = this.app.screen;
+      this.viewport.scale.set(s);
+      this.viewport.x = (width  - this.boardWpx * s) / 2;
+      this.viewport.y = (height - this.boardHpx * s) / 2;
+    } catch {
+      // app.screen getter throws when the renderer has been destroyed
+    }
   }
 
   // ---------------------------------------------------------------------------
