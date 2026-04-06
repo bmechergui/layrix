@@ -110,9 +110,38 @@ export async function POST(req: NextRequest) {
               .eq('id', body.projectId)
               .eq('user_id', user.id)
               .single();
+
+            const stateWithUrls: Record<string, unknown> = { ...event.state };
+
+            // Upload .kicad_sch to Supabase Storage if present
+            const schContent = event.state['kicad_sch_content'] as string | undefined;
+            if (schContent) {
+              const schPath = `${user.id}/${body.projectId}/schema.kicad_sch`;
+              await supabase.storage
+                .from('kicad-files')
+                .upload(schPath, schContent, { contentType: 'text/plain', upsert: true });
+              const { data: schUrl } = await supabase.storage
+                .from('kicad-files')
+                .createSignedUrl(schPath, 3600);
+              if (schUrl) stateWithUrls['kicad_sch_url'] = schUrl.signedUrl;
+            }
+
+            // Upload .kicad_pcb to Supabase Storage if present
+            const pcbContent = event.state['kicad_pcb_content'] as string | undefined;
+            if (pcbContent) {
+              const pcbPath = `${user.id}/${body.projectId}/board.kicad_pcb`;
+              await supabase.storage
+                .from('kicad-files')
+                .upload(pcbPath, pcbContent, { contentType: 'text/plain', upsert: true });
+              const { data: pcbUrl } = await supabase.storage
+                .from('kicad-files')
+                .createSignedUrl(pcbPath, 3600);
+              if (pcbUrl) stateWithUrls['kicad_pcb_url'] = pcbUrl.signedUrl;
+            }
+
             const merged = {
               ...(current?.pcb_state as Record<string, unknown> ?? {}),
-              ...event.state,
+              ...stateWithUrls,
             };
 
             // Derive project-level status from pcb_status (e.g. 'DRC_CLEAN' → projects.status)
@@ -130,6 +159,11 @@ export async function POST(req: NextRequest) {
               .update(projectUpdate)
               .eq('id', body.projectId)
               .eq('user_id', user.id);
+
+            // Re-emit the enriched state (with signed URLs) so the frontend can update KiCanvas
+            if (stateWithUrls['kicad_sch_url'] ?? stateWithUrls['kicad_pcb_url']) {
+              send({ type: 'pcb_state', projectId: body.projectId, state: stateWithUrls });
+            }
           }
 
           // Deduct credits per PCB pipeline step (schema, placement, routing, drc, export)

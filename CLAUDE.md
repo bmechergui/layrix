@@ -99,7 +99,7 @@ apps/web/src/
 │   ├── marketing/ui/         ← Hero, Navbar, Pricing, WaitlistForm…
 │   └── dashboard/ui/         ← ChatPanel, Sidebar, ProjectCard, StatusBadge…
 ├── widgets/
-│   └── viewer/               ← ViewerPanel (PixiJS 2D + Three.js 3D)
+│   └── viewer/               ← ViewerPanel + KiCanvasViewer + PixiCanvas + Three.js 3D
 ├── entities/
 │   ├── project/              ← Project, PCBStatus
 │   ├── pcb/                  ← PCBState, DRCViolation, AgentStep
@@ -107,7 +107,8 @@ apps/web/src/
 ├── shared/
 │   ├── ui/                   ← shadcn/ui components
 │   ├── lib/                  ← mock-data.ts, supabase-middleware.ts
-│   └── store/                ← app-store.ts (Zustand)
+│   ├── store/                ← app-store.ts (Zustand)
+│   └── types/                ← kicanvas.d.ts (web component declarations)
 ├── middleware.ts              ← Auth Supabase JWT — protège /dashboard/*
 ├── processes/                ← (Phase 3+ — boucle agentique UI)
 └── entities/                 ← (modèles métier)
@@ -116,9 +117,15 @@ packages/
 ├── @layrix/types   ← SOURCE DE VÉRITÉ unique (PCBStatus, Plan, AgentAction…)
 ├── @layrix/logger  ← Pino logger
 ├── @layrix/utils   ← cn() utility
-├── @layrix/db      ← Supabase client + migrations
+├── @layrix/db      ← Supabase client + migrations (migrations/001_initial.sql, 002_kicad_files_bucket.sql)
 ├── @layrix/agents  ← Orchestrateur + agents Claude SDK
+│   └── engines/    ← circuit-synth-engine.ts (primary) | tscircuit-engine.ts (fallback) | engine-router.ts
 └── @layrix/ui      ← Design system composants partagés
+
+services/
+└── kicad/          ← FastAPI Python headless KiCad
+    ├── routers/circuit_synth.py  ← /circuit-synth/generate (JSON → .kicad_sch + .kicad_pcb)
+    └── tools/      ← placement, routing, drc, export, simulation
 ```
 
 **Import paths :**
@@ -144,7 +151,8 @@ packages/
 - Queue : Redis + BullMQ (10 PCBs simultanés)
 - Auth : Supabase Auth (email + Google OAuth)
 - Paiement : Lemon Squeezy (MVP)
-- Viewer 2D : PixiJS · Viewer 3D : Three.js + STEP via occt-import-js
+- Viewer Schéma + PCB : KiCanvas (rendu natif .kicad_sch / .kicad_pcb depuis Supabase Storage)
+- Viewer 3D : Three.js + STEP via occt-import-js
 
 ## Règles agents Claude
 
@@ -156,8 +164,10 @@ packages/
 
 ## Stratégie moteur PCB
 
-- <20 composants + 2 couches → TSCircuit
-- Sinon → KiCad + Freerouting + pcbnew
+- **Circuit-Synth** (Python) → Claude génère code Python → KiCad Docker → `.kicad_sch` + `.kicad_pcb` natifs
+- Fallback → KiCad + Freerouting + pcbnew (PCB Pro multi-couches)
+- Viewer → **KiCanvas** charge les fichiers depuis Supabase Storage (signed URL 1h)
+- JAMAIS TSCircuit en nouveau code — déprécié depuis v0.3.0
 
 ## Système de crédits
 
@@ -177,6 +187,7 @@ packages/
 - `Message.role` = `'user' | 'assistant'` (jamais `'agent'`)
 - `Credits` = `{ balance, plan, daily_limit }` (pas `remaining`/`total`)
 - `Project` = snake_case : `updated_at`, `iteration_count`
+- `PCBState` inclut `kicad_sch_url?` + `kicad_pcb_url?` — signed URLs Supabase Storage (1h) pour KiCanvas
 
 ## Gotchas shadcn/ui
 
@@ -223,6 +234,12 @@ hidden md:block shrink-0
 
 Phases complétées : Phase 0 ✓ (infra) · Phase 1 ✓ (landing)
 
+Phase 2 — Migration Circuit-Synth + KiCanvas complète :
+- Phase D ✓ — Docs + PLAN + SKILLS + skills migrés Circuit-Synth + KiCanvas
+- Phase B ✓ — `KiCanvasViewer.tsx`, viewer tabs bifurquent sur `kicad_sch_url`/`kicad_pcb_url`
+- Phase C ✓ — Bucket `kicad-files` Supabase Storage + upload agent route + signed URLs
+- Phase A ✓ — `circuit-synth-engine.ts` + `/circuit-synth/generate` FastAPI + engine-router priorité Circuit-Synth
+
 ---
 
 ## Skills — sélection et création
@@ -237,7 +254,7 @@ Phases complétées : Phase 0 ✓ (infra) · Phase 1 ✓ (landing)
 1. `layrix-prompt-improver` — TOUJOURS en premier (améliore + contexte Layrix + skill)
 2. `layrix-pcb-agent` — boucle agentique PCB
 4. `layrix-credits` — déduction crédits Supabase
-5. `layrix-viewer` — PixiJS 2D + Three.js 3D
+5. `layrix-viewer` — KiCanvas (schéma + PCB) + Three.js 3D
 6. `/everything-claude-code:claude-api` — Claude SDK agents
 7. `/everything-claude-code:frontend-patterns` — Next.js / React
 8. `/everything-claude-code:postgres-patterns` — Supabase / pgvector
@@ -252,7 +269,7 @@ Phases complétées : Phase 0 ✓ (infra) · Phase 1 ✓ (landing)
 ## Persona
 
 Architecte logiciel senior full-stack, 15 ans d'expérience, spécialisé agents IA + PCB AI.
-Maîtrise : Next.js 15 · TypeScript strict · Turborepo · Supabase · Claude SDK · Lemon Squeezy · TSCircuit · KiCad/FastAPI · Docker.
+Maîtrise : Next.js 15 · TypeScript strict · Turborepo · Supabase · Claude SDK · Lemon Squeezy · Circuit-Synth · KiCanvas · KiCad/FastAPI · Docker.
 Principes : FSD · clean architecture · atomic design · tests · sécurité · coût agentique <0.12€/PCB.
 
 Tu penses étape par étape. Tu annonces les skills avant chaque action. Tu contredis les mauvaises pratiques. Tu proposes des solutions modernes même si non demandées.
