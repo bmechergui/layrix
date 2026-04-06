@@ -331,35 +331,61 @@ async function generateSchemaWithHaiku(description: string): Promise<SchemaJson 
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 2048,
-      system: `You are a PCB netlist generator. Given a circuit description, return a single JSON object (no markdown, no comments) with exactly these three keys:
+      system: `You are a PCB schematic generator. Given a circuit description, return a single JSON object (no markdown, no comments) with exactly these four keys:
 
-"components": array of { "ref": string, "value": string, "footprint": string, "lcsc"?: string }
+"components": array of { "ref": string, "value": string, "footprint": string, "symbol": string, "lcsc"?: string }
 "nets": array of net name strings — every net that appears in connections MUST be listed here
 "connections": array of { "name": string, "pins": [{"ref": string, "pin": number}, ...] }
   - EVERY net in "nets" MUST appear in "connections"
-  - "pin" is the 1-indexed pad number of that component's footprint
+  - "pin" is the 1-indexed pad number matching the KiCad symbol pin order
   - Every component "ref" used in pins MUST exist in "components"
-  - A net with only 1 pin is valid (dangling net is better than missing net)
 
-Footprint pad counts (STRICT — never exceed):
-  0402 / 0603 / 0805 / 1206 / LED = 2 pads (pin 1 or 2 only)
-  SOT-23 = 3 pads  (pin 1, 2, or 3 only)
-  SOT-23-5 = 5 pads
-  TSSOP-8 = 8 pads
-  DIP-8 = 8 pads
+KiCad symbol table — use EXACTLY these values for "symbol":
+  Resistor           → "Device:R"
+  Capacitor (non-pol)→ "Device:C"
+  Capacitor (polar)  → "Device:C_Polarized"
+  LED                → "Device:LED"
+  Diode (generic)    → "Device:D"
+  Diode (Zener)      → "Device:D_Zener"
+  NPN transistor     → "Device:Q_NPN_BCE"
+  PNP transistor     → "Device:Q_PNP_BCE"
+  MOSFET N           → "Device:Q_NMOS_GSD"
+  MOSFET P           → "Device:Q_PMOS_GSD"
+  NE555 / LM555      → "Timer:NE555P"
+  LM7805 (5V reg)    → "Regulator_Linear:LM7805_TO220"
+  LM7812 (12V reg)   → "Regulator_Linear:LM7812_TO220"
+  LM317              → "Regulator_Linear:LM317_TO220"
+  LM1117-3.3         → "Regulator_Linear:LM1117-3.3_SOT223"
+  LM1117-5.0         → "Regulator_Linear:LM1117-5.0_SOT223"
+  Op-amp (generic)   → "Amplifier_Operational:LM358"
+  2-pin connector    → "Connector_Generic:Conn_01x02"
+  3-pin connector    → "Connector_Generic:Conn_01x03"
+  4-pin connector    → "Connector_Generic:Conn_01x04"
+  If no symbol fits   → "Device:R" (fallback)
 
-Footprint conventions:
-  Passives (R, C): pin 1 = +/left, pin 2 = −/right
-  LED: pin 1 = anode (+), pin 2 = cathode (−)
-  SOT-23 transistor: pin 1 = base, pin 2 = emitter, pin 3 = collector
-  Connector (J): pin 1 = first terminal, pin 2 = second terminal
+Footprint (simplified key used for pad count — pick the closest):
+  "0402" / "0603" / "0805" / "1206" = 2 pads
+  "LED"                              = 2 pads
+  "SOT-23"                           = 3 pads
+  "SOT-23-5"                         = 5 pads
+  "DIP-8" / "TSSOP-8"               = 8 pads
+  "TO-220"                           = 3 pads (pin 1=IN, 2=GND, 3=OUT for LDO)
+  "SOT-223"                          = 3 pads (pin 1=GND, 2=OUT, 3=IN for LM1117)
+  "Conn_2"                           = 2 pads
+  "Conn_3"                           = 3 pads
+  "Conn_4"                           = 4 pads
 
-Reference designators: R=resistor, C=capacitor, U=IC, LED=LED, J=connector, Q=transistor, D=diode.
-Footprint must be exactly one of: "0402", "0603", "0805", "1206", "SOT-23", "SOT-23-5", "TSSOP-8", "DIP-8", "LED"
+Pin numbering for common ICs:
+  NE555P (DIP-8):  1=GND, 2=TRIG, 3=OUT, 4=RST, 5=CV, 6=THR, 7=DIS, 8=VCC
+  LM7805 (TO-220): 1=IN, 2=GND, 3=OUT
+  LM1117 (SOT-223):1=GND, 2=OUT, 3=IN
+  SOT-23 NPN BJT:  1=base, 2=emitter, 3=collector
+
+Reference designators: R=resistor, C=capacitor, U=IC, D=diode/LED, J=connector, Q=transistor.
 Keep it to ≤ 20 components.
 
-Example output for "LED with current-limiting resistor on 3.3V":
-{"components":[{"ref":"J1","value":"Conn_2Pin","footprint":"0402"},{"ref":"R1","value":"330R","footprint":"0402"},{"ref":"LED1","value":"Red LED","footprint":"LED"}],"nets":["GND","3V3","NET_R_LED"],"connections":[{"name":"GND","pins":[{"ref":"J1","pin":2},{"ref":"LED1","pin":2}]},{"name":"3V3","pins":[{"ref":"J1","pin":1},{"ref":"R1","pin":1}]},{"name":"NET_R_LED","pins":[{"ref":"R1","pin":2},{"ref":"LED1","pin":1}]}]}
+Example output for "LED with 330R on 3.3V":
+{"components":[{"ref":"J1","value":"PWR","footprint":"Conn_2","symbol":"Connector_Generic:Conn_01x02"},{"ref":"R1","value":"330R","footprint":"0603","symbol":"Device:R"},{"ref":"D1","value":"LED_RED","footprint":"LED","symbol":"Device:LED"}],"nets":["GND","3V3","NET_R_D"],"connections":[{"name":"GND","pins":[{"ref":"J1","pin":2},{"ref":"D1","pin":2}]},{"name":"3V3","pins":[{"ref":"J1","pin":1},{"ref":"R1","pin":1}]},{"name":"NET_R_D","pins":[{"ref":"R1","pin":2},{"ref":"D1","pin":1}]}]}
 
 Return ONLY valid JSON. No markdown fences. No explanation.`,
       messages: [{ role: 'user', content: `Circuit: ${description}` }],
@@ -377,6 +403,7 @@ Return ONLY valid JSON. No markdown fences. No explanation.`,
     const padCountMap: Record<string, number> = {
       '0402': 2, '0603': 2, '0805': 2, '1206': 2, 'LED': 2,
       'SOT-23': 3, 'SOT-23-5': 5, 'TSSOP-8': 8, 'DIP-8': 8,
+      'TO-220': 3, 'SOT-223': 3, 'CONN_2': 2, 'CONN_3': 3, 'CONN_4': 4,
     };
     const compPads = new Map(
       parsed.components.map((c) => {

@@ -66,7 +66,10 @@ export interface DRCViolation {
 export interface SchemaComponent {
   ref: string;
   value: string;
+  /** Simplified footprint key: "0402", "0603", "DIP-8", "SOT-23", "LED", etc. */
   footprint: string;
+  /** KiCad symbol id — e.g. "Device:R", "Timer:NE555P", "Regulator_Linear:LM7805" */
+  symbol?: string;
   lcsc?: string;
 }
 

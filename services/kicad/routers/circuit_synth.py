@@ -115,6 +115,86 @@ _SYMBOL_RULES: list[tuple[tuple[str, str], str]] = [
 ]
 
 
+# ============================================================
+# Footprint expansion: simplified key → full KiCad footprint path
+# ============================================================
+
+# Generic SMD size → resistor/capacitor footprint (symbol determines which)
+_SMD_RESISTOR: dict[str, str] = {
+    "0402": "Resistor_SMD:R_0402_1005Metric",
+    "0603": "Resistor_SMD:R_0603_1608Metric",
+    "0805": "Resistor_SMD:R_0805_2012Metric",
+    "1206": "Resistor_SMD:R_1206_3216Metric",
+}
+_SMD_CAPACITOR: dict[str, str] = {
+    "0402": "Capacitor_SMD:C_0402_1005Metric",
+    "0603": "Capacitor_SMD:C_0603_1608Metric",
+    "0805": "Capacitor_SMD:C_0805_2012Metric",
+    "1206": "Capacitor_SMD:C_1206_3216Metric",
+}
+
+def _expand_footprint(comp: SchemaComponent) -> str:
+    """Convert simplified footprint key to full KiCad footprint path."""
+    fp = comp.footprint.strip()
+    symbol = (comp.symbol or "").lower()
+    fp_up = fp.upper()
+
+    # Already a full path (contains ':')
+    if ":" in fp:
+        return fp
+
+    # Capacitor symbols → use capacitor footprints for SMD sizes
+    if any(x in symbol for x in ["device:c", "capacitor"]):
+        if fp_up in _SMD_CAPACITOR:
+            return _SMD_CAPACITOR[fp_up]
+        if "polarized" in symbol:
+            return "Capacitor_THT:C_Radial_D8.0mm_H11.5mm_P3.50mm"
+
+    # Resistor / LED / diode → SMD resistor footprints for SMD sizes
+    if fp_up in _SMD_RESISTOR:
+        return _SMD_RESISTOR[fp_up]
+
+    # LED THT
+    if fp_up == "LED":
+        return "LED_THT:LED_D5.0mm"
+
+    # Connectors
+    fp_conn_map = {
+        "CONN_2": "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical",
+        "CONN_3": "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical",
+        "CONN_4": "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical",
+    }
+    if fp_up in fp_conn_map:
+        return fp_conn_map[fp_up]
+
+    # TO-220 (LM7805 etc.)
+    if fp_up == "TO-220":
+        return "Package_TO_SOT_THT:TO-220-3_Vertical"
+
+    # SOT-223 (LM1117 etc.)
+    if fp_up == "SOT-223":
+        return "Package_TO_SOT_SMD:SOT-223-3_TabPin2"
+
+    # SOT-23 (transistors, small ICs)
+    if fp_up in ("SOT-23", "SOT-23-3"):
+        return "Package_TO_SOT_SMD:SOT-23"
+
+    # SOT-23-5
+    if fp_up == "SOT-23-5":
+        return "Package_TO_SOT_SMD:SOT-23-5"
+
+    # DIP-8
+    if fp_up == "DIP-8":
+        return "Package_DIP:DIP-8_W7.62mm"
+
+    # TSSOP-8
+    if fp_up == "TSSOP-8":
+        return "Package_SO:TSSOP-8_4.4x3mm_P0.65mm"
+
+    # Fallback: keep original value
+    return fp
+
+
 def _map_symbol(comp: SchemaComponent) -> str:
     """Map a component to its KiCad symbol id."""
     if comp.symbol:
@@ -188,7 +268,7 @@ def _generate_with_circuit_synth(
                 symbol=symbol,
                 ref=ref_prefix,
                 value=comp.value,
-                footprint=comp.footprint,
+                footprint=_expand_footprint(comp),
             )
             comps[comp.ref] = c
 
