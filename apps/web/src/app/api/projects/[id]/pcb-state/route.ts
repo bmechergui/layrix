@@ -25,5 +25,23 @@ export async function GET(
     return NextResponse.json({ success: false, error: error.message }, { status });
   }
 
-  return NextResponse.json({ success: true, data: data.pcb_state ?? null });
+  const pcbState = data.pcb_state as Record<string, unknown> | null;
+  if (!pcbState) {
+    return NextResponse.json({ success: true, data: null });
+  }
+
+  // Refresh signed URLs (1h TTL) — the paths are deterministic
+  const schPath = `${user.id}/${id}/schema.kicad_sch`;
+  const pcbPath = `${user.id}/${id}/board.kicad_pcb`;
+  const refreshed = { ...pcbState };
+
+  const [schResult, pcbResult] = await Promise.all([
+    supabase.storage.from('kicad-files').createSignedUrl(schPath, 3600),
+    supabase.storage.from('kicad-files').createSignedUrl(pcbPath, 3600),
+  ]);
+
+  if (schResult.data?.signedUrl) refreshed['kicad_sch_url'] = schResult.data.signedUrl;
+  if (pcbResult.data?.signedUrl) refreshed['kicad_pcb_url'] = pcbResult.data.signedUrl;
+
+  return NextResponse.json({ success: true, data: refreshed });
 }
