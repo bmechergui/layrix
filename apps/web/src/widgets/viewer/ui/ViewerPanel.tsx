@@ -548,9 +548,10 @@ function SchemaNetlistView({ pcbState }: { pcbState: PCBState | null }) {
   );
 }
 
-/** Components tab — BOM only (no nets) */
+/** Components tab — BOM with LCSC links + CSV copy */
 function ComponentsBOMView({ pcbState }: { pcbState: PCBState | null }) {
   const components: SchemaComponent[] = pcbState?.components ?? [];
+  const [copied, setCopied] = useState(false);
 
   if (!components.length) {
     return (
@@ -563,17 +564,27 @@ function ComponentsBOMView({ pcbState }: { pcbState: PCBState | null }) {
     );
   }
 
-  // Group by value+footprint for BOM summary
+  // Group by value+footprint
   const grouped = components.reduce<Record<string, { refs: string[]; value: string; footprint: string; lcsc: string | undefined }>>(
     (acc, c) => {
       const key = `${c.value}||${c.footprint}`;
       if (!acc[key]) acc[key] = { refs: [], value: c.value, footprint: c.footprint, lcsc: c.lcsc };
-      acc[key].refs.push(c.ref);
+      acc[key]!.refs.push(c.ref);
       return acc;
     },
     {}
   );
   const bomRows = Object.values(grouped).sort((a, b) => (a.refs[0] ?? '').localeCompare(b.refs[0] ?? ''));
+
+  const copyCSV = () => {
+    const header = 'Qty,Refs,Value,Footprint,LCSC';
+    const rows = bomRows.map((r) =>
+      `${r.refs.length},"${r.refs.join(', ')}","${r.value}","${r.footprint}","${r.lcsc ?? ''}"`
+    );
+    void navigator.clipboard.writeText([header, ...rows].join('\n'));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   return (
     <div className="h-full overflow-auto p-4 bg-[#090909]">
@@ -581,20 +592,46 @@ function ComponentsBOMView({ pcbState }: { pcbState: PCBState | null }) {
         <p className="text-[9px] text-[#3D3D3D] font-mono uppercase tracking-wider">
           Bill of Materials — {components.length} refs · {bomRows.length} unique
         </p>
+        <button
+          type="button"
+          onClick={copyCSV}
+          className="flex items-center gap-1.5 px-2 py-1 text-[9px] font-mono border rounded transition-colors"
+          style={copied
+            ? { color: '#22C55E', borderColor: '#22C55E40', backgroundColor: '#22C55E10' }
+            : { color: '#3D3D3D', borderColor: '#1E1E1E', backgroundColor: 'transparent' }
+          }
+        >
+          <Download size={9} />
+          {copied ? 'Copied!' : 'Copy CSV'}
+        </button>
       </div>
+
       <div className="space-y-px">
-        <div className="grid grid-cols-[2rem_2fr_2fr_3rem_3rem] gap-2 px-2 py-1 text-[9px] text-[#2E2E2E] font-mono uppercase tracking-wider border-b border-[#1A1A1A]">
+        <div className="grid grid-cols-[2rem_2fr_2fr_4rem_4rem] gap-2 px-2 py-1 text-[9px] text-[#2E2E2E] font-mono uppercase tracking-wider border-b border-[#1A1A1A]">
           <span>Qty</span><span>Value</span><span>Footprint</span><span>LCSC</span><span>Refs</span>
         </div>
         {bomRows.map((row) => (
           <div
             key={`${row.value}-${row.footprint}`}
-            className="grid grid-cols-[2rem_2fr_2fr_3rem_3rem] gap-2 px-2 py-2 rounded bg-[#0F0F0F] border border-[#181818] text-[10px] font-mono hover:border-[#252525] transition-colors"
+            className="grid grid-cols-[2rem_2fr_2fr_4rem_4rem] gap-2 px-2 py-2 rounded bg-[#0F0F0F] border border-[#181818] text-[10px] font-mono hover:border-[#252525] transition-colors"
           >
             <span className="text-primary/70 font-bold">{row.refs.length}</span>
             <span className="text-[#A1A1AA] truncate">{row.value}</span>
             <span className="text-[#52525B] truncate">{row.footprint}</span>
-            <span className="text-[#3D3D3D]">{row.lcsc ?? '—'}</span>
+            <span>
+              {row.lcsc ? (
+                <a
+                  href={`https://www.lcsc.com/product-detail/${row.lcsc}.html`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary/60 hover:text-primary underline underline-offset-2 transition-colors"
+                >
+                  {row.lcsc}
+                </a>
+              ) : (
+                <span className="text-[#2A2A2A]">—</span>
+              )}
+            </span>
             <span className="text-[#3D3D3D] truncate">{row.refs.join(', ')}</span>
           </div>
         ))}
