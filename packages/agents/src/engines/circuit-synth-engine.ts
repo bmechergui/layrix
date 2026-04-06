@@ -237,16 +237,23 @@ function generateSchematic(
   connections: SchemaNet[]
 ): string {
   const lines: string[] = [];
-  lines.push('(kicad_sch (version 20230121) (generator "layrix-circuit-synth")');
-  lines.push('  (paper "A4")');
-  lines.push('  (lib_symbols)');
 
   // Wider spacing so symbols don't overlap (50mm col × 40mm row)
   const COLS      = Math.max(1, Math.ceil(Math.sqrt(components.length)));
+  const ROWS      = Math.ceil(components.length / COLS);
   const COL_STEP  = 50;
   const ROW_STEP  = 40;
-  const ORIGIN_X  = 50;
-  const ORIGIN_Y  = 50;
+  const MARGIN    = 20;  // mm margin around content
+  const ORIGIN_X  = MARGIN;
+  const ORIGIN_Y  = MARGIN;
+
+  // Custom paper size = exact content bounding box → KiCanvas fits to circuit
+  const paperW = Math.max(80, COLS * COL_STEP + MARGIN * 2);
+  const paperH = Math.max(60, ROWS * ROW_STEP + MARGIN * 2 + 20); // +20 for wire stubs
+
+  lines.push('(kicad_sch (version 20230121) (generator "layrix-circuit-synth")');
+  lines.push(`  (paper "User" ${paperW} ${paperH})`);
+  lines.push('  (lib_symbols)');
 
   const compPos = components.map((_, i) => ({
     x: ORIGIN_X + (i % COLS) * COL_STEP,
@@ -341,7 +348,8 @@ function generatePCB(
   const lines: string[] = [];
   lines.push('(kicad_pcb (version 20221018) (generator "layrix-circuit-synth")');
   lines.push('  (general (thickness 1.6))');
-  lines.push('  (paper "A4")');
+  // Custom paper = board dimensions → KiCanvas auto-fits to the board, not a huge A4 page
+  lines.push(`  (paper "User" ${boardW + 10} ${boardH + 10})`);
   lines.push('  (layers');
   const layerDefs = [
     '(0 "F.Cu" signal)',
