@@ -61,7 +61,25 @@
       "Bash(pnpm --filter @layrix/types type-check)",
       "Bash(pnpm --filter @layrix/agents type-check)",
       "Bash(pnpm --filter @layrix/web test)",
-      "mcp__supabase__execute_sql"
+      "mcp__supabase__execute_sql",
+      "Bash(pnpm --filter @layrix/db type-check)",
+      "Bash(pnpm --filter @layrix/db lint)",
+      "Bash(pnpm --filter @layrix/agents lint)",
+      "Bash(pnpm --filter @layrix/ui lint)",
+      "Bash(pnpm turbo:*)",
+      "Bash(pnpm --filter @layrix/web lint)",
+      "Bash(pnpm --filter @layrix/web add @kicanvas/kicanvas)",
+      "Bash(npm search:*)",
+      "Bash(npm view:*)",
+      "Bash(ls:*)",
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__list_pages",
+      "Bash(pnpm dev:*)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"http://localhost:3333\")",
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__take_snapshot",
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__click",
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__type_text",
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__wait_for",
+      "Bash(pnpm --filter @layrix/agents test)"
     ]
   },
   "hooks": {

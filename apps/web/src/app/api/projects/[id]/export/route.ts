@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import JSZip from 'jszip';
 import { createRouteHandlerClient } from '@/shared/lib/supabase-server';
-import { runTSCircuitEngine } from '@layrix/agents';
+import { runCircuitSynthEngine } from '@layrix/agents';
 import type { SchemaJson } from '@layrix/agents';
 
 export async function GET(
@@ -16,7 +16,6 @@ export async function GET(
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Fetch project pcb_state
   const { data, error } = await supabase
     .from('projects')
     .select('pcb_state, name')
@@ -38,7 +37,6 @@ export async function GET(
     );
   }
 
-  // Re-run engine to get Gerbers from the stored schema
   const schema = extractSchema(pcbState);
   if (!schema.components.length) {
     return NextResponse.json(
@@ -49,25 +47,15 @@ export async function GET(
 
   const boardW = Number(pcbState['board_width_mm'] ?? 50);
   const boardH = Number(pcbState['board_height_mm'] ?? 50);
-  const result = await runTSCircuitEngine(schema, boardW, boardH);
+  const result = await runCircuitSynthEngine(schema, boardW, boardH);
 
-  if (!Object.keys(result.gerbers).length) {
-    return NextResponse.json(
-      { success: false, error: 'Gerber generation failed.' },
-      { status: 500 }
-    );
-  }
-
-  // Build ZIP
   const zip = new JSZip();
   const projectName = sanitizeFilename(String(data.name ?? 'layrix_pcb'));
 
-  for (const [layer, content] of Object.entries(result.gerbers)) {
-    const ext = gerberExtension(layer);
-    zip.file(`${projectName}_${layer}${ext}`, content);
-  }
+  zip.file(`${projectName}.kicad_sch`, result.kicad_sch_content);
+  zip.file(`${projectName}.kicad_pcb`, result.kicad_pcb_content);
 
-  // Add basic BOM
+  // BOM
   const bom = [
     'Ref,Value,Footprint,LCSC',
     ...schema.components.map((c) => `${c.ref},${c.value},${c.footprint},${c.lcsc ?? ''}`),
@@ -79,16 +67,24 @@ export async function GET(
   return new Response(zipBuffer as unknown as BodyInit, {
     headers: {
       'Content-Type': 'application/zip',
-      'Content-Disposition': `attachment; filename="${projectName}_gerbers.zip"`,
+      'Content-Disposition': `attachment; filename="${projectName}_kicad.zip"`,
       'Cache-Control': 'no-store',
     },
   });
 }
 
-// --- Helpers -------------------------------------------------------------
+// --- Helpers -----------------------------------------------------------------
 
 function extractSchema(pcbState: Record<string, unknown>): SchemaJson {
-  // Try placements field (set by call_agent_placement)
+  const components = pcbState['components'] as SchemaJson['components'] | undefined;
+  if (Array.isArray(components) && components.length) {
+    return {
+      components,
+      nets: (pcbState['nets'] as string[] | undefined) ?? [],
+      connections: (pcbState['connections'] as SchemaJson['connections'] | undefined) ?? [],
+    };
+  }
+
   const placements = pcbState['placements'] as Array<{ ref: string }> | undefined;
   if (placements?.length) {
     return {
@@ -101,29 +97,9 @@ function extractSchema(pcbState: Record<string, unknown>): SchemaJson {
     };
   }
 
-  // Try components field directly
-  const components = pcbState['components'] as SchemaJson['components'] | undefined;
-  if (Array.isArray(components) && components.length) {
-    return {
-      components,
-      nets: (pcbState['nets'] as string[] | undefined) ?? [],
-    };
-  }
-
   return { components: [], nets: [] };
 }
 
 function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9_\-]/g, '_').slice(0, 50);
-}
-
-function gerberExtension(layer: string): string {
-  const map: Record<string, string> = {
-    'F.Cu': '.gtl', 'B.Cu': '.gbl',
-    'F.SilkS': '.gto', 'B.SilkS': '.gbo',
-    'F.Mask': '.gts', 'B.Mask': '.gbs',
-    'Edge.Cuts': '.gko',
-    'drill': '.drl',
-  };
-  return map[layer] ?? '.gbr';
 }
