@@ -405,7 +405,36 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ## Phase 2 — Dashboard + Auth + Agent MVP (Semaines 3-4)
 
-### Étape 2.1 — Auth Supabase
+> **État actuel :** ✅ Pipeline schéma + viewer KiCanvas opérationnel.
+> Placement / Routage / DRC réels sont en **Phase 3** (pcbnew + Freerouting).
+>
+> ### Pipeline Phase 2 — validé
+> ```
+> User → Sonnet 4.6 (orchestrateur)
+>            ↓ call_agent_schema
+>        Haiku 4.5 → JSON schema (composants + nets + connections + pin names)
+>            ↓ validateAndCorrectSchema()   ← vérifie symbols .kicad_sym (KICAD_SERVICE_URL)
+>        FastAPI POST /circuit-synth/validate-symbols  → corrections auto
+>            ↓ _safe_symbol() (2ème filet dans /generate)
+>        circuit_synth Python → .kicad_sch + .kicad_pcb natifs
+>            ↓
+>        Upload Supabase Storage (bucket kicad-files, RLS {userId}/{projectId}/)
+>            ↓ signed URL 1h → pcb_state.kicad_sch_url / kicad_pcb_url
+>        KiCanvas viewer — auto-switch tab Schematic / Routing à l'arrivée SSE
+> ```
+>
+> ### Stubs Phase 2 (comportement temporaire — réel en Phase 3)
+> | Tool | Comportement Phase 2 | Réel Phase 3 |
+> |------|---------------------|--------------|
+> | `call_agent_placement` | Grille géométrique TS | pcbnew SetPosition() |
+> | `call_agent_routing` | MST TypeScript | Freerouting Java via pcbnew |
+> | `call_agent_drc` | Règles simples TS | pcbnew DRC natif |
+> | `call_agent_export` | Quote fictif + BOM JSON | Gerbers + BOM LCSC réels |
+> | `call_agent_footprint` | Stub (fake data) | Cascade 8 étapes Phase 3 |
+
+---
+
+### Étape 2.1 — Auth Supabase ✅
 
 **Fichiers :**
 - `apps/dashboard/app/login/page.tsx`
@@ -422,7 +451,7 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ---
 
-### Étape 2.2 — Layout Dashboard
+### Étape 2.2 — Layout Dashboard ✅
 
 **Fichiers :**
 - `apps/dashboard/app/layout.tsx`
@@ -438,7 +467,7 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ---
 
-### Étape 2.3 — Page Projets
+### Étape 2.3 — Page Projets ✅
 
 **Fichiers :**
 - `apps/dashboard/app/dashboard/page.tsx`
@@ -453,7 +482,7 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ---
 
-### Étape 2.4 — Page Projet : Chat + Viewer
+### Étape 2.4 — Page Projet : Chat + Viewer ✅
 
 **Fichiers :**
 - `apps/dashboard/app/dashboard/projects/[id]/page.tsx`
@@ -468,7 +497,7 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ---
 
-### Étape 2.5 — 🔴 Orchestrateur Claude SDK
+### Étape 2.5 — Orchestrateur Claude SDK ✅
 
 **Fichiers :**
 - `packages/agents/src/orchestrator.ts`
@@ -479,17 +508,23 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 **Actions :**
 1. Types : `PCBState`, `AgentMessage`, `ToolCall`, `ToolResult`
-2. Orchestrateur : boucle `iteration < 15`, model `claude-sonnet-4-6-20250514`, streaming
+2. Orchestrateur : boucle `iteration < 15`, model `claude-sonnet-4-6`, streaming SSE
 3. Gestion `stop_reason === "tool_use"` → exécuter tool → réinjecter
-4. Agent Schéma : Haiku 4.5, retourne netlist JSON strict
-5. Tools initiaux : `call_agent_schema`, `save_project_state`, `ask_user`
+4. Agent Schéma : **Haiku 4.5** → JSON schema → `validateAndCorrectSchema()` → Circuit-Synth
+5. Tools : `call_agent_schema`, `call_agent_placement`, `call_agent_routing`, `call_agent_drc`, `call_agent_export`, `call_agent_footprint`, `ask_user`
 6. Compression contexte après 10 tours (Haiku résume)
+
+**Moteur schéma :**
+- Haiku génère JSON `{ components, nets, connections }` avec pin names KiCad (`"IN"`, `"GND"`, `"TR"`)
+- `validateAndCorrectSchema()` → POST `/circuit-synth/validate-symbols` → corrections auto
+- FastAPI `circuit_synth.py` → `CSComponent()` + `_safe_symbol()` → `.kicad_sch` natif
+- Upload Supabase Storage → `pcb_state.kicad_sch_url` + `kicad_pcb_url` → SSE → KiCanvas
 
 **Skill :** `/everything-claude-code:claude-api`, `layrix-pcb-agent` | **Risque :** 🔴 ÉLEVÉ
 
 ---
 
-### Étape 2.6 — API Agent + SSE Streaming
+### Étape 2.6 — API Agent + SSE Streaming ✅
 
 **Fichiers :**
 - `apps/api/app/api/agent/run/route.ts`
@@ -504,7 +539,7 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ---
 
-### Étape 2.7 — Viewer KiCanvas
+### Étape 2.7 — Viewer KiCanvas ✅
 
 **Fichiers :**
 - `apps/web/src/widgets/viewer/ui/KiCanvasViewer.tsx`
@@ -521,7 +556,7 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ---
 
-### Étape 2.8 — Système de Crédits
+### Étape 2.8 — Système de Crédits ✅
 
 **Fichiers :**
 - `packages/db/supabase/migrations/002_credit_functions.sql`
@@ -642,21 +677,23 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 ---
 
-### Étape 3.5 — Circuit-Synth Engine
+### Étape 3.5 — Circuit-Synth Engine ✅ (livré en Phase 2)
 
 **Fichiers :**
-- `packages/agents/src/engines/circuit-synth-engine.ts` (CRÉER)
-- `packages/agents/src/engines/engine-router.ts` (remplacer TSCircuit)
-- `services/kicad/routers/circuit_synth.py` (CRÉER)
-- `services/kicad/requirements.txt` (ajouter circuit-synth)
+- `packages/agents/src/engines/circuit-synth-engine.ts` ✅
+- `packages/agents/src/engines/engine-router.ts` ✅
+- `services/kicad/routers/circuit_synth.py` ✅
+- `services/kicad/requirements.txt` ✅
 
-**Actions :**
-1. Agent Schéma → génère code Python Circuit-Synth (au lieu de JSON)
-2. `circuit-synth-engine.ts` : POST `/circuit-synth/execute` → `.kicad_sch` + `.kicad_pcb`
-3. Upload fichiers → Supabase Storage → URL signée dans `pcb_state`
-4. Fallback : si service indisponible → JSON schema + circuit-json (ancien comportement)
+**Livré :**
+1. Haiku génère JSON schema `{ components, nets, connections }` avec pin names KiCad
+2. `validateAndCorrectSchema()` → POST `/circuit-synth/validate-symbols` → corrections auto
+3. `_safe_symbol()` dans FastAPI — 2ème filet de sécurité
+4. `circuit_synth.py` → `CSComponent()` → `.kicad_sch` natif + `.kicad_pcb`
+5. Upload Supabase Storage → `pcb_state.kicad_sch_url` / `kicad_pcb_url` → KiCanvas
+6. Fallback S-expression inline TS si service indisponible
 
-**Skill :** `layrix-kicad-service` | **Risque :** Moyen
+**Skill :** `layrix-circuit-synth`, `layrix-kicad-service`
 
 ---
 

@@ -119,13 +119,13 @@ packages/
 ├── @layrix/utils   ← cn() utility
 ├── @layrix/db      ← Supabase client + migrations (migrations/001_initial.sql, 002_kicad_files_bucket.sql)
 ├── @layrix/agents  ← Orchestrateur + agents Claude SDK
-│   └── engines/    ← circuit-synth-engine.ts (primary) | tscircuit-engine.ts (fallback) | engine-router.ts
+│   └── engines/    ← circuit-synth-engine.ts (seul moteur actif) | engine-router.ts
 └── @layrix/ui      ← Design system composants partagés
 
 services/
 └── kicad/          ← FastAPI Python headless KiCad
-    ├── routers/circuit_synth.py  ← /circuit-synth/generate (JSON → .kicad_sch + .kicad_pcb)
-    └── tools/      ← placement, routing, drc, export, simulation
+    ├── routers/circuit_synth.py  ← /circuit-synth/generate + /validate-symbols
+    └── tools/      ← placement, routing, drc, export, simulation (Phase 3)
 ```
 
 **Import paths :**
@@ -164,10 +164,22 @@ services/
 
 ## Stratégie moteur PCB
 
-- **Circuit-Synth** (Python) → Claude génère code Python → KiCad Docker → `.kicad_sch` + `.kicad_pcb` natifs
-- Fallback → KiCad + Freerouting + pcbnew (PCB Pro multi-couches)
-- Viewer → **KiCanvas** charge les fichiers depuis Supabase Storage (signed URL 1h)
-- JAMAIS TSCircuit en nouveau code — déprécié depuis v0.3.0
+### Phase 2 (actuel) — Schéma + Viewer
+- **Haiku 4.5** génère JSON schema `{ components, nets, connections }` avec pin names KiCad
+- `validateAndCorrectSchema()` → POST `/circuit-synth/validate-symbols` (pré-vol)
+- **Circuit-Synth Python** → `CSComponent()` + `_safe_symbol()` → `.kicad_sch` + `.kicad_pcb`
+- Fallback inline : S-expression TypeScript si FastAPI indisponible
+- Placement / Routage / DRC : **stubs TypeScript** (géométrie simple) — suffisant pour Phase 2
+- **KiCanvas** → charge `.kicad_sch` / `.kicad_pcb` depuis Supabase Storage (signed URL 1h)
+
+### Phase 3 (à venir) — Placement + Routage + DRC réels
+- `POST /place` → pcbnew `SetPosition()` / `SetOrientation()`
+- `POST /route` → Freerouting Java (`.kicad_pcb → .dsn → .ses → .kicad_pcb`)
+- `POST /drc` → pcbnew DRC natif → violations JSON
+- Export Gerbers / BOM LCSC / STEP 3D
+- Commande JLCPCB : **"OUI JE CONFIRME" obligatoire — jamais automatique**
+
+**NEVER** TSCircuit en nouveau code — déprécié depuis v0.3.0
 
 ## Système de crédits
 
@@ -230,15 +242,29 @@ hidden md:block shrink-0
 
 ## Phase actuelle
 
-**Phase 2 — Dashboard + Auth + Chat Agent MVP** (semaines 3–4). Voir `PLAN.md`.
+**Phase 2 — Dashboard + Auth + Chat Agent MVP** ✅ COMPLÉTÉE. Voir `PLAN.md`.
 
-Phases complétées : Phase 0 ✓ (infra) · Phase 1 ✓ (landing)
+Phases complétées : Phase 0 ✓ · Phase 1 ✓ · **Phase 2 ✓**
 
-Phase 2 — Migration Circuit-Synth + KiCanvas complète :
-- Phase D ✓ — Docs + PLAN + SKILLS + skills migrés Circuit-Synth + KiCanvas
-- Phase B ✓ — `KiCanvasViewer.tsx`, viewer tabs bifurquent sur `kicad_sch_url`/`kicad_pcb_url`
-- Phase C ✓ — Bucket `kicad-files` Supabase Storage + upload agent route + signed URLs
-- Phase A ✓ — `circuit-synth-engine.ts` + `/circuit-synth/generate` FastAPI + engine-router priorité Circuit-Synth
+### Phase 2 — Réalisations
+- ✅ Auth Supabase + middleware JWT (`/dashboard/*`)
+- ✅ Chat + Viewer split layout (ChatPanel + ViewerPanel)
+- ✅ Orchestrateur Sonnet 4.6 + SSE streaming
+- ✅ Haiku 4.5 → JSON schema avec pin names KiCad
+- ✅ `validateAndCorrectSchema()` + `/circuit-synth/validate-symbols`
+- ✅ Circuit-Synth Python → `.kicad_sch` + `.kicad_pcb` natifs
+- ✅ `_safe_symbol()` — 2ème filet sécurité symboles inconnus
+- ✅ Bucket `kicad-files` Supabase Storage + signed URLs
+- ✅ KiCanvas viewer — auto-switch tab Schematic/Routing à l'arrivée SSE
+- ✅ Crédits déduction atomique Supabase RPC
+
+### Prochaine phase : Phase 3 — KiCad réel (pcbnew + Freerouting)
+Objectif : remplacer les stubs TS par le vrai pipeline KiCad
+1. FastAPI `/place` → pcbnew placement
+2. FastAPI `/route` → Freerouting
+3. FastAPI `/drc` → pcbnew DRC natif
+4. Export Gerbers + BOM LCSC
+5. Agent Footprint cascade 8 étapes (LCSC + SnapMagic + Octopart)
 
 ---
 
@@ -250,15 +276,17 @@ Phase 2 — Migration Circuit-Synth + KiCanvas complète :
 3. `npx skills find "query"` → skills.sh
 4. `/skill-creator:skill-creator` → créer si rien n'existe
 
-**Skills prioritaires Phase 2 :**
-1. `layrix-prompt-improver` — TOUJOURS en premier (améliore + contexte Layrix + skill)
-2. `layrix-pcb-agent` — boucle agentique PCB
-4. `layrix-credits` — déduction crédits Supabase
-5. `layrix-viewer` — KiCanvas (schéma + PCB) + Three.js 3D
-6. `/everything-claude-code:claude-api` — Claude SDK agents
-7. `/everything-claude-code:frontend-patterns` — Next.js / React
-8. `/everything-claude-code:postgres-patterns` — Supabase / pgvector
-9. `/everything-claude-code:security-scan` — avant commit auth/paiement
+**Skills prioritaires Phase 3 :**
+1. `layrix-prompt-improver` — TOUJOURS en premier
+2. `layrix-circuit-synth` — génération schéma KiCad, mapping symbols, pin names
+3. `layrix-kicad-service` — FastAPI pcbnew : placement, Freerouting, DRC, export
+4. `layrix-pcb-agent` — boucle agentique + états machine
+5. `layrix-footprint` — cascade 8 étapes LCSC/SnapMagic/Octopart
+6. `layrix-drc` — boucle DRC max 3×, corrections pcbnew
+7. `layrix-credits` — déduction crédits Supabase
+8. `layrix-viewer` — KiCanvas + Three.js 3D
+9. `/everything-claude-code:python-patterns` — FastAPI / pcbnew
+10. `/everything-claude-code:security-scan` — avant commit
 
 **Créer un skill :** `/skill-creator:skill-creator` → `.claude/skills/layrix-xxx/`
 **Améliorer un skill :** montrer les changements proposés → attendre confirmation
