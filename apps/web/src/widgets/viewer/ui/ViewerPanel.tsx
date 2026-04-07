@@ -42,13 +42,21 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
   const agentStep = useAppStore((s) => s.agentStep);
   const setPcbState = useAppStore((s) => s.setPcbState);
 
-  // Auto-switch to Schematic when kicad_sch_url first arrives (agent just generated it)
+  // Auto-switch to Schematic when kicad_sch_url first arrives (Schema step done)
   const kicadSchUrl = pcbState?.kicad_sch_url;
   useEffect(() => {
     if (kicadSchUrl && !userChoseModeRef.current) {
       setMode('schematic');
     }
   }, [kicadSchUrl]);
+
+  // Auto-switch to Routing when kicad_pcb_url first arrives (Placement step done)
+  const kicadPcbUrl = pcbState?.kicad_pcb_url;
+  useEffect(() => {
+    if (kicadPcbUrl && !userChoseModeRef.current) {
+      setMode('routing');
+    }
+  }, [kicadPcbUrl]);
 
   // Load persisted PCB state from DB on mount
   useEffect(() => {
