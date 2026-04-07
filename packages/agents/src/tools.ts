@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { runPCBEngine, runCircuitSynthEngine } from './engines/engine-router';
+import { validateAndCorrectSchema } from './engines/circuit-synth-engine';
 import type { SchemaJson } from './engines/engine-router';
 
 type Tool = Anthropic.Tool;
@@ -176,6 +177,9 @@ export async function executeToolStub(
       if (!schema) {
         schema = parseSchemaFromDescription(desc, complexity);
       }
+
+      // 4. Validate + auto-correct symbols against local KiCad libraries (pre-flight)
+      schema = await validateAndCorrectSchema(schema);
 
       _pcbStateCache.set(projectId, { schema, boardW: 50, boardH: 50 });
 

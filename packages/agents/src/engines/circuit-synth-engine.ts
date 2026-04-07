@@ -608,6 +608,45 @@ export function isCircuitSynthAvailable(): boolean {
 }
 
 /**
+ * Validate and auto-correct KiCad symbols against local .kicad_sym libraries.
+ * Calls POST /circuit-synth/validate-symbols if KICAD_SERVICE_URL is set.
+ * Returns the schema unchanged if the service is unavailable.
+ */
+export async function validateAndCorrectSchema(schema: SchemaJson): Promise<SchemaJson> {
+  const serviceUrl = process.env.KICAD_SERVICE_URL;
+  if (!serviceUrl) return schema;
+
+  try {
+    const res = await fetch(`${serviceUrl}/circuit-synth/validate-symbols`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ components: schema.components }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) return schema;
+
+    const data = await res.json() as {
+      corrected_components: SchemaComponent[];
+      has_corrections: boolean;
+      results: Array<{ ref: string; original_symbol: string; validated_symbol: string; corrected: boolean }>;
+    };
+
+    if (data.has_corrections) {
+      const corrections = data.results.filter((r) => r.corrected);
+      console.warn(
+        `[circuit-synth] Symbol corrections: ${corrections.map((r) => `${r.ref}: ${r.original_symbol} → ${r.validated_symbol}`).join(', ')}`
+      );
+      return { ...schema, components: data.corrected_components };
+    }
+
+    return schema;
+  } catch {
+    // FastAPI unavailable — passthrough, _safe_symbol() handles it server-side
+    return schema;
+  }
+}
+
+/**
  * Generate native .kicad_sch + .kicad_pcb from a JSON schema.
  *
  * 1. If KICAD_SERVICE_URL is set → try the Python service (pcbnew quality)

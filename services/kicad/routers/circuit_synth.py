@@ -556,8 +556,58 @@ _threading.Thread(target=_load_symbol_cache, daemon=True).start()
 
 
 # ============================================================
-# Route
+# Routes
 # ============================================================
+
+class SymbolValidationResult(BaseModel):
+    ref: str
+    original_symbol: str
+    validated_symbol: str
+    corrected: bool
+
+
+class ValidateSymbolsRequest(BaseModel):
+    components: list[SchemaComponent]
+
+
+class ValidateSymbolsResponse(BaseModel):
+    results: list[SymbolValidationResult]
+    corrected_components: list[SchemaComponent]
+    has_corrections: bool
+
+
+@router.post("/validate-symbols", response_model=ValidateSymbolsResponse)
+def validate_symbols(req: ValidateSymbolsRequest) -> ValidateSymbolsResponse:
+    """
+    Validate KiCad symbols for each component against local .kicad_sym libraries.
+    Returns a corrected component list — symbols that don't exist are replaced with
+    the closest generic fallback. Safe to call before /generate.
+    """
+    results: list[SymbolValidationResult] = []
+    corrected_components: list[SchemaComponent] = []
+    has_corrections = False
+
+    for comp in req.components:
+        original = _map_symbol(comp)
+        validated = _safe_symbol(original)
+        corrected = validated != original
+        if corrected:
+            has_corrections = True
+        results.append(SymbolValidationResult(
+            ref=comp.ref,
+            original_symbol=original,
+            validated_symbol=validated,
+            corrected=corrected,
+        ))
+        # Apply the validated symbol back into the component
+        corrected_components.append(comp.model_copy(update={"symbol": validated}))
+
+    return ValidateSymbolsResponse(
+        results=results,
+        corrected_components=corrected_components,
+        has_corrections=has_corrections,
+    )
+
 
 @router.post("/generate", response_model=CircuitSynthResponse)
 def generate(req: CircuitSynthRequest) -> CircuitSynthResponse:
