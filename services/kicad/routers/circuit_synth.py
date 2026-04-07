@@ -6,6 +6,7 @@ Fallback path: hand-written KiCad 7 S-expression generator.
 
 import math
 import os
+import re
 import tempfile
 import logging
 from pathlib import Path
@@ -134,6 +135,75 @@ _SYMBOL_RULES: list[tuple[tuple[str, str], str]] = [
     (("", "R_1206"), "Device:R"),
     (("", "R_AXIAL"), "Device:R"),
 ]
+
+
+# ============================================================
+# Symbol validator — loads .kicad_sym files from KICAD_SYMBOL_DIR
+# ============================================================
+
+# Generic fallbacks when a symbol is not found in local .kicad_sym files
+_SYMBOL_FALLBACKS: dict[str, str] = {
+    "Regulator_Linear": "Device:R",
+    "Timer": "Device:R",
+    "Amplifier_Operational": "Device:R",
+    "Transistor_BJT": "Device:Q_NPN_BCE",
+    "Diode": "Device:D",
+    "Connector_Generic": "Connector_Generic:Conn_01x02",
+}
+
+_symbol_cache: set[str] = set()
+_symbol_cache_loaded: bool = False
+
+
+def _load_symbol_cache() -> None:
+    """Parse all .kicad_sym files in KICAD_SYMBOL_DIR and build a set of 'lib:symbol' keys."""
+    global _symbol_cache, _symbol_cache_loaded
+    if _symbol_cache_loaded:
+        return
+    sym_dir = os.environ.get("KICAD_SYMBOL_DIR", "")
+    if not sym_dir:
+        _symbol_cache_loaded = True
+        return
+    sym_path = Path(sym_dir)
+    if not sym_path.is_dir():
+        logger.warning(f"KICAD_SYMBOL_DIR not found: {sym_dir}")
+        _symbol_cache_loaded = True
+        return
+    pattern = re.compile(r'\(symbol\s+"([^"]+)"')
+    for sym_file in sym_path.glob("*.kicad_sym"):
+        lib = sym_file.stem
+        try:
+            text = sym_file.read_text(encoding="utf-8", errors="ignore")
+            for m in pattern.finditer(text):
+                name = m.group(1)
+                # Skip sub-unit entries like "Device:R_0" — they contain '_' + digit at end
+                if not re.search(r'_\d+$', name):
+                    _symbol_cache.add(f"{lib}:{name}")
+        except OSError as e:
+            logger.warning(f"Could not read {sym_file}: {e}")
+    logger.info(f"Symbol cache loaded: {len(_symbol_cache)} symbols from {sym_dir}")
+    _symbol_cache_loaded = True
+
+
+def _symbol_exists(symbol: str) -> bool:
+    """Return True if the 'lib:name' symbol exists in the local KiCad symbol libraries."""
+    _load_symbol_cache()
+    if not _symbol_cache:
+        return True  # cache empty (no KICAD_SYMBOL_DIR) — trust the symbol
+    return symbol in _symbol_cache
+
+
+def _safe_symbol(symbol: str) -> str:
+    """
+    Return the symbol as-is if it exists in the local libraries.
+    Otherwise, fall back to the closest generic equivalent and log a warning.
+    """
+    if _symbol_exists(symbol):
+        return symbol
+    lib = symbol.split(":")[0] if ":" in symbol else ""
+    fallback = _SYMBOL_FALLBACKS.get(lib, "Device:R")
+    logger.warning(f"Symbol '{symbol}' not found in KiCad libraries — using '{fallback}' as fallback")
+    return fallback
 
 
 # ============================================================
@@ -282,7 +352,7 @@ def _generate_with_circuit_synth(
         # Create components — pass full ref (e.g. "R1") so circuit_synth uses it as-is
         comps: dict[str, CSComponent] = {}
         for comp in req.components:
-            symbol = _map_symbol(comp)
+            symbol = _safe_symbol(_map_symbol(comp))
             # Use prefix only (strip trailing digits) — circuit_synth auto-numbers
             ref_prefix = comp.ref.rstrip("0123456789") or comp.ref
             c = CSComponent(
@@ -478,6 +548,11 @@ def _generate_pcb_sexpr(
 
     lines.append(')')
     return "\n".join(lines)
+
+
+# Pre-load symbol cache at import time (non-blocking — runs once, ~100ms)
+import threading as _threading
+_threading.Thread(target=_load_symbol_cache, daemon=True).start()
 
 
 # ============================================================
