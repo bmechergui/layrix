@@ -442,12 +442,13 @@ function SchemaNetlistView({ pcbState }: { pcbState: PCBState | null }) {
 
   const compIdxByRef = new Map(components.map((c, i) => [c.ref, i]));
 
-  function pinPos(ref: string, pin: number): { x: number; y: number } | null {
+  function pinPos(ref: string, pin: number | string): { x: number; y: number } | null {
+    const pinNum = typeof pin === 'number' ? pin : 1;
     const idx = compIdxByRef.get(ref);
     if (idx === undefined) return null;
     const pos = compPos[idx]!;
     const total = getPadCount(components[idx]!.footprint);
-    return { x: pos.x + (pin / (total + 1)) * BOX_W, y: pos.y + PAD_Y };
+    return { x: pos.x + (pinNum / (total + 1)) * BOX_W, y: pos.y + PAD_Y };
   }
 
   if (!components.length) {

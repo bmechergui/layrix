@@ -335,10 +335,12 @@ async function generateSchemaWithHaiku(description: string): Promise<SchemaJson 
 
 "components": array of { "ref": string, "value": string, "footprint": string, "symbol": string, "lcsc"?: string }
 "nets": array of net name strings — every net that appears in connections MUST be listed here
-"connections": array of { "name": string, "pins": [{"ref": string, "pin": number}, ...] }
+"connections": array of { "name": string, "pins": [{"ref": string, "pin": number|string}, ...] }
   - EVERY net in "nets" MUST appear in "connections"
-  - "pin" is the 1-indexed pad number matching the KiCad symbol pin order
   - Every component "ref" used in pins MUST exist in "components"
+  - "pin" rules:
+      • Passives (R, C, LED, D, J/connector): use INTEGER pad number (1 or 2)
+      • ICs (NE555, LM7805, regulators, op-amps, transistors): use KiCad PIN NAME string (see table below)
 
 KiCad symbol table — use EXACTLY these values for "symbol":
   Resistor           → "Device:R"
@@ -363,29 +365,37 @@ KiCad symbol table — use EXACTLY these values for "symbol":
   4-pin connector    → "Connector_Generic:Conn_01x04"
   If no symbol fits   → "Device:R" (fallback)
 
-Footprint (simplified key used for pad count — pick the closest):
-  "0402" / "0603" / "0805" / "1206" = 2 pads
-  "LED"                              = 2 pads
-  "SOT-23"                           = 3 pads
-  "SOT-23-5"                         = 5 pads
-  "DIP-8" / "TSSOP-8"               = 8 pads
-  "TO-220"                           = 3 pads (pin 1=IN, 2=GND, 3=OUT for LDO)
-  "SOT-223"                          = 3 pads (pin 1=GND, 2=OUT, 3=IN for LM1117)
-  "Conn_2"                           = 2 pads
-  "Conn_3"                           = 3 pads
-  "Conn_4"                           = 4 pads
+Footprint keys:
+  "0402" / "0603" / "0805" / "1206" = 2 pads  (use pin 1 or 2)
+  "LED"  = 2 pads  (pin 1=anode, pin 2=cathode)
+  "TO-220" / "SOT-223" = 3 pads
+  "DIP-8" / "TSSOP-8"  = 8 pads
+  "Conn_2" / "Conn_3" / "Conn_4" = 2/3/4 pads
 
-Pin numbering for common ICs:
-  NE555P (DIP-8):  1=GND, 2=TRIG, 3=OUT, 4=RST, 5=CV, 6=THR, 7=DIS, 8=VCC
-  LM7805 (TO-220): 1=IN, 2=GND, 3=OUT
-  LM1117 (SOT-223):1=GND, 2=OUT, 3=IN
-  SOT-23 NPN BJT:  1=base, 2=emitter, 3=collector
+KiCad pin NAMES for ICs — use these exact strings in "pin":
+  NE555P (Timer:NE555P):
+    "GND"=1, "TR"=2 (TRIG), "Q"=3 (OUT), "R"=4 (RST), "CV"=5, "THR"=6, "DIS"=7, "VCC"=8
+  L7805 (Regulator_Linear:L7805):
+    "IN"=1, "GND"=2, "OUT"=3
+  LM1117 (Regulator_Linear:LM1117T-x.x):
+    "GND"=1, "OUT"=2, "IN"=3
+  LM317 (Regulator_Linear:LM317_TO-220):
+    "IN"=1, "ADJ"=2, "OUT"=3
+  LM358 op-amp (Amplifier_Operational:LM358) — unit A:
+    "IN-"=2, "IN+"=3, "VCC"=8, "OUT"=1, "GND"=4
+  Q_NPN_BCE (Device:Q_NPN_BCE):
+    "B"=1 (base), "C"=2 (collector), "E"=3 (emitter)
+  Q_PMOS_GSD (Device:Q_PMOS_GSD):
+    "G"=1 (gate), "S"=2 (source), "D"=3 (drain)
 
 Reference designators: R=resistor, C=capacitor, U=IC, D=diode/LED, J=connector, Q=transistor.
 Keep it to ≤ 20 components.
 
-Example output for "LED with 330R on 3.3V":
+Example — "LED with 330R on 3.3V" (passives use numbers, connectors use numbers):
 {"components":[{"ref":"J1","value":"PWR","footprint":"Conn_2","symbol":"Connector_Generic:Conn_01x02"},{"ref":"R1","value":"330R","footprint":"0603","symbol":"Device:R"},{"ref":"D1","value":"LED_RED","footprint":"LED","symbol":"Device:LED"}],"nets":["GND","3V3","NET_R_D"],"connections":[{"name":"GND","pins":[{"ref":"J1","pin":2},{"ref":"D1","pin":2}]},{"name":"3V3","pins":[{"ref":"J1","pin":1},{"ref":"R1","pin":1}]},{"name":"NET_R_D","pins":[{"ref":"R1","pin":2},{"ref":"D1","pin":1}]}]}
+
+Example — "LM7805 5V regulator" (IC uses pin names):
+{"components":[{"ref":"U1","value":"LM7805","footprint":"TO-220","symbol":"Regulator_Linear:L7805"},{"ref":"C1","value":"100nF","footprint":"0603","symbol":"Device:C"},{"ref":"J1","value":"VIN","footprint":"Conn_2","symbol":"Connector_Generic:Conn_01x02"}],"nets":["GND","VIN","VOUT"],"connections":[{"name":"VIN","pins":[{"ref":"J1","pin":1},{"ref":"U1","pin":"IN"},{"ref":"C1","pin":1}]},{"name":"VOUT","pins":[{"ref":"U1","pin":"OUT"},{"ref":"C1","pin":1}]},{"name":"GND","pins":[{"ref":"J1","pin":2},{"ref":"U1","pin":"GND"},{"ref":"C1","pin":2}]}]}
 
 Return ONLY valid JSON. No markdown fences. No explanation.`,
       messages: [{ role: 'user', content: `Circuit: ${description}` }],
@@ -399,7 +409,9 @@ Return ONLY valid JSON. No markdown fences. No explanation.`,
     const parsed = JSON.parse(cleaned) as SchemaJson;
     if (!Array.isArray(parsed.components) || parsed.components.length === 0) return null;
 
-    // Validate + repair connections: remove entries with invalid pin numbers
+    // Validate + repair connections
+    // ICs use KiCad pin name strings ("IN", "GND", "TR"…) — always valid if ref exists
+    // Passives use 1-indexed pad numbers — validate against footprint pad count
     const padCountMap: Record<string, number> = {
       '0402': 2, '0603': 2, '0805': 2, '1206': 2, 'LED': 2,
       'SOT-23': 3, 'SOT-23-5': 5, 'TSSOP-8': 8, 'DIP-8': 8,
@@ -420,8 +432,12 @@ Return ONLY valid JSON. No markdown fences. No explanation.`,
         .map((conn) => ({
           ...conn,
           pins: conn.pins.filter((p) => {
+            if (!validRefs.has(p.ref)) return false;
+            // String pin name → IC pin (e.g. "IN", "GND", "TR") — trust it
+            if (typeof p.pin === 'string') return p.pin.length > 0;
+            // Numeric pin → validate against pad count
             const maxPin = compPads.get(p.ref) ?? 2;
-            return validRefs.has(p.ref) && p.pin >= 1 && p.pin <= maxPin;
+            return p.pin >= 1 && p.pin <= maxPin;
           }),
         }))
         .filter((conn) => conn.name && conn.pins.length > 0);

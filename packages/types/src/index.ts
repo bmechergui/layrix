@@ -76,8 +76,12 @@ export interface SchemaComponent {
 export interface SchemaPin {
   /** Component reference designator, e.g. "R1" */
   ref: string;
-  /** 1-indexed pad number of the footprint */
-  pin: number;
+  /**
+   * Pin identifier — either a 1-indexed pad number (passives: R, C, LED, J)
+   * or a KiCad pin name string (ICs: "IN", "GND", "OUT", "TR", "R", "Q"…).
+   * circuit-synth accepts both: comp["IN"] and comp[1] are equivalent.
+   */
+  pin: number | string;
 }
 
 export interface SchemaNet {

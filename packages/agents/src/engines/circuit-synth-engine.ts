@@ -420,7 +420,7 @@ function generateSchematic(
       const idx = compIdx.get(pin.ref);
       if (idx === undefined) return;
       const { x, y } = compPos[idx]!;
-      const off = schPinOffset(components[idx]!.footprint, pin.pin - 1);
+      const off = schPinOffset(components[idx]!.footprint, (typeof pin.pin === 'number' ? pin.pin : 1) - 1);
       const px  = +(x + off.dx).toFixed(2);
       const py  = +(y + off.dy).toFixed(2);
       const netUpper = conn.name.toUpperCase();
@@ -447,7 +447,7 @@ function generateSchematic(
       const idx = compIdx.get(pin.ref);
       if (idx === undefined) return;
       const { x, y } = compPos[idx]!;
-      const off = schPinOffset(components[idx]!.footprint, pin.pin - 1);
+      const off = schPinOffset(components[idx]!.footprint, (typeof pin.pin === 'number' ? pin.pin : 1) - 1);
       const px  = +(x + off.dx).toFixed(2);
       const py  = +(y + off.dy).toFixed(2);
       // Alternate stub direction every other pin to spread labels
@@ -558,7 +558,7 @@ function generatePCB(
       const pos  = compPositions.get(pin.ref);
       const dims = compDims.get(pin.ref);
       if (!pos || !dims) return;
-      const pad = dims.pads[pin.pin - 1];
+      const pad = dims.pads[(typeof pin.pin === 'number' ? pin.pin : 1) - 1];
       if (pad) {
         pads.push({ x: +(pos.x + pad.dx).toFixed(3), y: +(pos.y + pad.dy).toFixed(3) });
       }
