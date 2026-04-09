@@ -320,7 +320,16 @@ def _map_symbol(comp: SchemaComponent) -> str:
 # ============================================================
 
 def _circuit_synth_available() -> bool:
-    """Check if circuit_synth library and KICAD_SYMBOL_DIR are both available."""
+    """Check if circuit_synth library and KICAD_SYMBOL_DIR are both available.
+
+    NOTE: circuit_synth 0.12.1 has a Windows-only charmap crash when writing
+    KiCad project files (emoji-laden debug output triggers cp1252 encoding
+    errors inside the library even with PYTHONUTF8=1 / -X utf8 / monkey-
+    patched builtins.open). Until that is fixed upstream or we ship the
+    service in a Linux container, we force the fallback path on Windows.
+    """
+    if os.name == "nt":
+        return False
     if not os.environ.get("KICAD_SYMBOL_DIR"):
         return False
     try:
@@ -503,23 +512,55 @@ def _uuid4() -> str:
     return str(uuid.uuid4())
 
 
+# Pin positions (dx, dy) relative to symbol origin — must match _INLINE_LIB_SYMBOLS
+_IC_PIN_OFFSETS = {
+    1: (-5.08, -3.81),
+    2: (-5.08, -1.27),
+    3: (-5.08, 1.27),
+    4: (-5.08, 3.81),
+    5: (5.08, 3.81),
+    6: (5.08, 1.27),
+    7: (5.08, -1.27),
+    8: (5.08, -3.81),
+}
+
+
+def _pin_offset(lib_id: str, pin_num: int) -> tuple[float, float]:
+    if lib_id == "Device:IC":
+        return _IC_PIN_OFFSETS.get(pin_num, (0.0, 0.0))
+    # 2-pin symbols: pin 1 on left, pin 2 on right
+    if pin_num == 1:
+        return (-3.81, 0.0)
+    return (3.81, 0.0)
+
+
 def _generate_schematic_fallback(
     components: list[SchemaComponent],
     connections: list[SchemaNet],
 ) -> str:
-    """Minimal but valid KiCad 7 schematic with inline lib_symbols (fallback).
-    Mirrors packages/agents/src/engines/circuit-synth-engine.ts::generateSchematic.
+    """KiCad 7 fallback schematic with inline lib_symbols + real wire bus rails.
+
+    Layout strategy:
+      - Components placed in a dense grid (cols ≤ 4) with generous spacing
+        so pin stubs and labels are visible.
+      - Each net gets a dedicated horizontal "rail" below the component grid.
+      - From every pin of a net we drop a vertical wire stub down to the rail,
+        then a horizontal wire spans the rail between min/max stub X.
+      - A (label) sits on the rail near the first pin.
     """
     n = len(components)
     cols = max(1, min(4, math.ceil(math.sqrt(n)))) if n else 1
     rows = max(1, math.ceil(n / cols)) if n else 1
-    col_step = 50
-    row_step = 40
-    margin = 20
+    col_step = 55
+    row_step = 35
+    margin = 15
     origin_x = margin
     origin_y = margin
-    paper_w = max(80, cols * col_step + margin * 2)
-    paper_h = max(60, rows * row_step + margin * 2 + 20)
+    rail_gap = 6  # mm between rails
+    rail_top = origin_y + rows * row_step + 10
+    rail_bottom = rail_top + max(1, len(connections)) * rail_gap
+    paper_w = max(80, origin_x + (cols - 1) * col_step + margin + 20)
+    paper_h = max(60, rail_bottom + margin + 10)
 
     lines: list[str] = []
     lines.append(
@@ -528,15 +569,16 @@ def _generate_schematic_fallback(
     lines.append(f'  (paper "User" {paper_w} {paper_h})')
     lines.append(f'  (lib_symbols{_INLINE_LIB_SYMBOLS}  )')
 
-    positions: list[tuple[float, float]] = []
-    for i in range(n):
-        x = origin_x + (i % cols) * col_step
-        y = origin_y + (i // cols) * row_step
-        positions.append((x, y))
+    positions: list[tuple[float, float]] = [
+        (origin_x + (i % cols) * col_step, origin_y + (i // cols) * row_step)
+        for i in range(n)
+    ]
+    lib_ids: list[str] = [_simple_lib_id(c) for c in components]
 
+    # --- Component instances ---
     for i, comp in enumerate(components):
         x, y = positions[i]
-        lib_id = _simple_lib_id(comp)
+        lib_id = lib_ids[i]
         ref_e = comp.ref.replace('"', '\\"')
         val_e = comp.value.replace('"', '\\"')
         fp_e = comp.footprint.replace('"', '\\"')
@@ -545,33 +587,55 @@ def _generate_schematic_fallback(
         )
         lines.append(f'    (uuid "{_uuid4()}")')
         lines.append(
-            f'    (property "Reference" "{ref_e}" (at {x} {y - 4} 0) (effects (font (size 1.27 1.27))))'
+            f'    (property "Reference" "{ref_e}" (at {x - 7} {y - 2} 0) '
+            f'(effects (font (size 1.27 1.27)) (justify right)))'
         )
         lines.append(
-            f'    (property "Value" "{val_e}" (at {x} {y + 4} 0) (effects (font (size 1.27 1.27))))'
+            f'    (property "Value" "{val_e}" (at {x + 7} {y - 2} 0) '
+            f'(effects (font (size 1.27 1.27)) (justify left)))'
         )
         lines.append(
-            f'    (property "Footprint" "{fp_e}" (at {x} {y + 8} 0) (effects (font (size 1.27 1.27)) (hide yes)))'
+            f'    (property "Footprint" "{fp_e}" (at {x} {y + 8} 0) '
+            f'(effects (font (size 1.27 1.27)) (hide yes)))'
         )
         lines.append('  )')
 
-    # Simple net labels near first pin of each net
+    # --- Real wires: per-net horizontal rail + vertical pin stubs ---
     comp_idx_by_ref = {c.ref: i for i, c in enumerate(components)}
-    for net in connections:
+    for ni, net in enumerate(connections):
         if not net.pins:
             continue
         name_e = net.name.replace('"', '\\"')
-        first = net.pins[0]
-        idx = comp_idx_by_ref.get(first.ref)
-        if idx is None:
-            continue
-        x, y = positions[idx]
-        # place label to the right of symbol
-        lx = x + 6
-        ly = y
-        lines.append(f'  (label "{name_e}" (at {lx} {ly} 0)')
-        lines.append('    (effects (font (size 1.27 1.27)) (justify left))')
-        lines.append('  )')
+        rail_y = rail_top + ni * rail_gap
+        pin_xs: list[float] = []
+        for p in net.pins:
+            idx = comp_idx_by_ref.get(p.ref)
+            if idx is None:
+                continue
+            sx, sy = positions[idx]
+            dx, dy = _pin_offset(lib_ids[idx], p.pin)
+            px = round(sx + dx, 3)
+            py = round(sy + dy, 3)
+            pin_xs.append(px)
+            # vertical stub from pin endpoint down to the rail
+            lines.append(
+                f'  (wire (pts (xy {px} {py}) (xy {px} {rail_y})) '
+                f'(stroke (width 0.1524) (type default)) (uuid "{_uuid4()}"))'
+            )
+        if len(pin_xs) >= 2:
+            xmin = min(pin_xs)
+            xmax = max(pin_xs)
+            lines.append(
+                f'  (wire (pts (xy {xmin} {rail_y}) (xy {xmax} {rail_y})) '
+                f'(stroke (width 0.1524) (type default)) (uuid "{_uuid4()}"))'
+            )
+        if pin_xs:
+            lx = pin_xs[0]
+            lines.append(
+                f'  (label "{name_e}" (at {lx} {rail_y - 1.5} 0) '
+                f'(effects (font (size 1.4 1.4)) (justify left bottom)) '
+                f'(uuid "{_uuid4()}"))'
+            )
 
     lines.append('  (sheet_instances (path "/" (page "1")))')
     lines.append(')')
