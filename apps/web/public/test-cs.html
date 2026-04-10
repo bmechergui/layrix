@@ -95,12 +95,19 @@
     document.querySelectorAll('.tab').forEach(t =>
       t.addEventListener('click', () => show(t.dataset.key)));
 
-    // ── Zoom helpers — dispatch keyboard events into KiCanvas ──
-    function sendKey(key, opts = {}) {
+    // ── Helpers — traverse 3-level Shadow DOM to reach KiCanvas canvas ──
+    function getCanvas() {
       const kv = document.getElementById('kv');
-      const target = kv.shadowRoot ? kv.shadowRoot : kv;
-      const ev = new KeyboardEvent('keydown', { key, bubbles: true, ...opts });
-      target.dispatchEvent(ev);
+      try {
+        const app    = kv.shadowRoot.querySelector('kc-schematic-app');
+        const viewer = app.shadowRoot.querySelector('kc-schematic-viewer');
+        return viewer.shadowRoot.querySelector('canvas');
+      } catch(e) { return kv; }
+    }
+    function sendKey(key, opts = {}) {
+      const target = getCanvas();
+      target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...opts }));
+      target.dispatchEvent(new KeyboardEvent('keyup',   { key, bubbles: true, cancelable: true, ...opts }));
     }
     function wheelZoom(delta) {
       const kv = document.getElementById('kv');
@@ -133,9 +140,7 @@
     document.getElementById('btn-zoomin') .addEventListener('click', () => wheelZoom(-200));
     document.getElementById('btn-zoomout').addEventListener('click', () => wheelZoom( 200));
     document.getElementById('btn-fit')    .addEventListener('click', () => {
-      // KiCanvas listens to 'fit' custom event or keyboard shortcut 'f'
-      const kv = document.getElementById('kv');
-      kv.dispatchEvent(new CustomEvent('fit', { bubbles: true }));
+      // KiCanvas keyboard shortcut 'f' = fit to screen, dispatched on the canvas
       sendKey('f');
     });
 
