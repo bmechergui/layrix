@@ -491,6 +491,30 @@ _INLINE_LIB_SYMBOLS = """
         (name "7" (effects (font (size 1.016 1.016)))) (number "7" (effects (font (size 1.016 1.016)))))
       (pin output line (at 5.08 -3.81 180) (length 1.016)
         (name "8" (effects (font (size 1.016 1.016)))) (number "8" (effects (font (size 1.016 1.016)))))))
+  (symbol "Timer:NE555P"
+    (pin_numbers hide) (pin_names (offset 0.254)) (in_bom yes) (on_board yes)
+    (property "Reference" "U" (at 0 -6 0) (effects (font (size 1.27 1.27))))
+    (property "Value" "NE555P" (at 0 6 0) (effects (font (size 1.27 1.27))))
+    (symbol "NE555P_0_1"
+      (rectangle (start -4 -4.5) (end 4 4.5)
+        (stroke (width 0.254) (type default)) (fill (type none))))
+    (symbol "NE555P_1_1"
+      (pin passive line (at -5.08 -3.81 0) (length 1.016)
+        (name "GND" (effects (font (size 1.016 1.016)))) (number "1" (effects (font (size 1.016 1.016)))))
+      (pin input line (at -5.08 -1.27 0) (length 1.016)
+        (name "TRIG" (effects (font (size 1.016 1.016)))) (number "2" (effects (font (size 1.016 1.016)))))
+      (pin output line (at -5.08 1.27 0) (length 1.016)
+        (name "OUT" (effects (font (size 1.016 1.016)))) (number "3" (effects (font (size 1.016 1.016)))))
+      (pin input line (at -5.08 3.81 0) (length 1.016)
+        (name "RST" (effects (font (size 1.016 1.016)))) (number "4" (effects (font (size 1.016 1.016)))))
+      (pin input line (at 5.08 3.81 180) (length 1.016)
+        (name "CTRL" (effects (font (size 1.016 1.016)))) (number "5" (effects (font (size 1.016 1.016)))))
+      (pin input line (at 5.08 1.27 180) (length 1.016)
+        (name "THR" (effects (font (size 1.016 1.016)))) (number "6" (effects (font (size 1.016 1.016)))))
+      (pin output line (at 5.08 -1.27 180) (length 1.016)
+        (name "DIS" (effects (font (size 1.016 1.016)))) (number "7" (effects (font (size 1.016 1.016)))))
+      (pin power_in line (at 5.08 -3.81 180) (length 1.016)
+        (name "VCC" (effects (font (size 1.016 1.016)))) (number "8" (effects (font (size 1.016 1.016)))))))
   (symbol "Device:VReg_3Pin"
     (pin_numbers hide) (pin_names (offset 0.254)) (in_bom yes) (on_board yes)
     (property "Reference" "U" (at 0 -3.5 0) (effects (font (size 1.27 1.27))))
@@ -512,6 +536,10 @@ def _simple_lib_id(comp: SchemaComponent) -> str:
     """Map a component to one of the inline lib_symbols (fallback rendering)."""
     ref = comp.ref.upper()
     val = comp.value.upper()
+    # 555 timer ICs — named pins GND/TRIG/OUT/RST/CTRL/THR/DIS/VCC
+    if any(x in val for x in ["NE555", "LM555", "NA555", "SA555", "TLC555",
+                               "ICM7555", "TS555"]):
+        return "Timer:NE555P"
     # 3-pin voltage regulators — TO-220 / SOT-223 style
     if any(x in val for x in ["LM78", "LM79", "LM317", "LM1117", "LM2596",
                                "LM2940", "LD33", "AMS1117", "L78", "L79"]):
@@ -553,7 +581,8 @@ _VREG_PIN_OFFSETS: dict[int, tuple[float, float]] = {
 
 
 def _pin_offset(lib_id: str, pin_num: int) -> tuple[float, float]:
-    if lib_id == "Device:IC":
+    # DIP-8 style ICs: Device:IC and Timer:NE555P share same pin geometry
+    if lib_id in ("Device:IC", "Timer:NE555P"):
         return _IC_PIN_OFFSETS.get(pin_num, (0.0, 0.0))
     if lib_id == "Device:VReg_3Pin":
         return _VREG_PIN_OFFSETS.get(pin_num, (0.0, 0.0))
@@ -576,15 +605,15 @@ def _generate_schematic_fallback(
     n = len(components)
     cols = max(1, min(4, math.ceil(math.sqrt(n)))) if n else 1
     rows = max(1, math.ceil(n / cols)) if n else 1
-    col_step = 50   # horizontal spacing between component origins (mm)
-    row_step = 28   # vertical spacing (mm)
-    margin = 20     # sheet margin (mm)
+    col_step = 45   # horizontal spacing between component origins (mm)
+    row_step = 25   # vertical spacing (mm)
+    margin = 8      # sheet margin (mm) — tight = better zoom-to-fit in KiCanvas
     stub_len = 2.54  # net-label stub length — one KiCad grid unit
     origin_x = margin
     origin_y = margin
 
-    paper_w = max(80, margin + (cols - 1) * col_step + 25 + margin)
-    paper_h = max(60, margin + (rows - 1) * row_step + 20 + margin)
+    paper_w = max(50, margin + (cols - 1) * col_step + 22 + margin)
+    paper_h = max(40, margin + (rows - 1) * row_step + 18 + margin)
 
     lines: list[str] = []
     lines.append(
