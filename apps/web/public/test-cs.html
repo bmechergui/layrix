@@ -81,24 +81,25 @@
 
     // ── Auto-zoom after KiCanvas finishes loading ───────────────
     function waitAndZoom(kvEl) {
-      // Poll until the internal viewer + document are ready, then zoom
+      // Poll until content is loaded AND viewport is properly sized.
+      // We fire zoom 3 times (150ms / 600ms / 1500ms) because KiCanvas can
+      // reset the camera after its own initial fit-to-page render.
       let attempts = 0;
       const poll = setInterval(() => {
         attempts++;
         const app    = kvEl.shadowRoot?.querySelector('kc-schematic-app');
         const viewer = app?.shadowRoot?.querySelector('kc-schematic-viewer');
         const v      = viewer?.viewer;
-        // Trigger when symbols OR net_labels are loaded (handles schematics without labels)
-        const doc = v?.document;
-        const ready = doc?.symbols?.length > 0 || doc?.net_labels?.length > 0;
-        if (ready) {
+        const doc    = v?.document;
+        const cam    = v?.viewport?.camera;
+        const hasContent  = doc?.symbols?.length > 0 || doc?.net_labels?.length > 0;
+        const hasViewport = (cam?.viewport_size?.x ?? 0) > 50;
+        if ((hasContent && hasViewport) || attempts > 100) {
           clearInterval(poll);
-          setTimeout(zoomToComponents, 150); // small delay for final render
-        }
-        if (attempts > 100) {
-          // Timeout: zoom anyway with whatever is loaded
-          clearInterval(poll);
-          setTimeout(zoomToComponents, 0);
+          // Fire 3× with increasing delays to survive KiCanvas camera resets
+          zoomToComponents();
+          setTimeout(zoomToComponents, 400);
+          setTimeout(zoomToComponents, 1200);
         }
       }, 50);
     }
@@ -161,6 +162,8 @@
 
       const vpW = cam.viewport_size.x;
       const vpH = cam.viewport_size.y;
+      if (vpW < 50 || vpH < 50) return;   // viewport not ready yet
+
       const paperW = doc.paper.width;
       const paperH = doc.paper.height;
 
@@ -172,37 +175,30 @@
                                          //   bottom border, title text starts ~8 mm in
       const H_MARGIN      = 3;           // mm left/right of paper
 
-      // Vertical window to show: from contentTop to contentBottom
+      // Vertical window [contentTop … contentBottom] fitted exactly in viewport
       const contentTop    = -T_MARGIN;
       const contentBottom = titleStartY + BORDER_SHOW;
-      const totalH        = contentBottom - contentTop;   // T_MARGIN + titleStartY + BORDER_SHOW
+      const totalH        = contentBottom - contentTop;
 
-      // Exact zoom so totalH fills vpH; also constrain by width
       const zoomV = vpH / totalH;
       const zoomH = vpW / (paperW + 2 * H_MARGIN);
       const zoom  = Math.min(zoomV, zoomH);
 
-      // Camera center = midpoint of the target window (horizontal = paper center)
+      // Camera center = midpoint of the window; horizontal = paper center
       const cx = paperW / 2;
-      const cy = (contentTop + contentBottom) / 2;   // = (titleStartY + BORDER_SHOW - T_MARGIN) / 2
+      const cy = (contentTop + contentBottom) / 2;
 
-      // Modify Vec2 IN PLACE (replacing the object breaks internal .set() method)
+      // Apply IN PLACE (replacing Vec2 object breaks KiCanvas internal .set())
       cam.center.x = cx;
       cam.center.y = cy;
       cam.zoom     = zoom;
 
-      // Trigger KiCanvas render: draw + on_viewport_change + micro-wheel event
+      // Force re-render via draw() + RAF for next frame
       try { v.draw(); }               catch(_) {}
       try { v.on_viewport_change(); } catch(_) {}
-      const canvas = deepQueryCanvas(viewer.shadowRoot);
-      if (canvas) {
-        const r = canvas.getBoundingClientRect();
-        canvas.dispatchEvent(new WheelEvent('wheel', {
-          bubbles: true, cancelable: true,
-          clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
-          deltaY: 0.001, deltaMode: 0, ctrlKey: false,
-        }));
-      }
+      requestAnimationFrame(() => {
+        try { v.draw(); } catch(_) {}
+      });
     }
 
     function sendKey(key, opts = {}) {
