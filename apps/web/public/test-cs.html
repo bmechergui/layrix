@@ -82,8 +82,7 @@
     // ── Auto-zoom after KiCanvas finishes loading ───────────────
     function waitAndZoom(kvEl) {
       // Poll until content is loaded AND viewport is properly sized.
-      // We fire zoom 3 times (150ms / 600ms / 1500ms) because KiCanvas can
-      // reset the camera after its own initial fit-to-page render.
+      // Fire zoom 3× (0 / 400 / 1200 ms) to survive KiCanvas camera resets.
       let attempts = 0;
       const poll = setInterval(() => {
         attempts++;
@@ -96,12 +95,18 @@
         const hasViewport = (cam?.viewport_size?.x ?? 0) > 50;
         if ((hasContent && hasViewport) || attempts > 100) {
           clearInterval(poll);
-          // Fire 3× with increasing delays to survive KiCanvas camera resets
           zoomToComponents();
           setTimeout(zoomToComponents, 400);
           setTimeout(zoomToComponents, 1200);
         }
       }, 50);
+
+      // KiCanvas shows "Click or tap to interact" overlay; when the user clicks
+      // to activate, KiCanvas resets its camera → re-apply our zoom right after.
+      kvEl.addEventListener('pointerdown', () => {
+        setTimeout(zoomToComponents, 120);
+        setTimeout(zoomToComponents, 600);
+      }, { once: true });
     }
 
     // ── Tab switching ──────────────────────────────────────────
@@ -184,9 +189,14 @@
       const zoomH = vpW / (paperW + 2 * H_MARGIN);
       const zoom  = Math.min(zoomV, zoomH);
 
-      // Camera center = midpoint of the window; horizontal = paper center
+      // When zoom = zoomH (width-constrained), visibleHalfH > totalH/2.
+      // cy_max = contentBottom - visibleHalfH guarantees the title block NEVER
+      // enters the viewport regardless of which axis is the bottleneck.
+      const visibleHalfH = vpH / (2 * zoom);
+      const cy_ideal     = (contentTop + contentBottom) / 2;
+      const cy_max       = contentBottom - visibleHalfH;
       const cx = paperW / 2;
-      const cy = (contentTop + contentBottom) / 2;
+      const cy = Math.min(cy_ideal, cy_max);
 
       // Apply IN PLACE (replacing Vec2 object breaks KiCanvas internal .set())
       cam.center.x = cx;
