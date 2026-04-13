@@ -45,18 +45,6 @@ app.add_middleware(
 # Modèles Pydantic
 # ============================================================
 
-class ComponentPlacement(BaseModel):
-    ref: str
-    x_mm: float
-    y_mm: float
-    rotation: float = 0.0
-    side: str = "front"  # "front" | "back"
-
-class PlacementRequest(BaseModel):
-    pcb_path: str
-    components: list[ComponentPlacement]
-    output_path: str
-
 class RoutingRequest(BaseModel):
     pcb_path: str
     output_path: str
@@ -88,6 +76,10 @@ class SimulationRequest(BaseModel):
 from routers.circuit_synth import router as circuit_synth_router  # noqa: E402
 app.include_router(circuit_synth_router)
 
+# Placement router — /place (explicit) + /place/auto (grid algorithm, base64 I/O)
+from routers.placement import router as placement_router  # noqa: E402
+app.include_router(placement_router)
+
 # ============================================================
 # Routes
 # ============================================================
@@ -99,13 +91,6 @@ def health():
         "pcbnew": PCBNEW_AVAILABLE,
         "version": "1.0.0",
     }
-
-@app.post("/place")
-def place(req: PlacementRequest):
-    if not PCBNEW_AVAILABLE:
-        raise HTTPException(status_code=503, detail="pcbnew non disponible")
-    from tools.placement import place_components
-    return place_components(req.pcb_path, [c.model_dump() for c in req.components], req.output_path)
 
 @app.post("/route")
 def route(req: RoutingRequest):
