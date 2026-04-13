@@ -142,11 +142,14 @@
       return app?.shadowRoot?.querySelector('kc-schematic-viewer');
     }
 
-    // ── Smart zoom: show schematic content area, hide title block ───────────────
-    // Approach: zoom to fit paper content area, then derive cy from two constraints:
-    //   C1: visible_top  ≤ -T_MARGIN  → frame top always visible
-    //   C2: visible_bottom < titleStartY - T_MARGIN  → title block always off-screen
-    // Both constraints are expressed as cy bounds; we pick the one that is tighter.
+    // ── Smart zoom: show full internal frame, hide title block ──────────────────
+    // Strategy: define the exact vertical window we want to show, then compute
+    // zoom and cy so that window fills the viewport perfectly.
+    //   contentTop    = -T_MARGIN          (small gap above frame top border)
+    //   contentBottom = titleStartY + BORDER_SHOW  (show frame bottom border but
+    //                                               not title block text content)
+    // zoom = vpH / totalH  (exact fit, no approximation)
+    // cy   = midpoint of [contentTop … contentBottom]
     function zoomToComponents() {
       const viewer = getSchematicViewer();
       if (!viewer) return;
@@ -161,27 +164,27 @@
       const paperW = doc.paper.width;
       const paperH = doc.paper.height;
 
-      // KiCad title block has a FIXED height (~43mm), NOT a ratio of paper height.
-      // Verified via DevTools: for paperH=93mm, separator is at y≈50mm → height=43mm.
-      const TITLE_HEIGHT  = 43;   // mm — fixed KiCad title block height
+      // KiCad title block: FIXED 43 mm height (not a ratio of paper height)
+      const TITLE_HEIGHT  = 43;          // mm — KiCad standard
       const titleStartY   = paperH - TITLE_HEIGHT;
-      const T_MARGIN    = 2;  // mm safety gap (top + title)
-      const H_MARGIN    = 3;  // mm left/right of paper
+      const T_MARGIN      = 2;           // mm above frame top border
+      const BORDER_SHOW   = 4;           // mm past title separator → shows frame
+                                         //   bottom border, title text starts ~8 mm in
+      const H_MARGIN      = 3;           // mm left/right of paper
 
-      // Zoom: fit [0 … titleStartY] vertically and full paper width horizontally
-      const zoomV = vpH / (titleStartY + 2 * T_MARGIN);  // +margin top & bottom
-      const zoomH = vpW / (paperW    + 2 * H_MARGIN);
+      // Vertical window to show: from contentTop to contentBottom
+      const contentTop    = -T_MARGIN;
+      const contentBottom = titleStartY + BORDER_SHOW;
+      const totalH        = contentBottom - contentTop;   // T_MARGIN + titleStartY + BORDER_SHOW
+
+      // Exact zoom so totalH fills vpH; also constrain by width
+      const zoomV = vpH / totalH;
+      const zoomH = vpW / (paperW + 2 * H_MARGIN);
       const zoom  = Math.min(zoomV, zoomH);
 
-      const visibleHalfH = vpH / (2 * zoom);
-
-      // C1: cy - visibleHalfH ≤ -T_MARGIN  →  cy ≤ visibleHalfH - T_MARGIN
-      const maxCy_frame = visibleHalfH - T_MARGIN;
-      // C2: cy + visibleHalfH < titleStartY - T_MARGIN  →  cy < titleStartY - T_MARGIN - visibleHalfH
-      const maxCy_title = titleStartY - T_MARGIN - visibleHalfH;
-      // Use the tighter (smaller) upper bound
-      const cy = Math.min(maxCy_frame, maxCy_title);
+      // Camera center = midpoint of the target window (horizontal = paper center)
       const cx = paperW / 2;
+      const cy = (contentTop + contentBottom) / 2;   // = (titleStartY + BORDER_SHOW - T_MARGIN) / 2
 
       // Modify Vec2 IN PLACE (replacing the object breaks internal .set() method)
       cam.center.x = cx;
