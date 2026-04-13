@@ -176,11 +176,20 @@
       const bw = bx2 - bx1, bh = by2 - by1;
       // Center on actual component span for correct horizontal alignment
       const cx = (minX + maxX) / 2;
-      const cy = (by1 + by2) / 2;
+      let   cy = (by1 + by2) / 2;
 
-      // Fit by HEIGHT with 15% margin → title block (bottom 30% of paper) guaranteed off-screen.
-      // Schematic aspect ratio > viewport → width-fit would leak title block; height-fit is safe.
-      const zoom = (vpH / bh) * 0.85;
+      // Use the smaller of width-fit or height-fit so nothing clips on either axis.
+      // Then clamp cy upward so the title block (bottom ~30% of paper) stays off-screen.
+      const TITLE_RATIO = 0.30;
+      const titleStartY = paperH * (1 - TITLE_RATIO);
+      const zoomW = (vpW / bw) * 0.90;
+      const zoomH = (vpH / bh) * 0.85;
+      const zoom  = Math.min(zoomW, zoomH);
+
+      // Ensure visible bottom doesn't reach the title block
+      const visibleHalfH = vpH / (2 * zoom);
+      const maxCy = titleStartY - visibleHalfH - 2; // 2 mm safety margin
+      if (cy > maxCy) cy = maxCy;
 
       // Modify Vec2 IN PLACE (don't replace the object — breaks internal methods)
       cam.center.x = cx;
