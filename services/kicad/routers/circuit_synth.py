@@ -607,14 +607,15 @@ def _generate_schematic_fallback(
     rows = max(1, math.ceil(n / cols)) if n else 1
     col_step = 55    # horizontal spacing between component origins (mm)
     row_step = 35    # vertical spacing — enough for 8-pin ICs with net labels
-    margin = 15      # frame border clearance (KiCad frame border ≈ 5 mm, title ≈ 15 mm)
-    title_h = 20     # reserved height for KiCanvas title-block at the bottom
+    margin = 12      # frame border clearance (KiCad frame border ≈ 5 mm + safety)
     stub_len = 2.54  # net-label stub length — one KiCad grid unit
     origin_x = margin
     origin_y = margin
 
+    # Paper exactly fits components — no extra title_h padding, KiCanvas title block
+    # overlaps the bottom margin which is fine for a test/preview viewer.
     paper_w = max(80, margin + (cols - 1) * col_step + 28 + margin)
-    paper_h = max(70, margin + (rows - 1) * row_step + 22 + margin + title_h)
+    paper_h = max(60, margin + (rows - 1) * row_step + 20 + margin)
 
     lines: list[str] = []
     lines.append(
