@@ -9,14 +9,17 @@ FROM ubuntu:22.04 AS base
 ENV DEBIAN_FRONTEND=noninteractive
 
 # System dependencies + KiCad 8.0 via official PPA
+# gnupg + dirmngr required for add-apt-repository (GPG key import)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
+    gnupg \
+    dirmngr \
     curl \
     ca-certificates \
     && add-apt-repository --yes ppa:kicad/kicad-8.0-releases \
     && apt-get update && apt-get install -y --no-install-recommends \
+    kicad \
     kicad-footprints \
-    python3-kicad \
     python3-pip \
     python3-dev \
     openjdk-17-jre-headless \
