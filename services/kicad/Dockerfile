@@ -3,14 +3,23 @@
 # Base : KiCad 8.0 + Python 3.11 + FastAPI + Freerouting
 # ============================================================
 
-FROM kicad/kicad:8.0-ubuntu AS base
+FROM ubuntu:22.04 AS base
 
-# Dépendances système
+# Prevent interactive prompts during apt
+ENV DEBIAN_FRONTEND=noninteractive
+
+# System dependencies + KiCad 8.0 via official PPA
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    curl \
+    ca-certificates \
+    && add-apt-repository --yes ppa:kicad/kicad-8.0-releases \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    kicad-footprints \
+    python3-kicad \
     python3-pip \
     python3-dev \
     openjdk-17-jre-headless \
-    curl \
     zip \
     unzip \
     && rm -rf /var/lib/apt/lists/*
