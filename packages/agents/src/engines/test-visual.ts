@@ -42,8 +42,8 @@ const NE555_SCHEMA: SchemaJson = {
   ],
 };
 
-// Escape for embedding in HTML
-function esc(s: string): string {
+// Escape for embedding in HTML (prefixed _ = intentionally unused in current template)
+function _esc(s: string): string {
   return s.replace(/`/g, '\\`').replace(/\$/g, '\\$');
 }
 
@@ -96,11 +96,11 @@ const pubDir = resolve('../../apps/web/public');
 writeFileSync(`${pubDir}/test-kicad.html`, html, 'utf-8');
 writeFileSync(`${pubDir}/test-ne555.kicad_sch`, result.kicad_sch_content, 'utf-8');
 writeFileSync(`${pubDir}/test-ne555.kicad_pcb`, result.kicad_pcb_content, 'utf-8');
-console.log(`✅  Written: test-kicad.html + test-ne555.kicad_sch + test-ne555.kicad_pcb`);
-console.log(`🌐  Open: http://localhost:3333/test-kicad.html`);
-console.log(`\n📊  Stats:`);
-console.log(`    .kicad_sch  ${result.kicad_sch_content.length} chars`);
-console.log(`    .kicad_pcb  ${result.kicad_pcb_content.length} chars`);
+process.stdout.write(`✅  Written: test-kicad.html + test-ne555.kicad_sch + test-ne555.kicad_pcb\n`);
+process.stdout.write(`🌐  Open: http://localhost:3333/test-kicad.html\n`);
+process.stdout.write(`\n📊  Stats:\n`);
+process.stdout.write(`    .kicad_sch  ${result.kicad_sch_content.length} chars\n`);
+process.stdout.write(`    .kicad_pcb  ${result.kicad_pcb_content.length} chars\n`);
 }
 
 main().catch(console.error);
