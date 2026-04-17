@@ -617,12 +617,15 @@ def _generate_schematic_fallback(
     TITLE_PADDING      = 6    # mm — minimum gap between components and title block
     margin_top  = 20          # top / left margin inside frame border (≥15 mm from inner frame border at y≈5 mm)
     # margin_side accounts for BOTH component body (centered at origin_x)
-    # AND the net-label text that extends ~8 mm to the left/right of the body.
-    # Inner frame border is at x≈10 mm → need 28 mm so label text sits ≥10 mm
-    # inside the frame (28 - 8 label_overhang = 20 mm for body origin, 10 mm clearance).
-    margin_side = 28
+    # AND the net-label text that extends to the left/right of the body.
+    # Longest realistic net-label ("VCC_3V3", "LED_GREEN", "GND_R2") ≈ 18 mm
+    # from body centre (half body width + stub 2.54 mm + text width).
+    # Inner frame border is at x≈10 mm → need 38 mm so label text sits
+    # ≥10 mm inside the frame (38 - 18 label_overhang = 20 mm body origin,
+    # label text reaches x=20, clearance = 10 mm from frame at x=10).
+    margin_side = 38
     comp_h_span = 18          # half-height of component body + value label below centre
-    comp_w_span = 15          # half-width of component body + stub label right of centre
+    comp_w_span = 20          # half-width of component body + longest right-side net-label text
 
     # Bounding box of all component placements (bottom edge of last row)
     component_bottom_y = margin_top + (rows - 1) * row_step + comp_h_span
