@@ -16,7 +16,157 @@
 
 ---
 
-## Orchestrateur — Rôle central
+## Orchestrateur — Détail complet
+
+### Fichiers
+
+```
+packages/agents/src/
+├── orchestrator.ts      ← Boucle principale (Sonnet 4.6 + SSE stream)
+├── tools.ts             ← 8 tool calls + executeToolStub()
+├── prompts.ts           ← ORCHESTRATOR_SYSTEM_PROMPT
+├── types.ts             ← Interfaces TypeScript
+└── engines/
+    ├── circuit-synth-engine.ts   ← Engine Circuit-Synth (POST /circuit-synth/generate)
+    └── engine-router.ts          ← Router vers pcbnew / Freerouting
+```
+
+### Modèle & configuration
+
+```typescript
+// orchestrator.ts
+const ORCHESTRATOR_MODEL = 'claude-sonnet-4-6'  // Sonnet — chef du pipeline
+const MAX_ITERATIONS     = 15                    // max 15 appels Claude
+const MAX_TOKENS         = 4096                  // par réponse
+```
+
+### System Prompt (résumé)
+
+```
+Tu es l'Orchestrateur PCB de Layrix.ai.
+Tu transformes une description en PCB DRC-clean prêt pour JLCPCB.
+
+PIPELINE (max 15 itérations) :
+  INITIAL → call_agent_schema → SCHEMA_DONE
+          → call_agent_placement → PLACEMENT_DONE
+          → call_agent_routing → ROUTING_DONE
+          → call_agent_drc → DRC_CLEAN
+          → call_agent_export → PCB_LIVRÉ
+
+RÈGLES ABSOLUES :
+  - JAMAIS commander JLCPCB sans "OUI JE CONFIRME" explicite
+  - DRC obligatoire avant export
+  - Footprint manquant → call_agent_footprint immédiatement
+  - Réponds dans la langue de l'utilisateur
+
+COHÉRENCE TEXTE ↔ SCHÉMA :
+  Sonnet DÉCIDE lui-même les composants dans sa réponse texte,
+  puis les passe dans schema_json à call_agent_schema.
+  → Haiku ne "devine" jamais les composants à l'aveugle.
+```
+
+### Signature de la fonction
+
+```typescript
+// orchestrator.ts — entrée unique du pipeline
+export async function* runOrchestrator(
+  options: {
+    userMessage : string               // prompt de l'utilisateur
+    projectId   : string               // ID projet Supabase
+    history     : AgentHistoryMessage[] // historique chat
+  }
+): AsyncGenerator<SSEEvent>
+```
+
+### Boucle d'itération (pseudo-code)
+
+```typescript
+while (iterations < MAX_ITERATIONS) {
+  iterations++
+  yield { type: 'iteration', count: iterations }
+
+  // 1. Appel Sonnet 4.6 avec streaming
+  const stream = client.messages.create({
+    model   : 'claude-sonnet-4-6',
+    system  : ORCHESTRATOR_SYSTEM_PROMPT,
+    tools   : PCB_TOOLS,          // 8 tools disponibles
+    messages: conversationHistory
+  })
+
+  // 2. Accumule le stream → text delta + tool_use blocks
+  for await (const event of stream) {
+    if (text_delta)    → yield { type: 'text', delta }
+    if (tool_use)      → accumule inputJson
+  }
+
+  // 3. Si stop_reason = 'end_turn' → Sonnet a terminé, break
+  if (stopReason === 'end_turn') break
+
+  // 4. Execute chaque tool call
+  for (const tool of toolUseBlocks) {
+    yield { type: 'tool_call',   tool: tool.name, input }
+    yield { type: 'step',        step: stepMap[tool.name] }
+
+    const result = await executeToolStub(tool.name, input, projectId)
+
+    yield { type: 'tool_result', tool: tool.name, summary }
+    yield { type: 'pcb_state',   projectId, state: result }
+    //                            ↑ Front met à jour KiCanvas en temps réel
+  }
+
+  // 5. Ajoute le résultat dans l'historique → Sonnet continue
+  messages.push({ role: 'user', content: toolResults })
+}
+
+yield { type: 'done', fullText }
+```
+
+### SSE Events (tous les types)
+
+```typescript
+type SSEEvent =
+  | { type: 'iteration';   count: number }               // début itération
+  | { type: 'text';        delta: string }               // texte streamé Sonnet
+  | { type: 'step';        step: string }                // SCHEMA/PLACEMENT/...
+  | { type: 'tool_call';   tool: string; input: {} }     // avant exécution tool
+  | { type: 'tool_result'; tool: string; summary: string } // après exécution
+  | { type: 'pcb_state';   projectId: string; state: {} } // KiCanvas update
+  | { type: 'done';        fullText: string }            // fin du pipeline
+  | { type: 'error';       message: string }             // erreur critique
+```
+
+### Outils disponibles (PCB_TOOLS)
+
+```
+call_agent_design      🔲  → design.json         (À ajouter)
+call_agent_schema      ✅  → schematic.json       (Haiku + Circuit-Synth)
+call_agent_footprint   ⚠️  → footprints.json      (Stub)
+call_agent_placement   ✅  → placement.json       (Haiku + pcbnew)
+call_agent_routing     🔲  → routing.json         (À créer — Freerouting)
+call_agent_drc         ⚠️  → drc.json             (Stub)
+call_agent_export      ⚠️  → export.json          (Stub)
+ask_user               ✅  → question string      (toujours disponible)
+```
+
+### Règle critique — Sonnet décide les composants
+
+```
+❌ MAUVAIS :
+   Sonnet → call_agent_schema({ user_description: "régulateur 5V" })
+   Haiku devine → peut choisir LM317, L7805, LDO n'importe lequel
+
+✅ CORRECT :
+   Sonnet réfléchit → "LM7805 TO-220, C1=330nF, C2=100nF, J1/J2 connecteurs"
+   Sonnet → call_agent_schema({
+     user_description: "régulateur 5V",
+     schema_json: '{"components":[{"ref":"U1","value":"LM7805",...}],...}'
+   })
+   → Haiku reçoit exactement les composants décidés par Sonnet
+```
+
+---
+
+## Orchestrateur — Rôle central (résumé)
 
 ```
 Orchestrator (Sonnet 4.6)
@@ -27,17 +177,17 @@ Orchestrator (Sonnet 4.6)
 │  Limite  : max 15 itérations par PCB
 │  Budget  : ~0.12€ par PCB complet
 │
-├─ STEP 1 → tool: call_agent_design
-├─ STEP 2 → tool: call_agent_schema
-├─ STEP 3 → tool: call_agent_footprint
-├─ STEP 4 → tool: call_agent_placement
-├─ STEP 5 → tool: call_agent_routing
-├─ STEP 6 → tool: call_agent_drc
-├─ STEP 7 → tool: call_agent_export
-└─ ??     → tool: ask_user  (si info manquante)
+├─ STEP 1 → tool: call_agent_design     🔲
+├─ STEP 2 → tool: call_agent_schema     ✅
+├─ STEP 3 → tool: call_agent_footprint  ⚠️
+├─ STEP 4 → tool: call_agent_placement  ✅
+├─ STEP 5 → tool: call_agent_routing    🔲
+├─ STEP 6 → tool: call_agent_drc        ⚠️
+├─ STEP 7 → tool: call_agent_export     ⚠️
+└─ ??     → tool: ask_user              ✅
 ```
 
-**Fichier :** `packages/agents/src/orchestrator.ts`
+**Fichier principal :** `packages/agents/src/orchestrator.ts`
 **Tools :** `packages/agents/src/tools.ts`
 
 ---
