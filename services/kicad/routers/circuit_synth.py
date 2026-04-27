@@ -614,8 +614,8 @@ def _generate_schematic_fallback(
     # Formula: paper_h = component_bottom_y + TITLE_PADDING + TITLE_BLOCK_HEIGHT
     # This guarantees a clean gap between the bottom component and the title block.
     TITLE_BLOCK_HEIGHT = 44   # mm — KiCad standard title block fixed height
-    TITLE_PADDING      = 6    # mm — minimum gap between components and title block
-    margin_top  = 20          # top / left margin inside frame border (≥15 mm from inner frame border at y≈5 mm)
+    TITLE_PADDING      = 15   # mm — gap between last component label and title block (≥10 mm visual buffer)
+    margin_top  = 25          # top margin: ≥20 mm from inner frame border (frame top at y≈5 mm) so reference labels don't crowd the border
     # margin_side accounts for BOTH component body (centered at origin_x)
     # AND the net-label text that extends to the left/right of the body.
     # Longest realistic net-label ("VCC_3V3", "LED_GREEN", "GND_R2") ≈ 18 mm
