@@ -246,6 +246,102 @@ La netlist (liste `{net → pads connectés}`) est créée **une seule fois** pu
 
 ---
 
+## Le `.kicad_pcb` — qui fait quoi (et pourquoi 3 agents ?)
+
+Le `.kicad_pcb` est créé une fois (Circuit-Synth) puis **enrichi par couches successives** par Placement → Routing → DRC. Chaque agent ajoute une dimension que les autres ne peuvent pas faire.
+
+### Composition du `.kicad_pcb` à chaque étape
+
+| Étape | Footprints | Positions | Pistes (F.Cu/B.Cu) | Vias | Ground plane | DRC validé |
+|-------|------------|-----------|---------------------|------|--------------|------------|
+| **Circuit-Synth** | ✅ Présents | ⚠️ Grille bête (0,0), (10,0), (20,0)... | ❌ | ❌ | ❌ | ❌ |
+| **Placement Agent** | ✅ Présents | ✅ **Optimisées par bloc fonctionnel** | ❌ | ❌ | ❌ | ❌ |
+| **Routing Agent** | ✅ Présents | ✅ Optimisées | ✅ **Tracées** | ✅ **Posés** | ✅ **Rempli** | ⚠️ Non vérifié |
+| **DRC Agent** | ✅ Présents | ✅ Optimisées | ✅ Tracées | ✅ Posés | ✅ Rempli | ✅ **Clean** |
+
+### Qui fait quoi (concret)
+
+```
+Circuit-Synth (Python)         → POSE les footprints
+                                  add_footprint("LM7805", x=0, y=0)
+                                  add_footprint("C1",     x=10, y=0)
+                                  → tout empilé en ligne, aucune logique
+
+Placement Agent (Haiku + pcbnew) → ARRANGE intelligemment
+                                  SetPosition(U1, x=25, y=20) ← centre
+                                  SetPosition(C1, x=15, y=20) ← proche IN
+                                  SetPosition(C2, x=35, y=20) ← proche OUT
+                                  → composants groupés par bloc fonctionnel
+
+Routing Agent (Freerouting)     → RELIE électriquement
+                                  trace VIN  : J1.1 ━━ C1 ━━ U1.IN  (F.Cu)
+                                  trace VOUT : U1.OUT ━━ C2 ━━ J2.1 (F.Cu)
+                                  trace GND  : tous les pads GND    (B.Cu plane)
+                                  + 3 vias entre F.Cu ↔ B.Cu
+
+DRC Agent (pcbnew)              → VALIDE les règles
+                                  check clearance ≥ 0.2mm ?
+                                  check trace_width ≥ 0.3mm ?
+                                  → 0 violation = DRC_CLEAN
+```
+
+### Pourquoi un placement intelligent compte
+
+| Critère | Circuit-Synth seul | Placement Agent |
+|---------|--------------------|--------------------|
+| Routage | Pistes longues (bruit) | Pistes courtes (signal propre) |
+| Découplage | Cap à 30mm du IC (inutile) | Cap à 3mm du IC (filtre efficace) |
+| Thermique | Régulateur collé au MCU | Régulateur à 15mm du MCU |
+| Ergonomie | USB-C au milieu (pas branchable) | USB-C sur le bord |
+| Routabilité Freerouting | 30% non routé → DRC fail | 100% routé → DRC clean |
+
+### Analogie maison
+
+```
+🏠 Construction d'une maison
+
+Circuit-Synth     = Livraison des MEUBLES devant la maison
+                    (lits, tables, chaises empilés dans le hall)
+
+Placement Agent   = ARRANGEUR pro qui RÉPARTIT les meubles :
+                    - Lit dans la chambre
+                    - Table dans la cuisine
+                    - Canapé dans le salon
+
+Routing Agent     = Tirer les CÂBLES électriques (après placement)
+
+DRC Agent         = Inspection finale (normes électriques respectées)
+```
+
+### Règle critique — séparation des responsabilités
+
+```
+❌ Circuit-Synth NE PEUT PAS placer intelligemment
+   → c'est une lib de DESCRIPTION, pas d'optimisation
+   → ne connait ni les blocs fonctionnels, ni la thermique, ni l'ergonomie
+
+❌ Circuit-Synth NE PEUT PAS router
+   → ne connait pas les algorithmes de routage (A*, Dijkstra)
+   → ne gère pas vias, layers, ground planes
+
+✅ Chaque agent a son outil :
+   - Placement Agent → pcbnew SetPosition() / SetOrientation()
+   - Routing Agent  → Freerouting JAR (algorithme industriel 30+ ans)
+   - DRC Agent      → pcbnew DRC engine natif
+```
+
+### Sans chacune des étapes
+
+| Étape manquante | Conséquence |
+|-----------------|-------------|
+| Circuit-Synth | Pas de footprints du tout (PCB vide) |
+| Placement Agent | Composants en vrac → routage impossible |
+| Routing Agent | Pas de pistes → PCB électriquement mort |
+| DRC Agent | Court-circuits potentiels → non fabricable |
+| Export | JLCPCB ne peut pas fabriquer (pas de Gerbers) |
+
+---
+
 ## STEP 1 — Design Agent
 
 **Statut : ✅ Validé** (2026-04-22)
