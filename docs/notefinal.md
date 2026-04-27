@@ -169,7 +169,7 @@ Pourquoi Sonnet pour l'orchestrateur et Haiku pour les agents ?
 ```
 User Prompt
     ↓
-[STEP 1]  call_agent_design     → design.json              🔲 À faire
+[STEP 1]  call_agent_design     → design.json              ✅ Validé
     ↓
 [STEP 2]  call_agent_schema     → schematic.json           ✅ Validé
               ↓ Engine: Circuit-Synth (Python)
@@ -248,7 +248,7 @@ La netlist (liste `{net → pads connectés}`) est créée **une seule fois** pu
 
 ## STEP 1 — Design Agent
 
-**Statut : 🔲 À implémenter**
+**Statut : ✅ Validé** (2026-04-22)
 
 ### Orchestrateur
 
@@ -334,19 +334,35 @@ SSE → { type: 'tool_result', tool: 'call_agent_design',
 INITIAL  →  INITIAL  (pas de changement — design = contexte seulement)
 ```
 
-### Critère de validation ✅
+### Validations réalisées ✅
 
 ```
-- SSE event tool_call: call_agent_design AVANT call_agent_schema
-- design.json contient type + layers + rules + constraints
-- call_agent_schema reçoit design.json en contexte
+✅ DesignJson interface ajouté dans @layrix/types (source de vérité)
+✅ AgentAction enum étendu avec 'design'
+✅ AgentStep enum étendu avec 'DESIGN'
+✅ CREDIT_COSTS.design = 0.5 crédit
+✅ call_agent_design en TÊTE de PCB_TOOLS (avant call_agent_schema)
+✅ generateDesignWithHaiku() implémenté avec fallback heuristique
+✅ Pino logger sur tous les chemins de fallback (observabilité)
+✅ Singleton Anthropic client (review fix HIGH-1)
+✅ MAX_DESC_LENGTH = 2000 clamp (review fix MEDIUM-1)
+✅ isValidDesignJson valide trace_width > 0 et clearance > 0
+✅ Orchestrator system prompt mis à jour (call_agent_design EN PREMIER)
+✅ stepMap orchestrator: call_agent_design → 'DESIGN'
+✅ 8 tests unitaires passent (TDD : RED → GREEN)
+✅ pnpm type-check : 0 erreurs sur 7 packages
+✅ pnpm test : 99 tests passent (aucune régression)
+✅ Code review typescript-reviewer (HIGH issues fixés)
 ```
 
-### Fichiers à modifier
+### Fichiers modifiés
 
 ```
-packages/agents/src/tools.ts   → ajouter call_agent_design + generateDesignWithHaiku()
-packages/agents/src/types.ts   → ajouter interface DesignJson
+packages/types/src/index.ts            → DesignJson + AgentAction + CREDIT_COSTS
+packages/agents/src/tools.ts           → call_agent_design + generateDesignWithHaiku
+packages/agents/src/tools.test.ts      → NEW (8 tests TDD)
+packages/agents/src/prompts.ts         → ORCHESTRATOR_SYSTEM_PROMPT mis à jour
+packages/agents/src/orchestrator.ts    → stepMap incluant call_agent_design
 ```
 
 ---
@@ -1023,7 +1039,7 @@ DRC_CLEAN  →  PCB_LIVRÉ  (après "OUI JE CONFIRME")
 | Tool | Modèle IA | Engine | Endpoint | Status |
 |------|-----------|--------|----------|--------|
 | **Orchestrateur** | `claude-sonnet-4-6` | — | — | ✅ |
-| `call_agent_design` | `claude-haiku-4-5-20251001` | — (LLM only) | — | 🔲 |
+| `call_agent_design` | `claude-haiku-4-5-20251001` | — (LLM only) | — | ✅ |
 | `call_agent_schema` | `claude-haiku-4-5-20251001` | Circuit-Synth | `POST /circuit-synth/generate` | ✅ |
 | `call_agent_footprint` | `claude-haiku-4-5-20251001` | LCSC cascade | `POST /footprint` | ⚠️ |
 | `call_agent_placement` | `claude-haiku-4-5-20251001` | pcbnew | `POST /place/auto` | ✅ |
@@ -1052,6 +1068,15 @@ DRC_CLEAN  →  PCB_LIVRÉ  (après "OUI JE CONFIRME")
 
 ## Prochaine étape à valider
 
-**→ STEP 1 — Design Agent (`call_agent_design`)**
+**→ STEP 5 — Routing Agent (`call_agent_routing`) + Engine Freerouting**
 
-Confirme pour que j'implémente + update ce doc après validation.
+STEP 1 (Design) ✅ et STEP 2 (Schematic) ✅ validés.
+STEP 3 (Footprint) reste en stub (cascade 8 étapes — chantier conséquent).
+STEP 4 (Placement) ✅ validé.
+
+Le prochain chantier prioritaire est le routage Freerouting :
+- `services/kicad/routers/routing.py` (FastAPI POST /route/auto)
+- `services/kicad/tools/routing.py` (pipeline DSN → SES)
+- `services/kicad/tests/test_routing.py` (3 tests minimum)
+
+Confirme pour que je démarre.

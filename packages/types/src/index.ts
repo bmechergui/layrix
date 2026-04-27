@@ -18,6 +18,7 @@ export type FootprintSource =
 
 export type AgentAction =
   | 'chat'
+  | 'design'
   | 'schema'
   | 'placement'
   | 'routing'
@@ -27,7 +28,7 @@ export type AgentAction =
   | 'view3d'
   | 'simulation';
 
-export type AgentStep = 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
+export type AgentStep = 'DESIGN' | 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
 
 export interface Project {
   id: string;
@@ -59,6 +60,39 @@ export interface DRCViolation {
   x_mm: number;
   y_mm: number;
   layer?: string;
+}
+
+// --- PCB Design types (high-level circuit context) ---
+
+/**
+ * High-level circuit design specification produced by the Design Agent.
+ * Generated from the user prompt before any schematic/component decisions.
+ * Provides context (type, layers, rules, constraints) that downstream agents
+ * (Schematic, Footprint, Placement, Routing, DRC) consume to make informed choices.
+ */
+export interface DesignJson {
+  /** Circuit category — e.g. "power_supply", "iot_sensor", "motor_driver". */
+  type: string;
+  /** Functional blocks identified — e.g. ["Power", "Decoupling", "MCU"]. */
+  blocks: string[];
+  /** Number of PCB copper layers (2 or 4 typically). */
+  layers: 2 | 4 | 6;
+  /** Design rules adapted to the circuit type. */
+  rules: {
+    trace_width_mm: number;
+    clearance_mm: number;
+    via_drill_mm: number;
+    min_text_mm: number;
+  };
+  /** Functional constraints derived from the prompt. */
+  constraints: {
+    output_voltage?: number;
+    max_current_A?: number;
+    /** [width_mm, height_mm] — board dimensions hint. */
+    max_board_mm?: [number, number];
+    /** Free-form additional constraints (e.g. {"power": "low", "connectivity": "wifi"}). */
+    [key: string]: number | string | [number, number] | undefined;
+  };
 }
 
 // --- PCB Schematic / Netlist types ---
@@ -103,6 +137,8 @@ export interface PCBState {
   projectId: string;
   status: PCBStatus;
   iteration: number;
+  /** High-level design context (from design step — first agent). */
+  design?: DesignJson;
   /** Schematic components list (from schema step) */
   components?: SchemaComponent[];
   /** Net names (from schema step) */
@@ -123,6 +159,7 @@ export interface PCBState {
 
 export const CREDIT_COSTS: Record<AgentAction, number> = {
   chat: 0.5,
+  design: 0.5,
   schema: 2,
   placement: 2,
   routing: 3,

@@ -1,12 +1,48 @@
 import Anthropic from '@anthropic-ai/sdk';
+import pino from 'pino';
+import type { DesignJson } from '@layrix/types';
 import { runPCBEngine, runCircuitSynthEngine } from './engines/engine-router';
 import { validateAndCorrectSchema } from './engines/circuit-synth-engine';
 import type { SchemaJson } from './engines/engine-router';
 
 type Tool = Anthropic.Tool;
 
+// --- Module-level singletons (review fix HIGH-1: avoid recreating per call) ---
+
+const log = pino({ name: 'layrix.agents.tools', level: process.env['LOG_LEVEL'] ?? 'info' });
+
+let _anthropic: Anthropic | null = null;
+function getAnthropicClient(): Anthropic | null {
+  if (_anthropic) return _anthropic;
+  const apiKey = process.env['ANTHROPIC_API_KEY'];
+  if (!apiKey) return null;
+  _anthropic = new Anthropic({ apiKey });
+  return _anthropic;
+}
+
+/**
+ * Maximum length of a user description forwarded to Haiku — protects against
+ * runaway prompts hammering the API with low-value content.
+ */
+const MAX_DESC_LENGTH = 2000;
+
 // Définitions des tools pour l'API Anthropic
 export const PCB_TOOLS: Tool[] = [
+  {
+    name: 'call_agent_design',
+    description:
+      "Analyse le prompt utilisateur pour produire le contexte technique du PCB : type de circuit (power_supply, iot_sensor, motor_driver…), nombre de couches, design rules (trace width, clearance), contraintes (tension, courant). Doit être appelé EN PREMIER, avant call_agent_schema, pour donner aux agents suivants un contexte structuré.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        user_description: {
+          type: 'string',
+          description: 'Description complète du circuit PCB à concevoir',
+        },
+      },
+      required: ['user_description'],
+    },
+  },
   {
     name: 'call_agent_schema',
     description: 'Génère le schéma électronique (netlist JSON) depuis la description utilisateur. Retourne composants, nets, et footprints requis.',
@@ -151,6 +187,28 @@ export async function executeToolStub(
   projectId = 'default'
 ): Promise<Record<string, unknown>> {
   switch (toolName) {
+
+    case 'call_agent_design': {
+      const rawDesc = String(input['user_description'] ?? '').trim();
+      // Review fix MEDIUM-1: clamp prompt length before forwarding to Haiku
+      const desc = rawDesc.slice(0, MAX_DESC_LENGTH);
+
+      // 1. Try Haiku 4.5 to generate structured design.json
+      let design = await generateDesignWithHaiku(desc);
+
+      // 2. Fallback to a sensible default if Haiku unavailable / invalid
+      if (!design) {
+        design = buildFallbackDesign(desc);
+      }
+
+      return {
+        status: 'success',
+        pcb_status: 'INITIAL', // design = context, not a deliverable
+        design,
+        engine: 'haiku-design',
+        note: `Design analysé — type: ${design.type}, ${design.layers} layers, trace ${design.rules.trace_width_mm}mm.`,
+      };
+    }
 
     case 'call_agent_schema': {
       const desc = String(input['user_description'] ?? '');
@@ -327,11 +385,14 @@ export async function executeToolStub(
 // --- Haiku schema generator ----------------------------------------------
 
 async function generateSchemaWithHaiku(description: string): Promise<SchemaJson | null> {
-  const apiKey = process.env['ANTHROPIC_API_KEY'];
-  if (!apiKey) return null;
+  // Review fix HIGH-1: reuse module-level singleton client.
+  const client = getAnthropicClient();
+  if (!client) {
+    log.warn('schema agent: ANTHROPIC_API_KEY missing, using complexity-based fallback');
+    return null;
+  }
 
   try {
-    const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 2048,
@@ -450,8 +511,10 @@ Return ONLY valid JSON. No markdown fences. No explanation.`,
     }
 
     return parsed;
-  } catch {
-    // Graceful fallback — never let a Haiku failure block the pipeline
+  } catch (err) {
+    // Graceful fallback — never let a Haiku failure block the pipeline.
+    // Review fix HIGH-2: log warning so silent fallbacks stay observable.
+    log.warn({ err }, 'schema agent: Haiku call or JSON parse failed, using fallback');
     return null;
   }
 }
@@ -523,4 +586,133 @@ function parseSchemaFromDescription(
       { name: '5V',  pins: [{ ref: 'U2', pin: 1 }, { ref: 'U1', pin: 7 }] },
     ],
   };
+}
+
+// --- Design Agent (Haiku) -----------------------------------------------
+
+/**
+ * Conservative type guard for the {@link DesignJson} interface.
+ * Validates the shape AND that numeric design rules are positive.
+ * Review fix MEDIUM-2: reject `trace_width_mm <= 0` so a bogus Haiku
+ * response triggers the heuristic fallback instead of being trusted.
+ */
+function isValidDesignJson(value: unknown): value is DesignJson {
+  if (!value || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  if (typeof v['type'] !== 'string' || v['type'].length === 0) return false;
+  if (!Array.isArray(v['blocks'])) return false;
+  if (v['layers'] !== 2 && v['layers'] !== 4 && v['layers'] !== 6) return false;
+  const rules = v['rules'];
+  if (!rules || typeof rules !== 'object') return false;
+  const r = rules as Record<string, unknown>;
+  const tw = r['trace_width_mm'];
+  const cl = r['clearance_mm'];
+  if (typeof tw !== 'number' || !Number.isFinite(tw) || tw <= 0) return false;
+  if (typeof cl !== 'number' || !Number.isFinite(cl) || cl <= 0) return false;
+  return true;
+}
+
+/**
+ * Returns a sensible default {@link DesignJson} when Haiku is unavailable
+ * or returns invalid output. Heuristics on the prompt text pick reasonable
+ * trace width / layer count for common circuit families.
+ */
+function buildFallbackDesign(description: string): DesignJson {
+  const lower = description.toLowerCase();
+  const isPower = /(régulateur|regulator|alim|psu|lm78|lm317|ldo|buck|boost)/.test(lower);
+  const isMotor = /(moteur|motor|driver|pwm|h-bridge)/.test(lower);
+  const isMcuHeavy = /(esp32|stm32|atmega|raspberry|rp2040)/.test(lower);
+
+  const type = isPower ? 'power_supply' : isMotor ? 'motor_driver' : isMcuHeavy ? 'iot_sensor' : 'generic';
+  const blocks: string[] = isPower
+    ? ['Power', 'Decoupling']
+    : isMotor
+    ? ['Power', 'Driver', 'Control']
+    : isMcuHeavy
+    ? ['MCU', 'Power', 'Decoupling', 'IO']
+    : ['Generic'];
+  const layers: 2 | 4 = isMcuHeavy ? 4 : 2;
+  // Wider traces for power circuits; tighter for high-density MCU boards.
+  const traceWidth = isPower ? 0.4 : isMcuHeavy ? 0.2 : 0.3;
+
+  return {
+    type,
+    blocks,
+    layers,
+    rules: {
+      trace_width_mm: traceWidth,
+      clearance_mm: 0.2,
+      via_drill_mm: 0.3,
+      min_text_mm: 1.0,
+    },
+    constraints: {
+      max_board_mm: [50, 50],
+    },
+  };
+}
+
+const DESIGN_AGENT_SYSTEM = `You are the Design Agent for Layrix.ai PCB pipeline.
+
+Given a user's circuit description in natural language, return a single JSON object describing the high-level PCB design context. NO markdown, NO comments, NO explanation — just the JSON.
+
+Required keys:
+  "type"        : circuit family — one of "power_supply", "iot_sensor", "motor_driver", "amplifier", "audio", "generic"
+  "blocks"      : array of functional block names — ["Power", "Decoupling", "MCU", "Sensor", "Driver", ...]
+  "layers"      : 2, 4, or 6 (use 2 for simple circuits, 4 for ESP32/STM32-class projects)
+  "rules"       : { "trace_width_mm", "clearance_mm", "via_drill_mm", "min_text_mm" }  (all numbers)
+  "constraints" : object with optional keys "output_voltage", "max_current_A", "max_board_mm" (tuple [w,h])
+
+Heuristics:
+  - Power supply (LM7805, LDO, buck) → trace 0.3-0.5mm, 2 layers
+  - IoT/MCU (ESP32, STM32) → trace 0.2mm, 4 layers, blocks include MCU + Decoupling
+  - Motor driver → trace 0.5mm+ (current handling)
+  - Default board size : [50, 50] unless prompt suggests otherwise
+
+Return ONLY valid JSON.`;
+
+/**
+ * Calls Claude Haiku 4.5 to derive a structured {@link DesignJson} from the
+ * user prompt. Returns null on any failure so the caller can fall back to a
+ * heuristic design — never throw.
+ *
+ * Review fix HIGH-1: uses module-level singleton client to avoid recreating
+ * the HTTP connection pool on every tool call.
+ * Review fix HIGH-2: logs warnings via Pino on failure paths so that
+ * silent fallbacks remain observable in production.
+ */
+async function generateDesignWithHaiku(description: string): Promise<DesignJson | null> {
+  if (!description) return null;
+  const client = getAnthropicClient();
+  if (!client) {
+    log.warn('design agent: ANTHROPIC_API_KEY missing, using heuristic fallback');
+    return null;
+  }
+
+  try {
+    const response = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 512,
+      system: DESIGN_AGENT_SYSTEM,
+      messages: [{ role: 'user', content: `Circuit: ${description}` }],
+    });
+
+    const textBlock = response.content[0];
+    const text = textBlock?.type === 'text' ? textBlock.text.trim() : '';
+    if (!text) {
+      log.warn('design agent: empty response from Haiku, using heuristic fallback');
+      return null;
+    }
+
+    // Strip accidental markdown fences if model adds them
+    const cleaned = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
+    const parsed: unknown = JSON.parse(cleaned);
+    if (!isValidDesignJson(parsed)) {
+      log.warn({ raw: cleaned.slice(0, 200) }, 'design agent: invalid DesignJson shape, using heuristic fallback');
+      return null;
+    }
+    return parsed;
+  } catch (err) {
+    log.warn({ err }, 'design agent: Haiku call failed, using heuristic fallback');
+    return null;
+  }
 }
