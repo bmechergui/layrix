@@ -138,23 +138,28 @@ Fichier Py  : services/kicad/routers/circuit_synth.py (1044 lignes)
 Router      : POST /circuit-synth/generate
 ```
 
-**Deux chemins selon disponibilité FastAPI :**
+**Deux chemins selon disponibilité FastAPI — un seul retourné :**
 
 ```
 SchemaJson
     │
     ├── FastAPI disponible (KICAD_SERVICE_URL défini) ?
     │       │
-    │       ▼  YES
+    │       ▼  OUI
     │   POST /circuit-synth/generate
-    │   → Python circuit_synth lib → .kicad_sch + .kicad_pcb natifs KiCad 7
+    │   → Python circuit_synth lib → _grid_position() pour placement
+    │   → .kicad_sch + .kicad_pcb natifs KiCad 7
     │
-    └── NO (fallback inline TS)
+    └── NON (fallback inline TS — service KiCad down ou non déployé)
             │
             ▼
-        generateSchematic() + generatePCB() — S-expression TypeScript
-        → .kicad_sch + .kicad_pcb (moins fidèles mais fonctionnels pour KiCanvas)
+        generateSchematic() + generatePCB() (circuit-synth-engine.ts)
+        → S-expressions KiCad 7 écrites manuellement en TypeScript
+        → autoLayout() pour placement grille
+        → .kicad_sch + .kicad_pcb (qualité moindre mais toujours disponible)
 ```
+
+**Pourquoi deux implémentations :** résilience — si le service Docker KiCad est down, l'agent ne bloque pas. Le TS fallback permet toujours d'afficher quelque chose dans KiCanvas. Jamais les deux en même temps — un seul chemin retourne les fichiers.
 
 **Output toujours :**
 - `.kicad_sch` — schéma électronique (symboles, fils, netliste, power flags, title block). La netlist est embarquée sous forme de fils + labels de nets.
