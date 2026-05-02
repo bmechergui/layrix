@@ -157,8 +157,14 @@ SchemaJson
 ```
 
 **Output toujours :**
-- `.kicad_sch` — schéma électronique (symboles, fils, netliste, power flags, title block)
-- `.kicad_pcb` — board avec footprints placés (grille Phase 2, pcbnew réel Phase 3)
+- `.kicad_sch` — schéma électronique (symboles, fils, netliste, power flags, title block). La netlist est embarquée sous forme de fils + labels de nets.
+- `.kicad_pcb` — board avec footprints. La netlist est embarquée sous forme de ratsnest (connexions attendues entre pads).
+
+**Important Phase 2 — `.kicad_pcb` généré par Circuit-Synth :**
+- Pas de placement réel — composants posés en grille naïve (`autoLayout()`)
+- Pas de routage — aucune piste tracée, seulement le ratsnest (fils virtuels)
+- Utilisable uniquement pour visualisation dans KiCanvas
+- Phase 3 : placement pcbnew + Freerouting remplaceront ce stub
 
 #### Engine Router
 
