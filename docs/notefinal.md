@@ -184,23 +184,21 @@ Phase 2 utilise exclusivement Python Circuit-Synth ou TS fallback — les deux g
 
 Phase 2 = lisible par KiCanvas, pas optimisé pour la lisibilité humaine.
 
-Phase 3 (à faire) :
-1. Circuit-Synth génère le `.kicad_pcb` (avec grille naïve)
-2. `POST /place/auto` → pcbnew lit ce `.kicad_pcb`
-3. `pcbnew.SetPosition()` écrase les coordonnées par des positions réelles
-4. Retourne le **même** `.kicad_pcb` modifié — pas un nouveau fichier
+Le schéma Phase 2 est suffisant pour KiCanvas et pour extraire la netlist.
+  Réorganiser le .kicad_sch n'est pas dans le scope Phase 3 — c'est une
+  amélioration cosmétique, pas un blocage pour fabriquer le PCB.
 
-Pourquoi pas pcbnew maintenant : `call_agent_placement` appelle `runPCBEngine()` (TS) au lieu de `POST /place/auto` (FastAPI). Câblage non fait — travail Phase 3.
+**Pourquoi pas pcbnew en Phase 2 :** pcbnew est une bibliothèque Python KiCad, pas disponible en TypeScript. Le TS ne peut qu'écrire des S-expressions manuellement (grille naïve), pas appeler les API internes de KiCad.
+
+**Phase 3 — placement réel :**
+1. Circuit-Synth génère le `.kicad_pcb` (avec grille naïve)
+2. `call_agent_placement` appelle `POST /place/auto` (FastAPI) — câblage à faire
+3. pcbnew lit ce `.kicad_pcb` → `pcbnew.SetPosition()` écrase les coordonnées par des positions réelles
+4. Retourne le **même** `.kicad_pcb` modifié — pas un nouveau fichier
 
 #### Engine Router
 
-```
-Fichier : packages/agents/src/engines/engine-router.ts
-```
 
-```typescript
-selectEngine() → 'circuit-synth'  // TSCircuit retiré définitivement
-runPCBEngine(schema, boardW, boardH, projectId) → PCBEngineResult
 ```
 
 ---
