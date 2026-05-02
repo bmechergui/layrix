@@ -214,15 +214,15 @@ OR-Tools (Google) peut calculer des positions meilleures que la grille naïve et
 
 ### État Phase 2 vs Phase 3
 
-| Tool | Phase 2 (actuel) | Phase 3 (à implémenter) |
-|------|-----------------|------------------------|
-| `call_agent_spec` | ✅ Haiku 4.5 → `DesignJson` | — (déjà opérationnel) |
-| `call_agent_schema` | ✅ Haiku 4.5 → Circuit-Synth | — (déjà opérationnel) |
-| `call_agent_placement` | ⚠️ Grille naïve — Python `_grid_position()` ou TS `autoLayout()` selon disponibilité FastAPI. Pas de logique électrique, pas de solveur de contraintes. Impossible d'améliorer en Phase 2 — pcbnew obligatoire. | `POST /place/auto` → pcbnew |
-| `call_agent_routing` | ⚠️ Stub Circuit-Synth | `POST /route` → Freerouting |
-| `call_agent_drc` | ⚠️ Stub (0 violations toujours) | `POST /drc` → pcbnew DRC natif |
-| `call_agent_export` | ⚠️ Stub (pas de vrais Gerbers) | `POST /export` → Gerbers réels |
-| `call_agent_footprint` | ⚠️ Stub LCSC | Cascade 8 étapes (Phase 3+) |
+| Tool | Phase 2 (actuel) | Phase 3 Free/Maker | Phase 3 Pro/Max |
+|------|-----------------|-------------------|-----------------|
+| `call_agent_spec` | ✅ Haiku 4.5 → `DesignJson` | — opérationnel | — opérationnel |
+| `call_agent_schema` | ✅ Haiku 4.5 → Circuit-Synth → `.kicad_sch` + `.kicad_pcb` grille naïve | — opérationnel | — opérationnel |
+| `call_agent_placement` | ⚠️ Grille naïve — Python `_grid_position()` ou TS `autoLayout()` | OR-Tools + S-expressions TS (cosmétique) | `POST /place/auto` → pcbnew réel |
+| `call_agent_routing` | ⚠️ Stub — pas de routage réel | `POST /route` → Freerouting | `POST /route` → Freerouting |
+| `call_agent_drc` | ⚠️ Stub — 0 violations toujours | `POST /drc` → pcbnew DRC natif | `POST /drc` → pcbnew DRC natif |
+| `call_agent_export` | ⚠️ Stub — pas de vrais Gerbers | `POST /export` → Gerbers réels | `POST /export` → Gerbers réels |
+| `call_agent_footprint` | ⚠️ Stub LCSC | Cascade 8 étapes | Cascade 8 étapes |
 
 ---
 
