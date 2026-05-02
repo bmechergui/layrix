@@ -224,6 +224,9 @@ OR-Tools (Google) peut calculer des positions meilleures que la grille naïve et
 | `call_agent_export` | ⚠️ Stub — pas de vrais Gerbers | `POST /export` → Gerbers réels | `POST /export` → Gerbers réels |
 | `call_agent_footprint` | ⚠️ Stub LCSC | Cascade 8 étapes | Cascade 8 étapes |
 
+**Après placement → Routage :**
+`call_agent_routing` → Freerouting trace les pistes entre les footprints dans le `.kicad_pcb`. C'est l'étape qui suit immédiatement le placement dans le pipeline.
+
 ---
 
 ---
@@ -263,10 +266,6 @@ SchemaJson {
 - Sans `symbol` valide → Circuit-Synth ne peut pas placer le bon symbole KiCad
 - Sans `lcsc` → BOM incomplet, commande JLCPCB impossible
 - Erreur de `pin` (mauvais numéro ou nom) → court-circuit dans le schéma
-
-**Validation en deux temps :**
-1. `validateAndCorrectSchema()` côté TS — corrige les symboles via `POST /circuit-synth/validate-symbols`
-2. `_safe_symbol()` côté Python — fallback sur `Device:R`, `Device:C`, etc. si symbole inconnu
 
 ---
 
