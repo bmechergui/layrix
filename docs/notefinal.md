@@ -233,6 +233,9 @@ OR-Tools (Google) peut calculer des positions meilleures que la grille naïve et
 **Après DRC → Export :**
 `call_agent_export` → génère les Gerbers, BOM CSV et CPL pour JLCPCB, puis obtient un devis. Confirmation "OUI JE CONFIRME" obligatoire avant commande — jamais automatique.
 
+**Version avancée — Circuit-Synth TS autonome :**
+À terme, on pourrait utiliser uniquement la solution TypeScript `circuit-synth-engine.ts`, en s'inspirant du code open source Python `circuit_synth` pour enrichir le générateur S-expressions TS. Cela éliminerait la dépendance FastAPI pour la génération de base et simplifierait le déploiement. La bibliothèque Python resterait uniquement pour pcbnew (placement réel, DRC, export Gerbers) — pas pour la génération de fichiers KiCad.
+
 **Après export → Commande JLCPCB :**
 L'utilisateur confirme "OUI JE CONFIRME" → commande envoyée à JLCPCB. Statut final : `PCB_LIVRÉ`. C'est la fin du pipeline. Rien après — le pipeline est terminé.
 
