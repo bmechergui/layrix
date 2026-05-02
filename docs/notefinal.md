@@ -165,6 +165,12 @@ SchemaJson
 - `.kicad_sch` — schéma électronique (symboles, fils, netliste, power flags, title block). La netlist est embarquée sous forme de fils + labels de nets.
 - `.kicad_pcb` — board avec footprints. La netlist est embarquée sous forme de ratsnest (connexions attendues entre pads).
 
+Les deux fichiers ont un **placement grille naïve** — positions mathématiques régulières, sans logique électrique :
+- `.kicad_sch` → symboles placés en grille, fils tracés automatiquement
+- `.kicad_pcb` → footprints placés en grille, pas de routage
+
+"Bon placement" = Phase 3 (pcbnew).
+
 **Placement Phase 2 vs Phase 3 — même fichier `.kicad_pcb` :**
 
 Phase 2 (actuel) :
