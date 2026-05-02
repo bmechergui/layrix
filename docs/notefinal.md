@@ -178,6 +178,12 @@ Phase 2 utilise exclusivement Python Circuit-Synth ou TS fallback — les deux g
 - Python disponible → `_grid_position()` calcule les positions → génère `.kicad_sch` + `.kicad_pcb` natifs KiCad 7
 - Python indisponible → `autoLayout()` (TS) calcule les positions → `generateSchematic()` + `generatePCB()` génèrent `.kicad_sch` + `.kicad_pcb` en S-expressions TypeScript
 
+**Placement grille naïve — même problème sur les deux fichiers :**
+- `.kicad_sch` → symboles placés en grille régulière, pas de regroupement par fonction, fils qui se croisent, schéma difficile à lire. Un vrai EDA organiserait les blocs logiquement (alimentation en haut, signal au centre, sortie en bas).
+- `.kicad_pcb` → footprints placés en grille, sans tenir compte des connexions électriques ni des tailles réelles.
+
+Phase 2 = lisible par KiCanvas, pas optimisé pour la lisibilité humaine.
+
 Phase 3 (à faire) :
 1. Circuit-Synth génère le `.kicad_pcb` (avec grille naïve)
 2. `POST /place/auto` → pcbnew lit ce `.kicad_pcb`
