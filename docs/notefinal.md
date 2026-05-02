@@ -276,6 +276,16 @@ SKiDL produit un fichier `.net` (format KiCad XML ou SPICE). Circuit-Synth atten
 
 ---
 
+---
+
+### Pourquoi TSCircuit a été retiré
+
+**Raison technique :** TSCircuit génère du `circuit-json` (format JSON custom de tscircuit.io), pas du `.kicad_sch` / `.kicad_pcb` natif. Il faudrait un convertisseur `circuit-json → KiCad` — non officiel, perd des informations (symboles, annotations, design rules KiCad). Circuit-Synth produit directement des S-expressions KiCad 7 — format natif, lisible par KiCad et KiCanvas sans conversion.
+
+**Raison projet :** TSCircuit déprécié depuis la v0.3.0 de Layrix. Dépendances supprimées : `circuit-json`, `circuit-json-to-gerber`, export `tscircuit-engine`.
+
+---
+
 ## Template pour la prochaine décision
 
 ```
