@@ -187,6 +187,74 @@ runPCBEngine(schema, boardW, boardH, projectId) → PCBEngineResult
 
 ---
 
+---
+
+### Objectif de la génération de netlist
+
+La netlist est le **pont entre la description texte et le fichier KiCad**. Son objectif est de produire un `SchemaJson` validé que Circuit-Synth peut convertir directement en fichiers natifs.
+
+**Ce que la netlist doit contenir :**
+
+```
+SchemaJson {
+  components: [                     ← liste de chaque composant
+    {
+      ref:       "U1"               ← référence KiCad (R, C, U, LED, J, Q, D)
+      value:     "NE555P"           ← valeur affichée sur le schéma
+      footprint: "DIP-8"            ← empreinte physique du composant
+      symbol?:   "Timer:NE555P"     ← ID symbole KiCad (optionnel, résolu par Circuit-Synth)
+      lcsc?:     "C46555"           ← référence LCSC pour commande JLCPCB
+    }
+  ]
+  nets: ["GND", "VCC", "OUT"]       ← tous les noms de nets présents
+  connections: [                    ← connectivité : quel pin sur quel net
+    {
+      name: "VCC",
+      pins: [
+        { ref: "U1", pin: 8 },      ← pin numéroté (passifs) OU nom (ICs)
+        { ref: "J1", pin: 1 }
+      ]
+    }
+  ]
+}
+```
+
+**Pourquoi la netlist est critique :**
+- Sans `connections` correctes → fils mal tracés dans `.kicad_sch`, DRC échoue
+- Sans `symbol` valide → Circuit-Synth ne peut pas placer le bon symbole KiCad
+- Sans `lcsc` → BOM incomplet, commande JLCPCB impossible
+- Erreur de `pin` (mauvais numéro ou nom) → court-circuit dans le schéma
+
+**Validation en deux temps :**
+1. `validateAndCorrectSchema()` côté TS — corrige les symboles via `POST /circuit-synth/validate-symbols`
+2. `_safe_symbol()` côté Python — fallback sur `Device:R`, `Device:C`, etc. si symbole inconnu
+
+---
+
+### 2026-05-02 — Pourquoi Circuit-Synth plutôt que SKiDL
+
+**Décision :** Utiliser Circuit-Synth (Python custom) pour générer les fichiers KiCad natifs, pas SKiDL.
+
+**Ce qu'est SKiDL :** Bibliothèque Python qui permet de décrire un circuit en code Python (`r1 = Part('Device', 'R', ...)`), puis de générer une netlist SPICE ou KiCad. L'IA génèrerait du **code Python** que le serveur exécuterait.
+
+**Pourquoi Circuit-Synth :**
+
+| Critère | Circuit-Synth | SKiDL |
+|---------|--------------|-------|
+| Input LLM | JSON (`SchemaJson`) | Code Python généré par le LLM |
+| Sécurité | ✅ données JSON — pas d'exécution de code | ❌ exécution de code Python arbitraire sur le serveur |
+| Validation | ✅ Zod + `validateAndCorrectSchema()` avant génération | ❌ erreur Python découverte à l'exécution |
+| Output | ✅ `.kicad_sch` + `.kicad_pcb` natifs en un appel | ❌ netlist intermédiaire → conversion supplémentaire vers KiCad |
+| Fallback | ✅ S-expression TypeScript inline si FastAPI indisponible | ❌ aucun fallback sans Python |
+| Fiabilité LLM | ✅ JSON simple à générer et corriger | ❌ le LLM fait des fautes de syntaxe Python fréquentes |
+| Symboles KiCad | ✅ mapping intégré `_SYMBOL_RULES` + `_safe_symbol()` | ❌ mapping à implémenter séparément |
+
+**Pourquoi pas SKiDL — point clé :** faire générer du code Python exécutable par un LLM est un **risque de sécurité**. Un prompt injection pourrait injecter des commandes shell dans le code généré, exécutées directement sur le serveur. Avec JSON, on valide un schéma de données — pas du code.
+
+**Écarté aussi :** écrire directement les S-expressions `.kicad_sch` par le LLM — format trop verbeux (plusieurs milliers de lignes), fragile (change entre versions KiCad 6 → 7 → 8).
+
+---
+
 ## Template pour la prochaine décision
 
 ```
