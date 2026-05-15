@@ -1,13 +1,14 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Layers, Box, Download, ZoomIn, ZoomOut, Maximize2, Eye, EyeOff, FileText, Cpu, Route } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { useAppStore } from '@/shared/store/app-store';
 import { LAYER_COLORS, DEFAULT_LAYER_VISIBILITY, colorToHex } from '../lib/layers';
 import type { ZoomControls } from '../lib/renderer';
-import type { PCBState, SchemaComponent, SchemaNet } from '@layrix/types';
+import type { PCBState, SchemaComponent } from '@layrix/types';
+import { SchemaCanvas } from './SchemaCanvas';
 
 // PixiJS ne fonctionne pas côté serveur → dynamic import obligatoire
 const PixiCanvas = dynamic(() => import('./PixiCanvas').then((m) => m.PixiCanvas), {
@@ -182,7 +183,7 @@ export function ViewerPanel({ projectId, mode: modeProp, onModeChange }: ViewerP
           showRawKicad && pcbState?.kicad_sch_url ? (
             <KiCanvasViewer src={pcbState.kicad_sch_url} type="schematic" className="h-full" />
           ) : (
-            <SchemaNetlistView pcbState={pcbState} />
+            <SchemaCanvas pcbState={pcbState} />
           )
         ) : mode === 'components' ? (
           <ComponentsBOMView pcbState={pcbState} />
@@ -398,238 +399,8 @@ function PCBViewer3DPlaceholder() {
   );
 }
 
-const FOOTPRINT_PAD_COUNT: Record<string, number> = {
-  '0402': 2, '0603': 2, '0805': 2, '1206': 2, 'LED': 2,
-  'SOT-23': 3, 'SOT-23-5': 5, 'TSSOP-8': 8, 'DIP-8': 8,
-};
+// (Old SchemaNetlistView ratsnest + helpers deleted -- replaced by SchemaCanvas in ./SchemaCanvas.tsx)
 
-function getPadCount(footprint: string): number {
-  const key = Object.keys(FOOTPRINT_PAD_COUNT).find(
-    (k) => footprint.toUpperCase().includes(k.toUpperCase())
-  );
-  return FOOTPRINT_PAD_COUNT[key ?? '0402'] ?? 2;
-}
-
-const NET_PALETTE = [
-  '#D4820A', '#4488FF', '#22C55E', '#F59E0B', '#A855F7',
-  '#EC4899', '#06B6D4', '#F97316', '#84CC16', '#EF4444',
-];
-
-// --- SVG layout constants ---
-const BOX_W = 90;
-const BOX_H = 48;
-const GAP_X = 50;
-const GAP_Y = 70;
-const PAD_Y = BOX_H + 8;
-const ZOOM_FACTOR = 1.15;
-const MIN_SCALE = 0.2;
-const MAX_SCALE = 5;
-
-function SchemaNetlistView({ pcbState }: { pcbState: PCBState | null }) {
-  const components: SchemaComponent[] = pcbState?.components ?? [];
-  const connections: SchemaNet[] = pcbState?.connections ?? [];
-  const nets: string[] = pcbState?.nets ?? [];
-
-  const COLS = Math.min(5, components.length);
-  const ROWS = Math.ceil(components.length / COLS);
-  const svgW = COLS * (BOX_W + GAP_X) + GAP_X;
-  const svgH = ROWS * (BOX_H + GAP_Y) + GAP_Y + 20;
-
-  interface ViewBox { x: number; y: number; w: number; h: number }
-
-  const [vb, setVb] = useState<ViewBox>({ x: 0, y: 0, w: svgW, h: svgH });
-  const containerRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ startX: number; startY: number; vbX: number; vbY: number } | null>(null);
-
-  // Reset viewBox when components change
-  useEffect(() => { setVb({ x: 0, y: 0, w: svgW, h: svgH }); }, [svgW, svgH]);
-
-  const onWheel = useCallback((e: React.WheelEvent<SVGSVGElement>) => {
-    e.preventDefault();
-    const rect = e.currentTarget.getBoundingClientRect();
-    const mx = (e.clientX - rect.left) / rect.width;
-    const my = (e.clientY - rect.top) / rect.height;
-    setVb((prev) => {
-      const scale = e.deltaY < 0 ? 1 / ZOOM_FACTOR : ZOOM_FACTOR;
-      const nw = Math.min(svgW / MIN_SCALE, Math.max(svgW / MAX_SCALE, prev.w * scale));
-      const nh = Math.min(svgH / MIN_SCALE, Math.max(svgH / MAX_SCALE, prev.h * scale));
-      return { x: prev.x + (prev.w - nw) * mx, y: prev.y + (prev.h - nh) * my, w: nw, h: nh };
-    });
-  }, [svgW, svgH]);
-
-  const onMouseDown = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
-    if (e.button !== 0) return;
-    dragRef.current = { startX: e.clientX, startY: e.clientY, vbX: vb.x, vbY: vb.y };
-    e.currentTarget.style.cursor = 'grabbing';
-  }, [vb.x, vb.y]);
-
-  const onMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
-    if (!dragRef.current) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const dx = (e.clientX - dragRef.current.startX) * (vb.w / rect.width);
-    const dy = (e.clientY - dragRef.current.startY) * (vb.h / rect.height);
-    setVb((prev) => ({ ...prev, x: dragRef.current!.vbX - dx, y: dragRef.current!.vbY - dy }));
-  }, [vb.w, vb.h]);
-
-  const onMouseUp = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
-    dragRef.current = null;
-    e.currentTarget.style.cursor = 'grab';
-  }, []);
-
-  const resetView = () => setVb({ x: 0, y: 0, w: svgW, h: svgH });
-
-  const compPos = components.map((_, i) => ({
-    x: (i % COLS) * (BOX_W + GAP_X) + GAP_X,
-    y: Math.floor(i / COLS) * (BOX_H + GAP_Y) + GAP_Y,
-  }));
-
-  const compIdxByRef = new Map(components.map((c, i) => [c.ref, i]));
-
-  function pinPos(ref: string, pin: number | string): { x: number; y: number } | null {
-    const pinNum = typeof pin === 'number' ? pin : 1;
-    const idx = compIdxByRef.get(ref);
-    if (idx === undefined) return null;
-    const pos = compPos[idx]!;
-    const total = getPadCount(components[idx]!.footprint);
-    return { x: pos.x + (pinNum / (total + 1)) * BOX_W, y: pos.y + PAD_Y };
-  }
-
-  if (!components.length) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8">
-        <div className="w-16 h-16 rounded-xl bg-[#141414] border border-border flex items-center justify-center">
-          <FileText size={32} className="text-primary/30" />
-        </div>
-        <div className="space-y-1.5 max-w-[260px]">
-          <p className="text-xs text-[#A1A1AA] font-medium">Schematic</p>
-          <p className="text-[11px] text-[#52525B] leading-relaxed">
-            Auto-generated from the netlist — components, nets,
-            and reference designators rendered as a KiCad schema.
-          </p>
-        </div>
-        <p className="text-[9px] text-[#3D3D3D] font-mono">Describe your circuit in the chat to begin</p>
-      </div>
-    );
-  }
-
-  return (
-    <div ref={containerRef} className="relative h-full bg-[#090909] overflow-hidden select-none">
-      {/* Schema header — components + nets count */}
-      <div className="absolute top-2 left-3 z-10 flex items-center gap-3 pointer-events-none">
-        <span className="text-[9px] font-mono text-[#A1A1AA] uppercase tracking-wider">
-          Netlist
-        </span>
-        <span className="text-[9px] font-mono text-[#52525B]">
-          {components.length} component{components.length !== 1 ? 's' : ''}
-          <span className="text-[#2A2A2A]"> · </span>
-          {(connections.length || nets.length)} net{(connections.length || nets.length) !== 1 ? 's' : ''}
-        </span>
-      </div>
-
-      {/* Reset zoom button */}
-      <button
-        type="button"
-        onClick={resetView}
-        className="absolute top-2 right-2 z-10 px-2 py-1 text-[9px] font-mono text-[#3D3D3D] border border-[#1E1E1E] rounded bg-[#0D0D0D] hover:text-[#A1A1AA] hover:border-[#2E2E2E] transition-colors"
-        title="Reset zoom"
-      >
-        fit
-      </button>
-
-      <svg
-        width="100%"
-        height="100%"
-        viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
-        style={{ cursor: 'grab', display: 'block' }}
-        onWheel={onWheel}
-        onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={onMouseUp}
-        onMouseLeave={onMouseUp}
-      >
-        {/* Ratsnest lines */}
-        {connections.map((conn, netIdx) => {
-          const color = NET_PALETTE[netIdx % NET_PALETTE.length]!;
-          const pts = conn.pins.map((p) => pinPos(p.ref, p.pin)).filter(Boolean) as Array<{ x: number; y: number }>;
-          if (pts.length < 2) return null;
-          return (
-            <g key={conn.name}>
-              {pts.slice(1).map((pt, i) => (
-                <line
-                  key={i}
-                  x1={pts[i]!.x} y1={pts[i]!.y}
-                  x2={pt.x} y2={pt.y}
-                  stroke={color} strokeWidth={1.5}
-                  strokeDasharray="5 3" opacity={0.7}
-                />
-              ))}
-              {pts[0] && (
-                <text x={pts[0].x + 3} y={pts[0].y + 11}
-                  fill={color} fontSize={7} fontFamily="monospace" opacity={0.9}
-                >
-                  {conn.name}
-                </text>
-              )}
-            </g>
-          );
-        })}
-
-        {/* Component boxes */}
-        {components.map((comp, i) => {
-          const pos = compPos[i]!;
-          const pads = getPadCount(comp.footprint);
-          return (
-            <g key={comp.ref}>
-              <title>{comp.ref} — {comp.value} ({comp.footprint}){comp.lcsc ? ` · LCSC: ${comp.lcsc}` : ''}</title>
-              <rect x={pos.x} y={pos.y} width={BOX_W} height={BOX_H}
-                fill="#0F0F0F" stroke="#2E2E2E" strokeWidth={1} rx={4}
-              />
-              <text x={pos.x + BOX_W / 2} y={pos.y + 16}
-                fill="#D4820A" fontSize={10} fontFamily="monospace"
-                textAnchor="middle" fontWeight="600"
-              >
-                {comp.ref}
-              </text>
-              <text x={pos.x + BOX_W / 2} y={pos.y + 29}
-                fill="#A1A1AA" fontSize={8} fontFamily="monospace" textAnchor="middle"
-              >
-                {comp.value.length > 12 ? comp.value.slice(0, 12) + '…' : comp.value}
-              </text>
-              <text x={pos.x + BOX_W / 2} y={pos.y + 40}
-                fill="#3D3D3D" fontSize={7} fontFamily="monospace" textAnchor="middle"
-              >
-                {comp.footprint}
-              </text>
-              {Array.from({ length: pads }, (_, k) => {
-                const p = pinPos(comp.ref, k + 1)!;
-                return <circle key={k} cx={p.x} cy={p.y} r={2.5} fill="#1A1A1A" stroke="#3D3D3D" strokeWidth={1} />;
-              })}
-            </g>
-          );
-        })}
-
-        {/* Net chips fallback (no connections data) */}
-        {connections.length === 0 && nets.map((net, i) => (
-          <text key={net}
-            x={GAP_X + (i % COLS) * (BOX_W + GAP_X)}
-            y={svgH - 10}
-            fill={NET_PALETTE[i % NET_PALETTE.length]}
-            fontSize={7} fontFamily="monospace"
-          >
-            {net}
-          </text>
-        ))}
-      </svg>
-
-      {/* Zoom hint */}
-      <p className="absolute bottom-2 left-3 text-[8px] text-[#2A2A2A] font-mono pointer-events-none">
-        scroll to zoom · drag to pan
-      </p>
-    </div>
-  );
-}
-
-/** Components tab — BOM with LCSC links + CSV copy */
 function ComponentsBOMView({ pcbState }: { pcbState: PCBState | null }) {
   const components: SchemaComponent[] = pcbState?.components ?? [];
   const [copied, setCopied] = useState(false);
