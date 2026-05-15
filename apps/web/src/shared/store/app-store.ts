@@ -77,7 +77,7 @@ export const useAppStore = create<AppState>((set) => ({
     const res = await fetch('/api/credits');
     const json = await res.json() as { success: boolean; data?: { balance: number; plan: string } };
     if (json.success && json.data) {
-      const dailyLimit: Record<string, number | null> = { free: 5, maker: null, pro: null, enterprise: null };
+      const dailyLimit: Record<string, number | null> = { free: 5, pro: null, pro_max: null, enterprise: null };
       set({
         credits: {
           balance: json.data.balance,

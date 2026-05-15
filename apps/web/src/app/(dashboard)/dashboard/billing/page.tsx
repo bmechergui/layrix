@@ -43,8 +43,8 @@ const PLANS: PlanRow[] = [
     price: '25 €/mois',
     creditsLabel: '100 cr / mois',
     features: ['Tout Free', 'Placement composants', 'Routage automatique', 'Footprint IA', 'Vue 3D'],
-    planKey: 'maker',
-    checkoutEnvKey: 'NEXT_PUBLIC_LS_CHECKOUT_MAKER',
+    planKey: 'pro',
+    checkoutEnvKey: 'NEXT_PUBLIC_LS_CHECKOUT_PRO',
     popular: true,
   },
   {
@@ -52,8 +52,8 @@ const PLANS: PlanRow[] = [
     price: '50 €/mois',
     creditsLabel: '300 cr / mois',
     features: ['Tout Pro', 'Simulation SPICE', 'Export prioritaire', 'Support dédié'],
-    planKey: 'pro',
-    checkoutEnvKey: 'NEXT_PUBLIC_LS_CHECKOUT_PRO',
+    planKey: 'pro_max',
+    checkoutEnvKey: 'NEXT_PUBLIC_LS_CHECKOUT_PRO_MAX',
   },
 ];
 
@@ -73,8 +73,8 @@ function buildCheckoutUrl(baseUrl: string | undefined, userId: string): string |
 function PlanBadge({ plan }: { plan: string }) {
   const styles: Record<string, string> = {
     free:       'bg-[#242424] text-muted-foreground',
-    maker:      'bg-primary/15 text-primary',
-    pro:        'bg-amber-500/15 text-amber-400',
+    pro:        'bg-primary/15 text-primary',
+    pro_max:    'bg-amber-500/15 text-amber-400',
     enterprise: 'bg-purple-500/15 text-purple-400',
   };
   return (
@@ -85,7 +85,7 @@ function PlanBadge({ plan }: { plan: string }) {
 }
 
 function BalanceBar({ balance, plan }: { balance: number; plan: string }) {
-  const max = plan === 'free' ? 5 : plan === 'maker' ? 100 : plan === 'pro' ? 300 : 1000;
+  const max = plan === 'free' ? 5 : plan === 'pro' ? 100 : plan === 'pro_max' ? 300 : 1000;
   const pct = Math.min((balance / max) * 100, 100);
   const color = pct > 50 ? 'bg-primary' : pct > 20 ? 'bg-amber-400' : 'bg-red-500';
   return (
@@ -203,9 +203,9 @@ export default async function BillingPage() {
                 )}
                 <div>
                   <div className="flex items-center gap-2 mb-1">
-                    {plan.planKey === 'free'  && <Sparkles size={15} className="text-muted-foreground" />}
-                    {plan.planKey === 'maker' && <Zap       size={15} className="text-primary" />}
-                    {plan.planKey === 'pro'   && <Crown     size={15} className="text-amber-400" />}
+                    {plan.planKey === 'free'    && <Sparkles size={15} className="text-muted-foreground" />}
+                    {plan.planKey === 'pro'     && <Zap       size={15} className="text-primary" />}
+                    {plan.planKey === 'pro_max' && <Crown     size={15} className="text-amber-400" />}
                     <span className="font-semibold text-foreground">{plan.name}</span>
                   </div>
                   <p className="text-xl font-bold text-foreground">{plan.price}</p>

@@ -11,8 +11,8 @@ const TOPUP_PACKS: Record<string, number> = {
 
 // Map Lemon Squeezy product ID → plan + monthly credits
 const SUBSCRIPTION_PLANS: Record<string, { credits: number; plan: string }> = {
-  [process.env.LS_PRODUCT_MAKER ?? 'unset']: { credits: 100, plan: 'maker' },
-  [process.env.LS_PRODUCT_PRO   ?? 'unset']: { credits: 300, plan: 'pro'   },
+  [process.env.LS_PRODUCT_PRO     ?? 'unset']: { credits: 100, plan: 'pro'     },
+  [process.env.LS_PRODUCT_PRO_MAX ?? 'unset']: { credits: 300, plan: 'pro_max' },
 };
 
 type LsAttributes = Record<string, unknown>;

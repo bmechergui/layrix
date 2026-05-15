@@ -101,9 +101,13 @@ call_agent_placement({
 call_agent_routing({
   placement_json: string,    // résultat call_agent_placement
   schema_json: string,
-  layers?: 2 | 4             // défaut: 2
+  plan: 'free' | 'pro' | 'pro_max' | 'enterprise'  // borne max couches
+  // pas de paramètre `layers` — c'est l'agent qui décide
 })
-→ { pcb_status: 'ROUTING_DONE' }
+→ {
+    pcb_status: 'ROUTING_DONE',
+    layers: 2 | 4 | 8         // décidé par l'agent, borné par `plan`
+  }
 
 // 6. DRC
 call_agent_drc({
@@ -193,10 +197,10 @@ Le schéma Phase 2 est suffisant pour KiCanvas et pour extraire la netlist.
 OR-Tools (Google) peut calculer des positions meilleures que la grille naïve et les écrire dans les S-expressions via `circuit-synth-engine.ts` — sans pcbnew. Résultat : placement mathématiquement optimisé, schéma plus lisible, `.kicad_pcb` plus propre. Pas un vrai placement EDA (pas de DRC, pas de tailles réelles de footprints) mais suffisant pour améliorer la lisibilité Free/Maker.
 
 **Stratégie par plan :**
-- Free / Maker → OR-Tools + S-expressions TS (placement amélioré, sans pcbnew)
-- Pro / Max → pcbnew réel (`POST /place/auto`) — placement EDA natif avec DRC
+- Free          → OR-Tools + S-expressions TS (placement amélioré, sans pcbnew)
+- Pro / Pro Max → pcbnew réel (`POST /place/auto`) — placement EDA natif avec DRC
 
-**Phase 3 — placement réel via pcbnew (Pro / Max) :**
+**Phase 3 — placement réel via pcbnew (Pro / Pro Max) :**
 
 `pcbnew` = bibliothèque Python officielle de KiCad. Elle permet de lire, modifier et écrire des fichiers `.kicad_pcb` programmatiquement — déplacer des footprints, tracer des pistes, lancer le DRC, exporter des Gerbers. Tout ce qu'on fait manuellement dans KiCad, `pcbnew` le fait en Python. pcbnew n'est pas disponible en TypeScript — obligatoirement Python via FastAPI.
 
@@ -214,7 +218,7 @@ OR-Tools (Google) peut calculer des positions meilleures que la grille naïve et
 
 ### État Phase 2 vs Phase 3
 
-| Tool | Phase 2 (actuel) | Phase 3 Free/Maker | Phase 3 Pro/Max |
+| Tool | Phase 2 (actuel) | Phase 3 Free | Phase 3 Pro / Pro Max |
 |------|-----------------|-------------------|-----------------|
 | `call_agent_spec` | ✅ Haiku 4.5 → `DesignJson` | — opérationnel | — opérationnel |
 | `call_agent_schema` | ✅ Haiku 4.5 → Circuit-Synth → `.kicad_sch` + `.kicad_pcb` grille naïve | — opérationnel | — opérationnel |
@@ -226,6 +230,9 @@ OR-Tools (Google) peut calculer des positions meilleures que la grille naïve et
 
 **Après placement → Routage :**
 `call_agent_routing` → Freerouting trace les pistes entre les footprints dans le `.kicad_pcb`. C'est l'étape qui suit immédiatement le placement dans le pipeline.
+
+**Choix du nombre de couches — décidé par l'agent routage :**
+L'agent analyse densité, signaux et contraintes (alimentation/masse séparées, signaux haute vitesse, blindage) puis choisit le nombre optimal de couches : **2, 4 ou 8**. Le résultat est **borné par le plan utilisateur** — `Free : 2 max` · `Pro : 4 max` · `Pro Max : 8 max` · `Enterprise : illimité`. Si l'agent estime que le plan est insuffisant, il route avec le max du plan et retourne un warning du type `"Recommandé : 4 couches — upgrade Pro pour optimal"`. Ce n'est **jamais** un paramètre d'entrée — l'utilisateur ne pré-choisit pas.
 
 **Après routage → DRC :**
 `call_agent_drc` → pcbnew vérifie les violations de règles (clearance, largeur de piste, courts-circuits) et tente de les corriger automatiquement. Obligatoire avant export — le PCB doit être DRC_CLEAN.

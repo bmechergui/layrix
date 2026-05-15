@@ -351,7 +351,7 @@ function PCBViewer3DPlaceholder() {
           solder mask, silkscreen, and component bodies.
         </p>
       </div>
-      <p className="text-[9px] text-[#3D3D3D] font-mono">Maker plan · visual inspection before ordering</p>
+      <p className="text-[9px] text-[#3D3D3D] font-mono">Pro plan · visual inspection before ordering</p>
     </div>
   );
 }

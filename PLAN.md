@@ -43,7 +43,7 @@ layrix/
 | Paiement | Lemon Squeezy (MVP) → Stripe (V2) |
 | Viewer Schéma | KiCanvas (rendu natif .kicad_sch en browser) |
 | Viewer PCB 2D | KiCanvas (rendu natif .kicad_pcb) |
-| Viewer 3D | Three.js + STEP via occt-import-js (plan Maker+) |
+| Viewer 3D | Three.js + STEP via occt-import-js (plan Pro+) |
 | Deploy | Vercel (landing+dashboard), Railway (api), DigitalOcean (kicad) |
 
 ---
@@ -79,12 +79,12 @@ layrix/
 | Vue 3D | 1 |
 | Simulation | 3 |
 
-| Plan | Prix | Crédits |
-|------|------|---------|
-| Free | 0€ | 5/jour |
-| Maker | 25€/mois | 100 |
-| Pro | 50€/mois | 300 |
-| Enterprise | Sur devis | Illimité |
+| Plan       | Prix       | Crédits  | Couches max |
+|------------|------------|----------|-------------|
+| Free       | 0€         | 5/jour   | 2           |
+| Pro        | 25€/mois   | 100      | 4           |
+| Pro Max    | 50€/mois   | 300      | 8           |
+| Enterprise | Sur devis  | Illimité | Illimité    |
 
 ---
 
@@ -614,7 +614,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 | `POST /drc` | DRC check → violations JSON |
 | `POST /drc/fix` | Application corrections DRC |
 | `POST /export/gerbers` | Gerbers + drill + ZIP |
-| `POST /export/step` | Modèle 3D STEP (plan Maker+) |
+| `POST /export/step` | Modèle 3D STEP (plan Pro+) |
 | `POST /export/bom` | BOM CSV JLCPCB-ready |
 | `POST /simulate` | ngspice (plan Pro) |
 
@@ -725,7 +725,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 2. Three.js + `occt-import-js` (WASM) pour charger STEP
 3. OrbitControls + éclairage réaliste
 4. Matériaux : FR4 vert (#2d7a2d), cuivre (#d4a017), silkscreen blanc
-5. Coût : 1 crédit, plan Maker+ uniquement
+5. Coût : 1 crédit, plan Pro+ uniquement
 
 **Skill :** `layrix-viewer` | **Risque :** Moyen
 
@@ -772,7 +772,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 - `apps/dashboard/app/dashboard/billing/page.tsx`
 
 **Actions :**
-1. Produits Lemon Squeezy : Maker (25€/mois), Pro (50€/mois), top-ups (5€/10€/20€)
+1. Produits Lemon Squeezy : Pro (25€/mois), Pro Max (50€/mois), top-ups (5€/10€/20€)
 2. Webhook `/api/webhooks/lemon-squeezy` :
    - `subscription_created` → crédite le compte
    - `subscription_renewed` → recrédite mensuellement
@@ -857,7 +857,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
       0.6 (Redis) → 2.6 → 3.3
 ```
 
-L'étape **0.8** est sur le chemin critique. Si elle échoue, le MVP tourne sur TSCircuit uniquement (PCB < 20 composants, 2 couches) — ce qui couvre la majorité des cas makers.
+L'étape **0.8** est sur le chemin critique. Si elle échoue, le MVP tourne sur Circuit-Synth fallback TS uniquement (PCB < 20 composants, 2 couches) — ce qui couvre la majorité des cas du plan Free.
 
 ---
 

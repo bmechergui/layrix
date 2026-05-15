@@ -8,7 +8,7 @@ export type PCBStatus =
   | 'DRC_CLEAN'
   | 'PCB_LIVRÉ';
 
-export type Plan = 'free' | 'maker' | 'pro' | 'enterprise';
+export type Plan = 'free' | 'pro' | 'pro_max' | 'enterprise';
 
 export type FootprintSource =
   | 'kicad_official'
@@ -75,8 +75,9 @@ export interface DesignJson {
   type: string;
   /** Functional blocks identified — e.g. ["Power", "Decoupling", "MCU"]. */
   blocks: string[];
-  /** Number of PCB copper layers (2 or 4 typically). */
-  layers: 2 | 4 | 6;
+  /** Number of PCB copper layers — decided by the routing agent, bounded by user plan
+   *  (Free: 2 max · Pro: 4 max · Pro Max: 8 max · Enterprise: unlimited). */
+  layers: 2 | 4 | 8;
   /** Design rules adapted to the circuit type. */
   rules: {
     trace_width_mm: number;

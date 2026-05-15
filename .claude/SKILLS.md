@@ -15,7 +15,7 @@
 | `layrix-footprint` | `layrix-footprint/SKILL.md` | Cascade 8 étapes : KiCad → SnapMagic → Octopart → PDF Vision → génération .kicad_mod → pgvector | Footprint manquant / librairie |
 | `layrix-kicad-service` | `layrix-kicad-service/SKILL.md` | FastAPI Python + pcbnew headless : placement, Freerouting, DRC, export Gerbers, Docker, BullMQ | KiCad / placement / routage / export |
 | `layrix-viewer` | `layrix-viewer/SKILL.md` | KiCanvas (viewer natif .kicad_sch + .kicad_pcb) + Three.js 3D (STEP, matériaux FR4) | Viewer PCB / schéma / rendu KiCanvas |
-| `layrix-credits` | `layrix-credits/SKILL.md` | Déduction atomique Supabase RPC, plans Free/Maker/Pro, top-ups, webhook Lemon Squeezy, UI badge | Crédits / plans / paiement |
+| `layrix-credits` | `layrix-credits/SKILL.md` | Déduction atomique Supabase RPC, plans Free/Pro/Pro Max, top-ups, webhook Lemon Squeezy, UI badge | Crédits / plans / paiement |
 | `layrix-drc` | `layrix-drc/SKILL.md` | Boucle DRC max 3 itérations, system prompt Haiku, corrections pcbnew, markers viewer | DRC / violations / correction PCB |
 | `layrix-frontend-verify` | `layrix-frontend-verify/SKILL.md` | Diagnostic visuel read-only : screenshots Chrome DevTools (3 breakpoints — 375px/768px/1440px), détecte chevauchements/overlaps/layout cassé, rapport structuré + corrections Tailwind | **APRÈS chaque modification UI** — responsive broken / overlap / visuel à valider |
 | `layrix-circuit-synth` | `layrix-circuit-synth/SKILL.md` | Génération `.kicad_sch` via circuit_synth Python : `@circuit` pattern, mapping symbol (Device:R/Timer:NE555P/etc.), KICAD_SYMBOL_DIR setup, erreurs classiques + fixes, router FastAPI primary/fallback | **Toute génération schéma KiCad** — circuit_synth, mapping symbol, pin names, setup libs |

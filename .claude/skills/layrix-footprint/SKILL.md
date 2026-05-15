@@ -20,7 +20,7 @@ version: 0.1.0
 ```
 
 Arrêter à la première étape qui retourne un résultat valide.
-Étapes 5–7 = **3 crédits** (plan Maker+ uniquement).
+Étapes 5–7 = **3 crédits** (plan Pro+ uniquement).
 
 ## Agent Footprint (Haiku 4.5)
 

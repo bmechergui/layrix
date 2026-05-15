@@ -1,6 +1,6 @@
 ---
 name: layrix-credits
-description: This skill should be used when the user asks to "gérer les crédits", "déduire des crédits", "vérifier le solde", "implémenter le système de crédits", "créer la table credits Supabase", "ajouter un top-up", "configurer les plans Free/Maker/Pro" or mentions credits, balance, plans, or middleware de crédits.
+description: This skill should be used when the user asks to "gérer les crédits", "déduire des crédits", "vérifier le solde", "implémenter le système de crédits", "créer la table credits Supabase", "ajouter un top-up", "configurer les plans Free/Pro/Pro Max" or mentions credits, balance, plans, or middleware de crédits.
 version: 0.1.0
 ---
 
@@ -17,9 +17,9 @@ export const CREDIT_COSTS = {
   routing:     3,
   drc:         1,
   export:      1,
-  footprint:   3,   // plan Maker+ uniquement
-  view_3d:     1,   // plan Maker+ uniquement
-  simulation:  3,   // plan Pro+ uniquement
+  footprint:   3,   // plan Pro+ uniquement
+  view_3d:     1,   // plan Pro+ uniquement
+  simulation:  3,   // plan Pro Max+ uniquement
 } as const;
 
 export type CreditAction = keyof typeof CREDIT_COSTS;
@@ -29,17 +29,17 @@ export type CreditAction = keyof typeof CREDIT_COSTS;
 
 ```typescript
 export const PLANS = {
-  free:       { daily_credits: 5,   monthly_credits: null, price_eur: 0   },
-  maker:      { daily_credits: null, monthly_credits: 100,  price_eur: 25  },
-  pro:        { daily_credits: null, monthly_credits: 300,  price_eur: 50  },
-  enterprise: { daily_credits: null, monthly_credits: null, price_eur: null }, // illimité
+  free:       { daily_credits: 5,    monthly_credits: null, price_eur: 0,    layers_max: 2    },
+  pro:        { daily_credits: null, monthly_credits: 100,  price_eur: 25,   layers_max: 4    },
+  pro_max:    { daily_credits: null, monthly_credits: 300,  price_eur: 50,   layers_max: 8    },
+  enterprise: { daily_credits: null, monthly_credits: null, price_eur: null, layers_max: null }, // illimité
 } as const;
 
 // Actions réservées selon le plan
 export const PLAN_RESTRICTIONS = {
-  footprint: ["maker", "pro", "enterprise"],
-  view_3d:   ["maker", "pro", "enterprise"],
-  simulation:["pro", "enterprise"],
+  footprint: ["pro", "pro_max", "enterprise"],
+  view_3d:   ["pro", "pro_max", "enterprise"],
+  simulation:["pro_max", "enterprise"],
 };
 ```
 
@@ -51,7 +51,7 @@ create table credits (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references auth.users not null unique,
   balance numeric(10,1) default 0,
-  plan text default 'free' check (plan in ('free','maker','pro','enterprise')),
+  plan text default 'free' check (plan in ('free','pro','pro_max','enterprise')),
   daily_used numeric(10,1) default 0,
   daily_reset_at date default current_date,
   updated_at timestamptz default now()
@@ -115,7 +115,7 @@ export async function checkCredits(userId: string, action: CreditAction): Promis
   // Vérifier solde plan Free (limite quotidienne)
   if (data.plan === "free") {
     if (data.daily_used + cost > 5) {
-      throw new CreditError("Limite quotidienne atteinte (5 crédits/jour). Passez à Maker.", "DAILY_LIMIT");
+      throw new CreditError("Limite quotidienne atteinte (5 crédits/jour). Passez à Pro.", "DAILY_LIMIT");
     }
   }
 
@@ -234,8 +234,8 @@ const CREDIT_PACKS = {
 };
 
 const PLAN_CREDITS = {
-  "prod_maker": 100,
-  "prod_pro":   300,
+  "prod_pro":     100,
+  "prod_pro_max": 300,
 };
 
 export async function POST(req: Request) {
@@ -258,7 +258,7 @@ export async function POST(req: Request) {
     // Recharge mensuelle
     const productId = data.attributes.product_id;
     const monthlyCredits = PLAN_CREDITS[productId];
-    const plan = productId === "prod_maker" ? "maker" : "pro";
+    const plan = productId === "prod_pro" ? "pro" : "pro_max";
     if (monthlyCredits) {
       await supabase.from("credits").update({ balance: monthlyCredits, plan }).eq("user_id", userId);
     }
@@ -273,7 +273,7 @@ export async function POST(req: Request) {
 ```tsx
 // packages/ui/src/dashboard/CreditsBadge.tsx
 export function CreditsBadge({ balance, plan, dailyLimit }: CreditsProps) {
-  const pct = plan === "free" ? (balance / 5) * 100 : (balance / (plan === "maker" ? 100 : 300)) * 100;
+  const pct = plan === "free" ? (balance / 5) * 100 : (balance / (plan === "pro" ? 100 : 300)) * 100;
   const isLow = pct < 20;
 
   return (
