@@ -5,6 +5,8 @@ import { Layers, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 import type { PCBState } from '@layrix/types';
 import { Button } from '@/shared/ui/button';
 import { StageHeader } from './StageHeader';
+import { KiCanvasViewer } from './KiCanvasViewer';
+import { ViewModeSwitch, type ViewMode } from './ViewModeSwitch';
 import { layoutBoard } from '../lib/layout-engine';
 
 interface PcbViewProps {
@@ -28,6 +30,9 @@ const NET_COLOR_BCU = '#D4820A';
 
 export function PcbView({ state, title = 'PCB Layout', showRouting = false }: PcbViewProps) {
   const [zoom, setZoom] = useState(1);
+  const nativeUrl = state.kicad_pcb_url;
+  const [mode, setMode] = useState<ViewMode>(nativeUrl ? 'native' : 'spec');
+  const effectiveMode: ViewMode = nativeUrl ? mode : 'spec';
 
   const widthMm = state.board_width_mm ?? 50;
   const heightMm = state.board_height_mm ?? 40;
@@ -81,22 +86,35 @@ export function PcbView({ state, title = 'PCB Layout', showRouting = false }: Pc
         meta={`${widthMm}×${heightMm}mm · ${components.length} comps`}
         actions={
           <>
-            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setZoom((z) => Math.max(0.5, z - 0.2))}>
-              <ZoomOut size={12} />
-            </Button>
-            <span className="text-[10px] font-mono text-muted-foreground w-10 text-center">
-              {Math.round(zoom * 100)}%
-            </span>
-            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setZoom((z) => Math.min(3, z + 0.2))}>
-              <ZoomIn size={12} />
-            </Button>
-            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setZoom(1)}>
-              <Maximize2 size={12} />
-            </Button>
+            <ViewModeSwitch
+              mode={effectiveMode}
+              onChange={setMode}
+              nativeDisabled={!nativeUrl}
+            />
+            {effectiveMode === 'spec' && (
+              <>
+                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setZoom((z) => Math.max(0.5, z - 0.2))}>
+                  <ZoomOut size={12} />
+                </Button>
+                <span className="text-[10px] font-mono text-muted-foreground w-10 text-center">
+                  {Math.round(zoom * 100)}%
+                </span>
+                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setZoom((z) => Math.min(3, z + 0.2))}>
+                  <ZoomIn size={12} />
+                </Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setZoom(1)}>
+                  <Maximize2 size={12} />
+                </Button>
+              </>
+            )}
           </>
         }
       />
 
+      {effectiveMode === 'native' && nativeUrl ? (
+        <KiCanvasViewer src={nativeUrl} controls="basic" />
+      ) : (
+        <>
       <div className="flex-1 overflow-auto bg-[#080808] flex items-center justify-center p-6">
         <div
           style={{
@@ -238,6 +256,8 @@ export function PcbView({ state, title = 'PCB Layout', showRouting = false }: Pc
           </span>
           <span className="ml-auto">{traces.length} traces routed</span>
         </div>
+      )}
+        </>
       )}
     </div>
   );

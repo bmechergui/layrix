@@ -1,8 +1,11 @@
 'use client';
 
+import { useState } from 'react';
 import { FileText, Hash } from 'lucide-react';
 import type { PCBState } from '@layrix/types';
 import { StageHeader } from './StageHeader';
+import { KiCanvasViewer } from './KiCanvasViewer';
+import { ViewModeSwitch, type ViewMode } from './ViewModeSwitch';
 
 const NET_PALETTE = [
   '#00C2FF', '#D4820A', '#22C55E', '#A855F7', '#F472B6', '#FACC15', '#38BDF8', '#F87171',
@@ -25,6 +28,9 @@ export function SchemaView({ state }: { state: PCBState }) {
   const components = state.components ?? [];
   const connections = state.connections ?? [];
   const nets = state.nets ?? [];
+  const nativeUrl = state.kicad_sch_url;
+  const [mode, setMode] = useState<ViewMode>(nativeUrl ? 'native' : 'spec');
+  const effectiveMode: ViewMode = nativeUrl ? mode : 'spec';
 
   return (
     <div className="flex flex-col h-full bg-[#0d0d0d]">
@@ -32,7 +38,18 @@ export function SchemaView({ state }: { state: PCBState }) {
         icon={<FileText size={12} />}
         title="Schematic"
         meta={`${components.length} components · ${nets.length} nets`}
+        actions={
+          <ViewModeSwitch
+            mode={effectiveMode}
+            onChange={setMode}
+            nativeDisabled={!nativeUrl}
+          />
+        }
       />
+
+      {effectiveMode === 'native' && nativeUrl ? (
+        <KiCanvasViewer src={nativeUrl} controls="basic" />
+      ) : (
 
       <div className="flex-1 overflow-y-auto p-4 md:p-6">
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 max-w-7xl mx-auto">
@@ -114,6 +131,7 @@ export function SchemaView({ state }: { state: PCBState }) {
           </section>
         </div>
       </div>
+      )}
     </div>
   );
 }
