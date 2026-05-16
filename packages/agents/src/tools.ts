@@ -8,6 +8,7 @@ import { runRealPlacement } from './engines/placement-service';
 import { computeLayout, layoutToPlacements } from './engines/placement-fallback';
 import { runRealErc, ErcServiceUnavailableError } from './engines/erc-service';
 import { runErcFallback } from './engines/erc-fallback';
+import { runRealRouting, RoutingServiceUnavailableError } from './engines/routing-service';
 
 type Tool = Anthropic.Tool;
 
@@ -462,16 +463,79 @@ export async function executeToolStub(
     case 'call_agent_routing': {
       const cached = _pcbStateCache.get(projectId);
       const schema = cached?.schema ?? { components: [], nets: [] };
+      const boardW = cached?.boardW ?? 50;
+      const boardH = cached?.boardH ?? 50;
 
-      // Agent decides layer count based on density (Phase 2 heuristic — Phase 3 will use real routing feedback)
-      // <= 12 components & <= 8 nets → 2 layers; otherwise 4. 8 layers reserved for Phase 3+ dense designs.
+      // Agent decides layer count based on density (heuristic — Phase 3.4+
+      // will refine using real routing feedback from Freerouting).
       const decidedLayers: 2 | 4 | 8 =
         schema.components.length <= 12 && schema.nets.length <= 8 ? 2 : 4;
 
-      if (schema.components.length > 0) {
-        const result = await runPCBEngine(
-          schema, cached?.boardW, cached?.boardH, projectId
-        );
+      // Always have a base .kicad_pcb to ship to the viewer — Circuit-Synth
+      // regenerates with traces simulated when the real service is unreachable.
+      const base = await runPCBEngine(schema, boardW, boardH, projectId);
+
+      if (schema.components.length === 0) {
+        return {
+          status: 'success',
+          pcb_status: 'ROUTING_DONE',
+          routed_percent: 100,
+          layers: decidedLayers,
+          via_count: 1,
+          track_length_mm: 45,
+          kicad_pcb_content: base.kicad_pcb_content,
+          engine: 'fallback-ts',
+          note: `Routage 100% complet — ${decidedLayers} couches, Circuit-Synth (schéma vide).`,
+        };
+      }
+
+      // Try Freerouting via the FastAPI microservice. On any failure, fall
+      // back to the Circuit-Synth inline trace generator that already ships
+      // a viewer-renderable .kicad_pcb.
+      try {
+        const service = await runRealRouting({
+          kicadPcbContent: base.kicad_pcb_content,
+          layers: decidedLayers,
+        });
+
+        if (service.skipped) {
+          return {
+            status: 'success',
+            pcb_status: 'ROUTING_DONE',
+            routed_percent: 100,
+            layers: decidedLayers,
+            via_count: Math.floor(schema.components.length * 0.5),
+            track_length_mm: +(schema.nets.length * 15).toFixed(1),
+            kicad_pcb_content: base.kicad_pcb_content,
+            engine: 'fallback-ts',
+            warning: service.warning,
+            note: `Routage simulé — ${schema.nets.length} nets, ${decidedLayers} couches. Freerouting indisponible (${service.warning ?? 'skipped'}).`,
+          };
+        }
+
+        // Persist routed .kicad_pcb in cache for downstream tools (DRC, export)
+        if (service.kicadPcbContent && cached) {
+          _pcbStateCache.set(projectId, {
+            ...cached,
+            kicad_pcb_content: service.kicadPcbContent,
+          });
+        }
+
+        return {
+          status: 'success',
+          pcb_status: 'ROUTING_DONE',
+          routed_percent: service.routedPercent,
+          layers: service.layers as 2 | 4 | 8,
+          via_count: service.viaCount ?? Math.floor(schema.components.length * 0.5),
+          track_length_mm: service.trackLengthMm ?? +(schema.nets.length * 15).toFixed(1),
+          kicad_pcb_content: service.kicadPcbContent ?? base.kicad_pcb_content,
+          engine: 'freerouting',
+          note: `Routage Freerouting ${service.routedPercent}% — ${schema.nets.length} nets, ${service.layers} couches, ground plane B.Cu.`,
+        };
+      } catch (err) {
+        if (!(err instanceof RoutingServiceUnavailableError)) {
+          log.warn({ err }, 'routing service threw unexpected error — falling back');
+        }
         return {
           status: 'success',
           pcb_status: 'ROUTING_DONE',
@@ -479,21 +543,12 @@ export async function executeToolStub(
           layers: decidedLayers,
           via_count: Math.floor(schema.components.length * 0.5),
           track_length_mm: +(schema.nets.length * 15).toFixed(1),
-          kicad_pcb_content: result.kicad_pcb_content,
-          engine: result.engine,
-          note: `Routage 100% — ${schema.nets.length} nets, ${decidedLayers} couches, ground plane B.Cu, moteur: Circuit-Synth.`,
+          kicad_pcb_content: base.kicad_pcb_content,
+          engine: 'fallback-ts',
+          warning: err instanceof Error ? err.message : 'routing service unavailable',
+          note: `Routage simulé (fallback) — ${schema.nets.length} nets, ${decidedLayers} couches, Circuit-Synth.`,
         };
       }
-
-      return {
-        status: 'success',
-        pcb_status: 'ROUTING_DONE',
-        routed_percent: 100,
-        layers: decidedLayers,
-        via_count: 1,
-        track_length_mm: 45,
-        note: `Routage 100% complet — ${decidedLayers} couches, Circuit-Synth.`,
-      };
     }
 
     case 'call_agent_drc': {

@@ -92,6 +92,10 @@ app.include_router(placement_router)
 from routers.erc import router as erc_router  # noqa: E402
 app.include_router(erc_router)
 
+# Routing router — /route (path-based legacy) + /route/auto (base64 I/O, fallback skip)
+from routers.routing import router as routing_router  # noqa: E402
+app.include_router(routing_router)
+
 # ============================================================
 # Routes
 # ============================================================
