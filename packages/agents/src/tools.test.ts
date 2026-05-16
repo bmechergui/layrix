@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PCB_TOOLS, executeToolStub } from './tools';
+import {
+  runRealPlacement,
+  PlacementServiceUnavailableError,
+} from './engines/placement-service';
 
 // Mock Anthropic SDK at module level for generateDesignWithHaiku tests
 const mockCreate = vi.fn();
@@ -8,6 +12,19 @@ vi.mock('@anthropic-ai/sdk', () => ({
     messages: { create: mockCreate },
   })),
 }));
+
+// Mock placement-service so we can control success/failure per test.
+// The real PlacementServiceUnavailableError is re-exported so `instanceof` works.
+vi.mock('./engines/placement-service', async () => {
+  const actual =
+    await vi.importActual<typeof import('./engines/placement-service')>(
+      './engines/placement-service',
+    );
+  return {
+    ...actual,
+    runRealPlacement: vi.fn(),
+  };
+});
 
 beforeEach(() => {
   mockCreate.mockReset();
@@ -142,6 +159,143 @@ describe('executeToolStub — call_agent_spec', () => {
       'proj-test'
     );
 
+    expect(typeof result['note']).toBe('string');
+    expect((result['note'] as string).length).toBeGreaterThan(0);
+  });
+});
+
+// ============================================================
+// call_agent_placement — real pcbnew service + TS fallback
+// ============================================================
+
+const SIMPLE_SCHEMA_JSON = JSON.stringify({
+  components: [
+    { ref: 'U1', value: 'NE555P', footprint: 'DIP-8', symbol: 'Timer:NE555P' },
+    { ref: 'R1', value: '4.7k', footprint: '0603', symbol: 'Device:R' },
+    { ref: 'C1', value: '100nF', footprint: '0603', symbol: 'Device:C' },
+    { ref: 'J1', value: 'PWR', footprint: 'Conn_2', symbol: 'Connector_Generic:Conn_01x02' },
+  ],
+  nets: ['GND', 'VCC'],
+  connections: [
+    { name: 'GND', pins: [{ ref: 'U1', pin: 'GND' }, { ref: 'C1', pin: 2 }, { ref: 'J1', pin: 2 }] },
+    { name: 'VCC', pins: [{ ref: 'U1', pin: 'VCC' }, { ref: 'C1', pin: 1 }, { ref: 'J1', pin: 1 }] },
+  ],
+});
+
+describe('executeToolStub — call_agent_placement', () => {
+  beforeEach(() => {
+    vi.mocked(runRealPlacement).mockReset();
+  });
+
+  it('uses the placement service when it succeeds', async () => {
+    vi.mocked(runRealPlacement).mockResolvedValueOnce({
+      kicadPcbContent: '(kicad_pcb placed-by-service)',
+      positions: [
+        { ref: 'U1', x_mm: 25, y_mm: 25 },
+        { ref: 'R1', x_mm: 30, y_mm: 20 },
+        { ref: 'C1', x_mm: 20, y_mm: 30 },
+        { ref: 'J1', x_mm: 5, y_mm: 25 },
+      ],
+    });
+
+    const result = await executeToolStub(
+      'call_agent_placement',
+      { schema_json: SIMPLE_SCHEMA_JSON, board_width_mm: 50, board_height_mm: 50 },
+      'proj-pcbnew',
+    );
+
+    expect(result['status']).toBe('success');
+    expect(result['pcb_status']).toBe('PLACEMENT_DONE');
+    expect(result['engine']).toBe('pcbnew');
+    expect(result['kicad_pcb_content']).toBe('(kicad_pcb placed-by-service)');
+    expect(Array.isArray(result['placements'])).toBe(true);
+    expect((result['placements'] as unknown[]).length).toBe(4);
+    expect(runRealPlacement).toHaveBeenCalledOnce();
+  });
+
+  it('falls back to TS planner when service throws PlacementServiceUnavailableError', async () => {
+    vi.mocked(runRealPlacement).mockRejectedValueOnce(
+      new PlacementServiceUnavailableError('service down'),
+    );
+
+    const result = await executeToolStub(
+      'call_agent_placement',
+      { schema_json: SIMPLE_SCHEMA_JSON, board_width_mm: 50, board_height_mm: 50 },
+      'proj-fallback',
+    );
+
+    expect(result['status']).toBe('success');
+    expect(result['pcb_status']).toBe('PLACEMENT_DONE');
+    expect(result['engine']).toBe('fallback-ts');
+    // Fallback still ships a kicad_pcb_content (from Circuit-Synth at schema step
+    // or a fresh regeneration here) so the viewer keeps a valid native preview
+    expect(typeof result['kicad_pcb_content']).toBe('string');
+    expect((result['kicad_pcb_content'] as string).length).toBeGreaterThan(0);
+    const placements = result['placements'] as Array<Record<string, unknown>>;
+    expect(placements).toHaveLength(4);
+    // U1 (IC) must land near board center via the pure fallback planner
+    const u1 = placements.find((p) => p['ref'] === 'U1')!;
+    expect(Math.abs((u1['x_mm'] as number) - 25)).toBeLessThan(2);
+    expect(Math.abs((u1['y_mm'] as number) - 25)).toBeLessThan(2);
+  });
+
+  it('falls back on any service error, not just PlacementServiceUnavailableError', async () => {
+    vi.mocked(runRealPlacement).mockRejectedValueOnce(new Error('unexpected'));
+
+    const result = await executeToolStub(
+      'call_agent_placement',
+      { schema_json: SIMPLE_SCHEMA_JSON, board_width_mm: 50, board_height_mm: 50 },
+      'proj-any-err',
+    );
+    expect(result['status']).toBe('success');
+    expect(result['engine']).toBe('fallback-ts');
+  });
+
+  it('respects custom board dimensions', async () => {
+    vi.mocked(runRealPlacement).mockRejectedValueOnce(
+      new PlacementServiceUnavailableError('down'),
+    );
+
+    const result = await executeToolStub(
+      'call_agent_placement',
+      { schema_json: SIMPLE_SCHEMA_JSON, board_width_mm: 80, board_height_mm: 60 },
+      'proj-dims',
+    );
+    expect(result['board_width_mm']).toBe(80);
+    expect(result['board_height_mm']).toBe(60);
+    const u1 = (result['placements'] as Array<Record<string, unknown>>).find(
+      (p) => p['ref'] === 'U1',
+    )!;
+    // Centroid for 80x60 board
+    expect(Math.abs((u1['x_mm'] as number) - 40)).toBeLessThan(3);
+    expect(Math.abs((u1['y_mm'] as number) - 30)).toBeLessThan(3);
+  });
+
+  it('handles empty schema gracefully', async () => {
+    vi.mocked(runRealPlacement).mockRejectedValueOnce(
+      new PlacementServiceUnavailableError('down'),
+    );
+
+    const result = await executeToolStub(
+      'call_agent_placement',
+      { schema_json: JSON.stringify({ components: [], nets: [] }) },
+      'proj-empty',
+    );
+    expect(result['status']).toBe('success');
+    expect(result['placements']).toEqual([]);
+  });
+
+  it('includes a human-readable note', async () => {
+    vi.mocked(runRealPlacement).mockResolvedValueOnce({
+      kicadPcbContent: '(kicad_pcb x)',
+      positions: [{ ref: 'U1', x_mm: 25, y_mm: 25 }],
+    });
+
+    const result = await executeToolStub(
+      'call_agent_placement',
+      { schema_json: SIMPLE_SCHEMA_JSON },
+      'proj-note',
+    );
     expect(typeof result['note']).toBe('string');
     expect((result['note'] as string).length).toBeGreaterThan(0);
   });

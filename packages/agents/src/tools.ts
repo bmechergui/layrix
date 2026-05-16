@@ -4,6 +4,8 @@ import type { DesignJson } from '@layrix/types';
 import { runPCBEngine, runCircuitSynthEngine } from './engines/engine-router';
 import { validateAndCorrectSchema } from './engines/circuit-synth-engine';
 import type { SchemaJson } from './engines/engine-router';
+import { runRealPlacement } from './engines/placement-service';
+import { computeLayout, layoutToPlacements } from './engines/placement-fallback';
 
 type Tool = Anthropic.Tool;
 
@@ -178,7 +180,13 @@ export const PCB_TOOLS: Tool[] = [
 
 // Persistent PCB state across tool calls within one orchestrator run
 // Keyed by projectId — populated by call_agent_schema and used by placement
-const _pcbStateCache = new Map<string, { schema: SchemaJson; boardW: number; boardH: number }>();
+interface PcbStateCacheEntry {
+  schema: SchemaJson;
+  boardW: number;
+  boardH: number;
+  kicad_pcb_content?: string;
+}
+const _pcbStateCache = new Map<string, PcbStateCacheEntry>();
 
 export async function executeToolStub(
   toolName: string,
@@ -238,10 +246,15 @@ export async function executeToolStub(
       // 4. Validate + auto-correct symbols against local KiCad libraries (pre-flight)
       schema = await validateAndCorrectSchema(schema);
 
-      _pcbStateCache.set(projectId, { schema, boardW: 50, boardH: 50 });
-
       // Circuit-Synth always generates native KiCad files
       const csResult = await runCircuitSynthEngine(schema, 50, 50, projectId);
+
+      _pcbStateCache.set(projectId, {
+        schema,
+        boardW: 50,
+        boardH: 50,
+        kicad_pcb_content: csResult.kicad_pcb_content,
+      });
 
       return {
         status: 'success',
@@ -269,30 +282,95 @@ export async function executeToolStub(
       const boardW = Number(input['board_width_mm'] ?? 50);
       const boardH = Number(input['board_height_mm'] ?? 50);
 
-      // Parse schema_json from input if provided
+      // Parse schema_json from input if provided. Fall back to the cached schema
+      // from call_agent_schema if the agent passes nothing valid here.
       let schema: SchemaJson;
       try {
-        schema = JSON.parse(String(input['schema_json'] ?? '{}')) as SchemaJson;
-        if (!schema.components?.length) throw new Error('empty');
+        const parsed: unknown = JSON.parse(String(input['schema_json'] ?? '{}'));
+        if (
+          typeof parsed !== 'object' ||
+          parsed === null ||
+          !Array.isArray((parsed as Record<string, unknown>)['components']) ||
+          ((parsed as { components: unknown[] }).components.length === 0)
+        ) {
+          throw new Error('invalid or empty schema_json');
+        }
+        schema = parsed as SchemaJson;
       } catch {
-        // Fallback: use cached schema from schema step
         const cached = _pcbStateCache.get(projectId);
         schema = cached?.schema ?? { components: [], nets: [] };
       }
 
-      _pcbStateCache.set(projectId, { schema, boardW, boardH });
-      const result = await runPCBEngine(schema, boardW, boardH, projectId);
+      // Refresh the .kicad_pcb with the requested board size via Circuit-Synth.
+      // This guarantees we always have a valid native file to ship to the viewer,
+      // regardless of whether the pcbnew placement service succeeds.
+      const base = await runPCBEngine(schema, boardW, boardH, projectId);
 
-      return {
-        status: 'success',
-        pcb_status: 'PLACEMENT_DONE',
-        placements: result.placements,
-        kicad_pcb_content: result.kicad_pcb_content,
-        board_width_mm: boardW,
-        board_height_mm: boardH,
-        engine: result.engine,
-        note: `Placement terminé — PCB ${boardW}×${boardH} mm, ${result.placements.length} composants, moteur: Circuit-Synth.`,
-      };
+      // Empty schema → return early with no placements
+      if (schema.components.length === 0) {
+        _pcbStateCache.set(projectId, {
+          schema, boardW, boardH, kicad_pcb_content: base.kicad_pcb_content,
+        });
+        return {
+          status: 'success',
+          pcb_status: 'PLACEMENT_DONE',
+          placements: [],
+          kicad_pcb_content: base.kicad_pcb_content,
+          board_width_mm: boardW,
+          board_height_mm: boardH,
+          engine: 'fallback-ts',
+          note: `Placement — schéma vide.`,
+        };
+      }
+
+      // Try the real pcbnew placement service first; fall back to the pure
+      // TS planner on any error so the agentic loop stays alive offline.
+      try {
+        const service = await runRealPlacement({
+          kicadPcbContent: base.kicad_pcb_content,
+          boardWidthMm: boardW,
+          boardHeightMm: boardH,
+        });
+        const placements = service.positions.map((p) => ({
+          ref: p.ref,
+          x_mm: p.x_mm,
+          y_mm: p.y_mm,
+          rotation: 0,
+          side: 'front',
+        }));
+        _pcbStateCache.set(projectId, {
+          schema, boardW, boardH, kicad_pcb_content: service.kicadPcbContent,
+        });
+        return {
+          status: 'success',
+          pcb_status: 'PLACEMENT_DONE',
+          placements,
+          kicad_pcb_content: service.kicadPcbContent,
+          board_width_mm: boardW,
+          board_height_mm: boardH,
+          engine: 'pcbnew',
+          note: `Placement pcbnew — PCB ${boardW}×${boardH} mm, ${placements.length} composants.`,
+        };
+      } catch (err) {
+        log.warn({ err }, 'placement service unavailable — using TS fallback planner');
+        const refs = schema.components.map((c) => c.ref);
+        const layout = computeLayout(refs, boardW, boardH);
+        const placements = layoutToPlacements(layout);
+        _pcbStateCache.set(projectId, {
+          schema, boardW, boardH, kicad_pcb_content: base.kicad_pcb_content,
+        });
+        return {
+          status: 'success',
+          pcb_status: 'PLACEMENT_DONE',
+          placements,
+          kicad_pcb_content: base.kicad_pcb_content,
+          board_width_mm: boardW,
+          board_height_mm: boardH,
+          engine: 'fallback-ts',
+          warning: 'pcbnew service unreachable — positions computed by the TS fallback planner',
+          note: `Placement fallback — PCB ${boardW}×${boardH} mm, ${placements.length} composants (planner TS).`,
+        };
+      }
     }
 
     case 'call_agent_routing': {
