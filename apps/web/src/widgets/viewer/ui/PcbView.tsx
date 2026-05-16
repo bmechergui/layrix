@@ -28,8 +28,11 @@ const KIND_COLOR: Record<string, { fill: string; stroke: string; text: string }>
 const NET_COLOR_FCU = '#00C2FF';
 const NET_COLOR_BCU = '#D4820A';
 
+type LayerTab = 'top' | 'bottom' | 'both';
+
 export function PcbView({ state, title = 'PCB Layout', showRouting = false }: PcbViewProps) {
   const [zoom, setZoom] = useState(1);
+  const [layer, setLayer] = useState<LayerTab>('both');
   const nativeUrl = state.kicad_pcb_url;
   const [mode, setMode] = useState<ViewMode>(nativeUrl ? 'native' : 'spec');
   const effectiveMode: ViewMode = nativeUrl ? mode : 'spec';
@@ -115,6 +118,44 @@ export function PcbView({ state, title = 'PCB Layout', showRouting = false }: Pc
         <KiCanvasViewer src={nativeUrl} controls="basic" />
       ) : (
         <>
+      {showRouting && (
+        <div className="flex items-center gap-1 px-4 py-2 border-b border-border bg-[#0a0a0a] shrink-0">
+          {(
+            [
+              { id: 'top',    label: 'Top',    color: '#00C2FF', sub: 'F.Cu' },
+              { id: 'bottom', label: 'Bottom', color: '#D4820A', sub: 'B.Cu' },
+              { id: 'both',   label: 'Both',   color: '#FFFFFF', sub: 'F + B' },
+            ] as const
+          ).map((opt) => {
+            const active = layer === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setLayer(opt.id)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  active
+                    ? 'bg-primary/15 text-primary border border-primary/30'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-[#141414] border border-transparent'
+                }`}
+              >
+                <span
+                  className="w-2 h-2 rounded-full shrink-0"
+                  style={{ backgroundColor: opt.color }}
+                />
+                <span>{opt.label}</span>
+                <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground/70">
+                  {opt.sub}
+                </span>
+              </button>
+            );
+          })}
+          <span className="ml-auto text-[10px] font-mono text-muted-foreground">
+            {traces.filter((t) => layer === 'both' || (layer === 'top' ? t.layer === 'F' : t.layer === 'B')).length} traces
+          </span>
+        </div>
+      )}
+
       <div className="flex-1 overflow-auto bg-[#080808] flex items-center justify-center p-6">
         <div
           style={{
@@ -180,7 +221,11 @@ export function PcbView({ state, title = 'PCB Layout', showRouting = false }: Pc
               ))}
 
               {/* Traces */}
-              {traces.map((t, i) => {
+              {traces
+                .filter((t) =>
+                  layer === 'both' || (layer === 'top' ? t.layer === 'F' : t.layer === 'B'),
+                )
+                .map((t, i) => {
                 const color = t.layer === 'F' ? NET_COLOR_FCU : NET_COLOR_BCU;
                 const opacity = t.layer === 'F' ? 0.85 : 0.55;
                 const midX = (mm(t.x1) + mm(t.x2)) / 2;
@@ -246,17 +291,6 @@ export function PcbView({ state, title = 'PCB Layout', showRouting = false }: Pc
         </div>
       </div>
 
-      {showRouting && (
-        <div className="flex items-center gap-4 px-4 py-2 border-t border-border bg-[#0a0a0a] text-[10px] font-mono uppercase tracking-wider text-muted-foreground shrink-0">
-          <span className="flex items-center gap-1.5">
-            <span className="w-2 h-0.5 bg-[#00C2FF]" /> F.Cu
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-2 h-0.5 bg-[#D4820A]" /> B.Cu
-          </span>
-          <span className="ml-auto">{traces.length} traces routed</span>
-        </div>
-      )}
         </>
       )}
     </div>
