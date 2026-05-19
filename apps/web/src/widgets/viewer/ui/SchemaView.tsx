@@ -1,34 +1,50 @@
 'use client';
 
-import { useState } from 'react';
-import { FileText, Hash, Network, ListTree, Cable } from 'lucide-react';
-import type { PCBState } from '@layrix/types';
+import { useMemo, useState } from 'react';
+import { FileText, Network, ListTree, Cable, ExternalLink, Cpu, Zap, Plug } from 'lucide-react';
+import type { PCBState, SchemaComponent } from '@layrix/types';
 import { StageHeader } from './StageHeader';
 import { KiCanvasViewer } from './KiCanvasViewer';
 import { SchematicGraph } from './SchematicGraph';
 import { ViewModeSwitch, type ViewMode } from './ViewModeSwitch';
 import { cn } from '@/shared/lib/utils';
+import { netColor } from '../lib/schematic-layout';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 type SpecTab = 'diagram' | 'components' | 'nets';
+type ComponentGroup = 'ic' | 'passive' | 'connector' | 'other';
 
-const NET_PALETTE = [
-  '#00C2FF', '#D4820A', '#22C55E', '#A855F7', '#F472B6', '#FACC15', '#38BDF8', '#F87171',
-];
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function netColor(name: string): string {
-  if (/^GND$/i.test(name)) return '#71717A';
-  if (/^(VCC|VDD|VIN|VBUS|VBAT|3V3|5V|12V)/i.test(name)) return '#D4820A';
-  const idx = Math.abs(hashCode(name)) % NET_PALETTE.length;
-  return NET_PALETTE[idx]!;
+function classifyRef(ref: string): ComponentGroup {
+  const p = ref.replace(/\d+$/, '').toUpperCase();
+  if (p === 'U' || p === 'IC') return 'ic';
+  if (['J', 'P', 'CONN', 'SB', 'SW', 'BTN', 'X'].includes(p)) return 'connector';
+  if (['R', 'C', 'L', 'D', 'Q', 'T', 'LED', 'FB', 'Y'].includes(p)) return 'passive';
+  return 'other';
 }
 
-function hashCode(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return h;
+function sortByRef(a: SchemaComponent, b: SchemaComponent): number {
+  const parse = (r: string) => {
+    const m = r.match(/^([A-Za-z]+)(\d+)$/);
+    return m ? ([m[1]!, parseInt(m[2]!)] as [string, number]) : ([r, 0] as [string, number]);
+  };
+  const [pa, na] = parse(a.ref);
+  const [pb, nb] = parse(b.ref);
+  return pa < pb ? -1 : pa > pb ? 1 : na - nb;
 }
 
-interface TabButtonProps {
+function isPowerNet(name: string) {
+  return /^(VCC|VDD|VIN|VBUS|VBAT|3V3|5V|12V|PWR)/i.test(name);
+}
+function isGndNet(name: string) {
+  return /^GND$/i.test(name);
+}
+
+// ─── Sub-components ──────────────────────────────────────────────────────────
+
+interface TabBtnProps {
   active: boolean;
   onClick: () => void;
   icon: React.ReactNode;
@@ -36,25 +52,25 @@ interface TabButtonProps {
   count?: number;
 }
 
-function TabButton({ active, onClick, icon, label, count }: TabButtonProps) {
+function TabBtn({ active, onClick, icon, label, count }: TabBtnProps) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        'flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
+        'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-150',
         active
-          ? 'bg-primary/15 text-primary border border-primary/30'
-          : 'text-muted-foreground hover:text-foreground hover:bg-[#141414] border border-transparent'
+          ? 'bg-primary/10 text-primary border border-primary/20'
+          : 'text-[#555] hover:text-[#888] hover:bg-[#141414] border border-transparent',
       )}
     >
       {icon}
-      <span>{label}</span>
+      {label}
       {typeof count === 'number' && (
         <span
           className={cn(
-            'text-[10px] font-mono px-1.5 py-0.5 rounded',
-            active ? 'bg-primary/15 text-primary' : 'bg-[#1a1a1a] text-muted-foreground/70'
+            'text-[9px] font-mono px-1.5 py-0.5 rounded leading-none',
+            active ? 'bg-primary/15 text-primary' : 'bg-[#1a1a1a] text-[#3d3d3d]',
           )}
         >
           {count}
@@ -64,21 +80,259 @@ function TabButton({ active, onClick, icon, label, count }: TabButtonProps) {
   );
 }
 
+// Group header for the BOM
+const GROUP_META: Record<ComponentGroup, { label: string; icon: React.ReactNode; color: string }> = {
+  ic: {
+    label: 'Integrated circuits',
+    icon: <Cpu size={10} />,
+    color: '#5baeff',
+  },
+  passive: {
+    label: 'Passives',
+    icon: <Zap size={10} />,
+    color: '#D4820A',
+  },
+  connector: {
+    label: 'Connectors',
+    icon: <Plug size={10} />,
+    color: '#22C55E',
+  },
+  other: {
+    label: 'Other',
+    icon: <ListTree size={10} />,
+    color: '#6b6b6b',
+  },
+};
+
+// ─── BOM Tab ─────────────────────────────────────────────────────────────────
+
+function BomTab({ components }: { components: SchemaComponent[] }) {
+  const groups = useMemo(() => {
+    const map: Record<ComponentGroup, SchemaComponent[]> = {
+      ic: [], passive: [], connector: [], other: [],
+    };
+    for (const c of components) map[classifyRef(c.ref)].push(c);
+    for (const g of Object.keys(map) as ComponentGroup[]) {
+      map[g].sort(sortByRef);
+    }
+    return map;
+  }, [components]);
+
+  const order: ComponentGroup[] = ['ic', 'passive', 'connector', 'other'];
+
+  if (components.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full text-xs text-[#3d3d3d] font-mono">
+        No components
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full overflow-auto p-4 space-y-4">
+      {order.map((group) => {
+        const items = groups[group];
+        if (items.length === 0) return null;
+        const meta = GROUP_META[group];
+        return (
+          <div key={group} className="rounded-xl border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden">
+            {/* Group header */}
+            <div className="flex items-center justify-between px-4 py-2 border-b border-[#1a1a1a] bg-[#0a0a0a]">
+              <div className="flex items-center gap-1.5" style={{ color: meta.color }}>
+                {meta.icon}
+                <span className="text-[10px] font-semibold tracking-wide uppercase">{meta.label}</span>
+              </div>
+              <span
+                className="text-[9px] font-mono px-1.5 py-0.5 rounded leading-none"
+                style={{ background: `${meta.color}18`, color: meta.color }}
+              >
+                {items.length}
+              </span>
+            </div>
+
+            {/* Table */}
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-[9px] uppercase tracking-widest text-[#2e2e2e] border-b border-[#141414]">
+                  <th className="px-4 py-2 font-medium w-16">Ref</th>
+                  <th className="px-4 py-2 font-medium">Value</th>
+                  <th className="px-4 py-2 font-medium hidden sm:table-cell">Footprint</th>
+                  <th className="px-4 py-2 font-medium hidden md:table-cell">Symbol</th>
+                  <th className="px-4 py-2 font-medium w-24">LCSC</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#0f0f0f]">
+                {items.map((c) => (
+                  <tr key={c.ref} className="hover:bg-[#111] transition-colors group">
+                    <td className="px-4 py-2">
+                      <span
+                        className="font-mono font-bold text-[11px]"
+                        style={{ color: meta.color }}
+                      >
+                        {c.ref}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-foreground/80">{c.value}</td>
+                    <td className="px-4 py-2 text-[#4a4a4a] font-mono text-[10px] hidden sm:table-cell truncate max-w-[140px]">
+                      {c.footprint}
+                    </td>
+                    <td className="px-4 py-2 text-[#3d3d3d] font-mono text-[10px] hidden md:table-cell">
+                      {c.symbol ?? '—'}
+                    </td>
+                    <td className="px-4 py-2">
+                      {c.lcsc ? (
+                        <a
+                          href={`https://jlcpcb.com/parts/componentSearch?searchTxt=${c.lcsc}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono bg-[#1a1200] text-[#D4820A] border border-[#D4820A]/20 hover:border-[#D4820A]/50 transition-colors"
+                        >
+                          {c.lcsc}
+                          <ExternalLink size={8} />
+                        </a>
+                      ) : (
+                        <span className="text-[9px] text-[#2a2a2a] font-mono">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Nets Tab ─────────────────────────────────────────────────────────────────
+
+function NetsTab({ nets, connections }: { nets: string[]; connections: NonNullable<PCBState['connections']> }) {
+  const sorted = useMemo(() => {
+    const gnd = nets.filter(isGndNet);
+    const pwr = nets.filter((n) => !isGndNet(n) && isPowerNet(n));
+    const sig = nets.filter((n) => !isGndNet(n) && !isPowerNet(n)).sort((a, b) => a.localeCompare(b));
+    return [...gnd, ...pwr, ...sig];
+  }, [nets]);
+
+  const maxPins = useMemo(() => {
+    return connections.reduce((m, c) => Math.max(m, c.pins.length), 1);
+  }, [connections]);
+
+  if (nets.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full text-xs text-[#3d3d3d] font-mono">
+        No nets
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full overflow-auto">
+      <table className="w-full text-xs">
+        <thead className="sticky top-0 z-10">
+          <tr className="text-left text-[9px] uppercase tracking-widest text-[#2e2e2e] bg-[#0a0a0a] border-b border-[#141414]">
+            <th className="px-4 py-2.5 font-medium w-8">#</th>
+            <th className="px-4 py-2.5 font-medium">Net</th>
+            <th className="px-4 py-2.5 font-medium w-32 hidden sm:table-cell">Connections</th>
+            <th className="px-4 py-2.5 font-medium hidden md:table-cell">Pins</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[#0e0e0e]">
+          {sorted.map((name, idx) => {
+            const conn = connections.find((c) => c.name === name);
+            const pinCount = conn?.pins.length ?? 0;
+            const color = netColor(name);
+            const isPwr = isPowerNet(name);
+            const isGnd = isGndNet(name);
+            const pct = Math.round((pinCount / maxPins) * 100);
+
+            return (
+              <tr key={name} className="hover:bg-[#0f0f0f] transition-colors">
+                <td className="px-4 py-2.5">
+                  <span className="text-[9px] font-mono text-[#2a2a2a]">{idx + 1}</span>
+                </td>
+                <td className="px-4 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{ background: color, boxShadow: `0 0 4px ${color}55` }}
+                    />
+                    <span
+                      className="font-mono font-semibold text-[11px]"
+                      style={{ color: isGnd ? '#525252' : isPwr ? '#D4820A' : color }}
+                    >
+                      {name}
+                    </span>
+                    {(isPwr || isGnd) && (
+                      <span
+                        className="text-[8px] font-mono px-1 py-px rounded leading-none"
+                        style={{
+                          background: isGnd ? '#1a1a1a' : '#1a1000',
+                          color: isGnd ? '#525252' : '#D4820A',
+                          border: `1px solid ${isGnd ? '#2a2a2a' : '#D4820A30'}`,
+                        }}
+                      >
+                        {isGnd ? 'GND' : 'PWR'}
+                      </span>
+                    )}
+                  </div>
+                </td>
+                <td className="px-4 py-2.5 hidden sm:table-cell">
+                  <div className="flex items-center gap-2">
+                    {/* Visual bar */}
+                    <div className="w-20 h-1.5 rounded-full bg-[#141414] overflow-hidden">
+                      <div
+                        className="h-full rounded-full"
+                        style={{ width: `${pct}%`, background: color, opacity: 0.7 }}
+                      />
+                    </div>
+                    <span className="text-[10px] font-mono text-[#3d3d3d]">{pinCount}</span>
+                  </div>
+                </td>
+                <td className="px-4 py-2.5 hidden md:table-cell">
+                  <span className="text-[10px] font-mono text-[#2e2e2e] break-all leading-relaxed">
+                    {conn?.pins.map((p) => `${p.ref}.${p.pin}`).join(' · ') ?? '—'}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
 export function SchemaView({ state }: { state: PCBState }) {
   const components = state.components ?? [];
   const connections = state.connections ?? [];
   const nets = state.nets ?? [];
   const nativeUrl = state.kicad_sch_url;
+
   const [mode, setMode] = useState<ViewMode>(nativeUrl ? 'native' : 'spec');
   const [tab, setTab] = useState<SpecTab>('diagram');
   const effectiveMode: ViewMode = nativeUrl ? mode : 'spec';
 
+  const icCount = useMemo(() => components.filter((c) => classifyRef(c.ref) === 'ic').length, [components]);
+  const passiveCount = useMemo(() => components.filter((c) => classifyRef(c.ref) === 'passive').length, [components]);
+  const connCount = useMemo(() => components.filter((c) => classifyRef(c.ref) === 'connector').length, [components]);
+
+  const metaLine = [
+    icCount ? `${icCount} IC` : '',
+    passiveCount ? `${passiveCount} passive${passiveCount > 1 ? 's' : ''}` : '',
+    connCount ? `${connCount} connector${connCount > 1 ? 's' : ''}` : '',
+    `${nets.length} net${nets.length !== 1 ? 's' : ''}`,
+  ].filter(Boolean).join(' · ');
+
   return (
-    <div className="flex flex-col h-full bg-[#0d0d0d]">
+    <div className="flex flex-col h-full bg-[#080808]">
       <StageHeader
         icon={<FileText size={12} />}
         title="Schematic"
-        meta={`${components.length} components · ${nets.length} nets`}
+        meta={metaLine}
         actions={
           <ViewModeSwitch
             mode={effectiveMode}
@@ -92,25 +346,25 @@ export function SchemaView({ state }: { state: PCBState }) {
         <KiCanvasViewer src={nativeUrl} controls="basic" />
       ) : (
         <>
-          {/* Sub-tabs: one view at a time, no vertical scroll through stacked sections */}
-          <div className="flex items-center gap-1 px-4 py-2 border-b border-border bg-[#0a0a0a] shrink-0">
-            <TabButton
+          {/* Sub-tabs */}
+          <div className="flex items-center gap-1 px-3 py-2 border-b border-[#141414] bg-[#080808] shrink-0">
+            <TabBtn
               active={tab === 'diagram'}
               onClick={() => setTab('diagram')}
-              icon={<Network size={12} />}
+              icon={<Network size={10} />}
               label="Diagram"
             />
-            <TabButton
+            <TabBtn
               active={tab === 'components'}
               onClick={() => setTab('components')}
-              icon={<ListTree size={12} />}
-              label="Components"
+              icon={<ListTree size={10} />}
+              label="BOM"
               count={components.length}
             />
-            <TabButton
+            <TabBtn
               active={tab === 'nets'}
               onClick={() => setTab('nets')}
-              icon={<Cable size={12} />}
+              icon={<Cable size={10} />}
               label="Nets"
               count={nets.length}
             />
@@ -118,89 +372,12 @@ export function SchemaView({ state }: { state: PCBState }) {
 
           <div className="flex-1 min-h-0 overflow-hidden">
             {tab === 'diagram' && (
-              <div className="h-full overflow-auto p-4 md:p-6 bg-[#0a0a0a]">
+              <div className="h-full overflow-auto p-4 bg-[#080808]">
                 <SchematicGraph components={components} connections={connections} />
               </div>
             )}
-
-            {tab === 'components' && (
-              <div className="h-full overflow-auto p-4 md:p-6">
-                <div className="max-w-5xl mx-auto rounded-xl border border-border bg-[#111111] overflow-hidden">
-                  <header className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-[#0d0d0d]">
-                    <span className="text-xs font-semibold text-foreground">Bill of materials</span>
-                    <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
-                      {components.length} parts
-                    </span>
-                  </header>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead className="bg-[#0a0a0a] sticky top-0">
-                        <tr className="text-left text-[10px] uppercase tracking-wider text-muted-foreground">
-                          <th className="px-4 py-2 font-medium">Ref</th>
-                          <th className="px-4 py-2 font-medium">Value</th>
-                          <th className="px-4 py-2 font-medium">Footprint</th>
-                          <th className="px-4 py-2 font-medium hidden md:table-cell">Symbol</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {components.map((c) => (
-                          <tr key={c.ref} className="hover:bg-[#161616] transition-colors">
-                            <td className="px-4 py-2 font-mono text-primary font-semibold">{c.ref}</td>
-                            <td className="px-4 py-2 text-foreground">{c.value}</td>
-                            <td className="px-4 py-2 text-muted-foreground font-mono">{c.footprint}</td>
-                            <td className="px-4 py-2 text-muted-foreground font-mono text-[11px] hidden md:table-cell">
-                              {c.symbol ?? '—'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {tab === 'nets' && (
-              <div className="h-full overflow-auto p-4 md:p-6">
-                <div className="max-w-3xl mx-auto rounded-xl border border-border bg-[#111111] overflow-hidden">
-                  <header className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-[#0d0d0d]">
-                    <span className="text-xs font-semibold text-foreground">Nets</span>
-                    <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
-                      {nets.length}
-                    </span>
-                  </header>
-                  <ul className="divide-y divide-border">
-                    {nets.map((name) => {
-                      const conn = connections.find((cn) => cn.name === name);
-                      const pinCount = conn?.pins.length ?? 0;
-                      const color = netColor(name);
-                      return (
-                        <li key={name} className="px-4 py-3 hover:bg-[#161616] transition-colors">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span
-                                className="w-2.5 h-2.5 rounded-full shrink-0"
-                                style={{ backgroundColor: color }}
-                              />
-                              <span className="font-mono text-sm text-foreground truncate">{name}</span>
-                            </div>
-                            <span className="flex items-center gap-1 text-[10px] text-muted-foreground font-mono">
-                              <Hash size={9} />
-                              {pinCount} pins
-                            </span>
-                          </div>
-                          {conn && conn.pins.length > 0 && (
-                            <p className="text-[11px] font-mono text-muted-foreground mt-1.5 pl-4.5 pl-[18px] break-all">
-                              {conn.pins.map((p) => `${p.ref}.${p.pin}`).join(' · ')}
-                            </p>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              </div>
-            )}
+            {tab === 'components' && <BomTab components={components} />}
+            {tab === 'nets' && <NetsTab nets={nets} connections={connections} />}
           </div>
         </>
       )}
