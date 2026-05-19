@@ -307,9 +307,9 @@ function NetsTab({ nets, connections }: { nets: string[]; connections: NonNullab
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function SchemaView({ state }: { state: PCBState }) {
-  const components = state.components ?? [];
-  const connections = state.connections ?? [];
-  const nets = state.nets ?? [];
+  const components  = useMemo(() => state.components  ?? [], [state.components]);
+  const connections = useMemo(() => state.connections ?? [], [state.connections]);
+  const nets        = useMemo(() => state.nets        ?? [], [state.nets]);
   const nativeUrl = state.kicad_sch_url;
 
   const [mode, setMode] = useState<ViewMode>(nativeUrl ? 'native' : 'spec');

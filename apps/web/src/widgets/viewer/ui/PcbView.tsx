@@ -302,8 +302,8 @@ export function PcbView({ state, title = 'PCB Layout', showRouting = false }: Pc
 
   const widthMm  = state.board_width_mm  ?? 50;
   const heightMm = state.board_height_mm ?? 40;
-  const components  = state.components  ?? [];
-  const connections = state.connections ?? [];
+  const components  = useMemo(() => state.components  ?? [], [state.components]);
+  const connections = useMemo(() => state.connections ?? [], [state.connections]);
 
   const placed = useMemo(
     () => layoutBoard(components, widthMm, heightMm),
