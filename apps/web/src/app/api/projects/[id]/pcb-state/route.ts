@@ -1,5 +1,39 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createRouteHandlerClient } from '@/shared/lib/supabase-server';
+import type { PCBState } from '@layrix/types';
+
+const BUCKET = 'kicad-files';
+const SIGNED_URL_TTL = 60 * 60; // 1h
+
+/**
+ * Regenerates signed URLs for any KiCad artifacts stored in pcb_state.
+ * Stored signed URLs expire after 1h — always refresh them on read so the
+ * viewer gets a valid URL regardless of when the project was last generated.
+ */
+async function refreshSignedUrls(
+  supabase: Awaited<ReturnType<typeof createRouteHandlerClient>>,
+  state: PCBState,
+  userId: string,
+  projectId: string,
+): Promise<PCBState> {
+  const results = await Promise.all([
+    state.kicad_sch_url
+      ? supabase.storage.from(BUCKET).createSignedUrl(`${userId}/${projectId}/schematic.kicad_sch`, SIGNED_URL_TTL)
+      : null,
+    state.kicad_pcb_url
+      ? supabase.storage.from(BUCKET).createSignedUrl(`${userId}/${projectId}/pcb.kicad_pcb`, SIGNED_URL_TTL)
+      : null,
+  ]);
+
+  const [schResult, pcbResult] = results;
+  // Conditional spread avoids setting optional properties to `undefined`
+  // (exactOptionalPropertyTypes strictness).
+  return {
+    ...state,
+    ...(schResult?.data?.signedUrl ? { kicad_sch_url: schResult.data.signedUrl } : {}),
+    ...(pcbResult?.data?.signedUrl ? { kicad_pcb_url: pcbResult.data.signedUrl } : {}),
+  };
+}
 
 export async function GET(
   _req: NextRequest,
@@ -22,7 +56,12 @@ export async function GET(
     return NextResponse.json({ success: false, error: 'Not found' }, { status: 404 });
   }
 
-  return NextResponse.json({ success: true, data: { pcb_state: data.pcb_state } });
+  const rawState = data.pcb_state as PCBState | null;
+  const pcbState = rawState
+    ? await refreshSignedUrls(supabase, rawState, user.id, id)
+    : null;
+
+  return NextResponse.json({ success: true, data: { pcb_state: pcbState } });
 }
 
 export async function PATCH(
