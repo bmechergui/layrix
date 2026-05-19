@@ -23,6 +23,9 @@ importers:
       '@layrix/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@layrix/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
       '@layrix/types':
         specifier: workspace:*
         version: link:../../packages/types

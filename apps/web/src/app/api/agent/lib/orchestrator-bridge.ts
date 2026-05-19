@@ -1,8 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { PCBState, PCBStatus } from '@layrix/types';
 import { runOrchestrator } from '@layrix/agents';
+import { logger } from '@layrix/logger';
 import { encodeSse } from './sse';
 import { uploadKicadArtifact } from './kicad-storage';
+
+const log = logger.child({ module: 'orchestrator-bridge' });
 
 // Only the steps that surface in the UI Timeline (SPEC is skipped — it's
 // internal context analysis without a dedicated stage).
@@ -54,6 +57,15 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
 
         case 'pcb_state': {
           const raw = ev.state as OrchestratorPcbState;
+
+          log.debug(
+            {
+              has_sch: typeof raw.kicad_sch_content === 'string' ? raw.kicad_sch_content.length : false,
+              has_pcb: typeof raw.kicad_pcb_content === 'string' ? raw.kicad_pcb_content.length : false,
+              status: raw.pcb_status ?? 'undefined',
+            },
+            'pcb_state event',
+          );
 
           // Upload KiCad artifacts (if present) and inject signed URLs
           let kicad_sch_url: string | undefined;
