@@ -11,7 +11,7 @@ import { runErcFallback } from './engines/erc-fallback';
 import { runRealRouting, RoutingServiceUnavailableError } from './engines/routing-service';
 import { runRealDrc, DrcServiceUnavailableError } from './engines/drc-service';
 import { runRealExport, ExportServiceUnavailableError } from './engines/export-service';
-import { findFootprint } from './engines/footprint-service';
+import { findFootprint, quickLookup } from './engines/footprint-service';
 
 type Tool = Anthropic.Tool;
 
@@ -279,8 +279,23 @@ export async function executeToolStub(
       // Circuit-Synth always generates native KiCad files
       const csResult = await runCircuitSynthEngine(schema, 50, 50, projectId);
 
+      // Auto-resolve footprints via KiCad library lookup (Step 1 — instant, no network).
+      // Replaces short names ("0402", "SOT-23") with official lib paths
+      // ("Resistor_SMD:R_0402_1005Metric"). Unknowns keep their original value
+      // and are reported in unresolved_footprints so the orchestrator can call
+      // call_agent_footprint for the full 4-step cascade.
+      const enrichedComponents = schema.components.map((c) => ({
+        ...c,
+        footprint: quickLookup(c.ref, c.footprint) ?? c.footprint,
+      }));
+      const unresolvedFootprints = enrichedComponents
+        .filter((c) => !c.footprint.includes(':'))
+        .map((c) => ({ ref: c.ref, value: c.value, footprint: c.footprint }));
+
+      const enrichedSchema = { ...schema, components: enrichedComponents };
+
       _pcbStateCache.set(projectId, {
-        schema,
+        schema: enrichedSchema,
         boardW: 50,
         boardH: 50,
         kicad_sch_content: csResult.kicad_sch_content,
@@ -290,13 +305,14 @@ export async function executeToolStub(
       return {
         status: 'success',
         pcb_status: 'SCHEMA_DONE',
-        components: schema.components,
+        components: enrichedComponents,
         nets: schema.nets,
         connections: schema.connections ?? [],
         engine: 'circuit-synth',
         kicad_sch_content: csResult.kicad_sch_content,
         kicad_pcb_content: csResult.kicad_pcb_content,
-        note: `Schéma généré — ${schema.components.length} composants, ${schema.nets.length} nets, moteur: Circuit-Synth.`,
+        unresolved_footprints: unresolvedFootprints,
+        note: `Schéma généré — ${schema.components.length} composants, ${schema.nets.length} nets, moteur: Circuit-Synth.${unresolvedFootprints.length > 0 ? ` ${unresolvedFootprints.length} footprint(s) à résoudre.` : ' Tous les footprints résolus.'}`,
       };
     }
 

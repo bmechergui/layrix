@@ -245,6 +245,17 @@ async function generateWithAI(
   }
 }
 
+// ─── Quick lookup (Step 1 only — synchronous, no network) ────────────────────
+
+/**
+ * Instant KiCad library lookup with no network calls.
+ * Returns the official footprint name or null if not found.
+ * Use this for bulk auto-resolution inside call_agent_schema.
+ */
+export function quickLookup(partNumber: string, packageHint?: string): string | null {
+  return lookupKicadLibrary(partNumber, packageHint);
+}
+
 // ─── Main cascade ─────────────────────────────────────────────────────────────
 
 export async function findFootprint(
