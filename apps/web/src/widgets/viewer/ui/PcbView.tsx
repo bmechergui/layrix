@@ -762,7 +762,7 @@ export function PcbView({ state, title = 'PCB Layout', showRouting = false }: Pc
           <div className="flex items-center justify-between px-3 py-2 border-b border-[#14141c] bg-[#0c0d12] shrink-0">
             <div className="flex items-center gap-1">
               {([
-                { id: 'canvas' as const, icon: <LayoutGrid size={10} />, label: 'Board Canvas', count: undefined },
+                { id: 'canvas' as const, icon: <LayoutGrid size={10} />, label: 'Board', count: undefined },
                 { id: 'list'   as const, icon: <List size={10} />,       label: 'Placements',    count: placed.length },
               ]).map(({ id, icon, label, count }) => (
                 <button
@@ -816,9 +816,9 @@ export function PcbView({ state, title = 'PCB Layout', showRouting = false }: Pc
 
           <div className="flex-1 min-h-0 overflow-hidden relative">
             {pcbTab === 'canvas' && (
-              <div 
-                ref={canvasContainerRef} 
-                className="h-full w-full overflow-hidden flex items-center justify-center bg-[#050508] relative cursor-grab active:cursor-grabbing"
+              <div
+                ref={canvasContainerRef}
+                className="h-full w-full overflow-hidden bg-[#050508] relative cursor-grab active:cursor-grabbing"
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
@@ -910,10 +910,7 @@ export function PcbView({ state, title = 'PCB Layout', showRouting = false }: Pc
                   </button>
                   <div className="w-[1px] h-4 bg-white/10" />
                   <button
-                    onClick={() => {
-                      setZoom(1.0);
-                      setPan({ x: 0, y: 0 });
-                    }}
+                    onClick={computeFitZoom}
                     title="Reset Grid"
                     className="p-1.5 rounded-lg text-[#889] hover:text-white hover:bg-white/[0.04] transition-colors"
                   >
