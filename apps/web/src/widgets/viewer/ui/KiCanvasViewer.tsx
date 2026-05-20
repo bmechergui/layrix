@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Layers, RefreshCw, ZoomIn, ZoomOut, Move } from 'lucide-react';
 import { loadKiCanvas } from '../lib/kicanvas-loader';
 
@@ -14,9 +14,21 @@ export function KiCanvasViewer({ src, controls = 'basic' }: KiCanvasViewerProps)
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showHints, setShowHints] = useState(false);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryCountRef = useRef(0);
+  const embedRef = useRef<HTMLElement | null>(null);
+
+  const startHints = useCallback((cancelled: () => boolean) => {
+    hintTimerRef.current = setTimeout(() => {
+      if (!cancelled()) {
+        setShowHints(true);
+        setTimeout(() => { if (!cancelled()) setShowHints(false); }, 3500);
+      }
+    }, 1500);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
+    retryCountRef.current = 0;
     setStatus('loading');
     setErrorMsg(null);
     setShowHints(false);
@@ -25,13 +37,7 @@ export function KiCanvasViewer({ src, controls = 'basic' }: KiCanvasViewerProps)
       .then(() => {
         if (!cancelled) {
           setStatus('ready');
-          // Show control hints after 1.5s, hide after 4s
-          hintTimerRef.current = setTimeout(() => {
-            if (!cancelled) {
-              setShowHints(true);
-              setTimeout(() => { if (!cancelled) setShowHints(false); }, 3500);
-            }
-          }, 1500);
+          startHints(() => cancelled);
         }
       })
       .catch((err: unknown) => {
@@ -44,9 +50,38 @@ export function KiCanvasViewer({ src, controls = 'basic' }: KiCanvasViewerProps)
       cancelled = true;
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
     };
-  }, [src]);
+  }, [src, startHints]);
 
-  const isExpiredUrl = errorMsg?.includes('400') || src.includes('token=');
+  // Listen for errors emitted by the <kicanvas-embed> web component.
+  // Supabase Storage has brief eventual-consistency delay after upload:
+  // auto-retry once after 2s before showing the error state.
+  useEffect(() => {
+    const el = embedRef.current;
+    if (!el || status !== 'ready') return;
+
+    const handleError = (e: Event) => {
+      const msg = (e as CustomEvent<string>).detail ?? 'KiCanvas file load error';
+      if (retryCountRef.current < 1) {
+        retryCountRef.current += 1;
+        // Brief delay to let Supabase Storage propagate the uploaded file
+        setTimeout(() => {
+          if (embedRef.current) {
+            embedRef.current.removeAttribute('src');
+            embedRef.current.setAttribute('src', src);
+          }
+        }, 2000);
+      } else {
+        setStatus('error');
+        setErrorMsg(String(msg));
+      }
+    };
+
+    el.addEventListener('error', handleError);
+    return () => el.removeEventListener('error', handleError);
+  }, [status, src]);
+
+  // 400 means the file was not found/expired; other errors are generic failures
+  const isExpiredUrl = errorMsg?.includes('400');
 
   return (
     <div className="relative flex-1 min-h-0 bg-[#060606] overflow-hidden">
@@ -102,6 +137,7 @@ export function KiCanvasViewer({ src, controls = 'basic' }: KiCanvasViewerProps)
       {status === 'ready' && (
         <>
           <kicanvas-embed
+            ref={(el: HTMLElement | null) => { embedRef.current = el; }}
             src={src}
             controls={controls}
             theme="kicad"
