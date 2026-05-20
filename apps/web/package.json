@@ -15,6 +15,7 @@
   "dependencies": {
     "@layrix/agents": "workspace:*",
     "@layrix/db": "workspace:*",
+    "@layrix/logger": "workspace:*",
     "@layrix/types": "workspace:*",
     "@radix-ui/react-dialog": "^1.1.0",
     "@radix-ui/react-dropdown-menu": "^2.1.0",

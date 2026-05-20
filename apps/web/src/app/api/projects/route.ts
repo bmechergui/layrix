@@ -1,15 +1,14 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createRouteHandlerClient } from '@/shared/lib/supabase-server';
 
-const createSchema = z.object({
-  name: z.string().min(1).max(100),
-  description: z.string().max(500).optional(),
+const createProjectSchema = z.object({
+  name: z.string().min(1).max(100).trim(),
+  description: z.string().max(500).trim().default(''),
 });
 
 export async function GET() {
   const supabase = await createRouteHandlerClient();
-
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
@@ -17,7 +16,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from('projects')
-    .select('*')
+    .select('id, name, description, status, iteration_count, created_at, updated_at')
     .order('updated_at', { ascending: false });
 
   if (error) {
@@ -27,30 +26,38 @@ export async function GET() {
   return NextResponse.json({ success: true, data });
 }
 
-export async function POST(request: Request) {
+export async function POST(req: NextRequest) {
   const supabase = await createRouteHandlerClient();
-
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }
 
-  let body: unknown;
+  let payload: unknown;
   try {
-    body = await request.json();
+    payload = await req.json();
   } catch {
     return NextResponse.json({ success: false, error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const parsed = createSchema.safeParse(body);
+  const parsed = createProjectSchema.safeParse(payload);
   if (!parsed.success) {
-    return NextResponse.json({ success: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' }, { status: 400 });
+    return NextResponse.json(
+      { success: false, error: parsed.error.issues.map((i) => i.message).join(', ') },
+      { status: 400 }
+    );
   }
 
   const { data, error } = await supabase
     .from('projects')
-    .insert({ user_id: user.id, ...parsed.data })
-    .select()
+    .insert({
+      user_id: user.id,
+      name: parsed.data.name,
+      description: parsed.data.description,
+      status: 'INITIAL',
+      iteration_count: 0,
+    })
+    .select('id, name, description, status, iteration_count, created_at, updated_at')
     .single();
 
   if (error) {

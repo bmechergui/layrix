@@ -1,6 +1,7 @@
 import { create } from 'zustand';
-import type { Project, Message, Credits, PCBStatus, PCBState } from '@layrix/types';
+import type { Credits, Project, Message, PCBState, AgentStep } from '@layrix/types';
 import { createSupabaseBrowserClient } from '@/shared/lib/supabase-browser';
+import type { PcbStage } from '@/entities/project';
 
 interface AuthUser {
   id: string;
@@ -9,54 +10,73 @@ interface AuthUser {
   avatar_url: string | null;
 }
 
-interface AppState {
-  // Auth
-  user: AuthUser | null;
-
-  // Projets
-  projects: Project[];
-  projectsLoading: boolean;
-  selectedProjectId: string | null;
-
-  // Messages du chat (par projet)
-  messagesByProject: Record<string, Message[]>;
-
-  // Crédits
-  credits: Credits | null;
-
-  // Agent
-  isAgentRunning: boolean;
-  agentStep: 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
-
-  // PCB state par projet (mis à jour par les events SSE de l'agent)
-  pcbStateByProject: Record<string, PCBState>;
-
-  // Actions
-  fetchUser: () => Promise<void>;
-  fetchProjects: () => Promise<void>;
-  fetchCredits: () => Promise<void>;
-  createProject: (name: string) => Promise<Project | null>;
-  setSelectedProjectId: (id: string | null) => void;
-  addProject: (project: Project) => void;
-  updateProjectName: (id: string, name: string) => void;
-  removeProject: (id: string) => void;
-  updateProjectStatus: (id: string, status: PCBStatus) => void;
-  addMessage: (projectId: string, message: Message) => void;
-  setAgentRunning: (running: boolean, step?: AppState['agentStep']) => void;
-  deductCredits: (amount: number) => void;
-  setPcbState: (projectId: string, state: Partial<PCBState>) => void;
+interface ProjectsApiResponse {
+  success: boolean;
+  data?: Project[];
+  error?: string;
 }
 
-export const useAppStore = create<AppState>((set) => ({
+interface ProjectApiResponse {
+  success: boolean;
+  data?: Project;
+  error?: string;
+}
+
+interface PcbStateApiResponse {
+  success: boolean;
+  data?: { pcb_state: PCBState | null };
+  error?: string;
+}
+
+interface AppState {
+  user: AuthUser | null;
+  credits: Credits | null;
+
+  projects: Project[];
+  projectsLoading: boolean;
+  projectsError: string | null;
+
+  messagesByProject: Record<string, Message[]>;
+  pcbStateByProject: Record<string, PCBState | null>;
+
+  agentStep: AgentStep;
+  agentBusy: boolean;
+  selectedStage: Record<string, PcbStage>;
+
+  fetchUser: () => Promise<void>;
+  fetchCredits: () => Promise<void>;
+  deductCredits: (amount: number) => void;
+
+  fetchProjects: () => Promise<void>;
+  createProject: (input: { name: string; description: string }) => Promise<Project | null>;
+  deleteProject: (id: string) => Promise<boolean>;
+
+  fetchPcbState: (projectId: string) => Promise<void>;
+  setPcbState: (projectId: string, state: PCBState | null) => void;
+
+  appendMessage: (projectId: string, msg: Message) => void;
+  patchLastAssistantMessage: (projectId: string, chunk: string) => void;
+  setMessages: (projectId: string, msgs: Message[]) => void;
+
+  setAgentStep: (step: AgentStep) => void;
+  setAgentBusy: (busy: boolean) => void;
+  setSelectedStage: (projectId: string, stage: PcbStage) => void;
+}
+
+export const useAppStore = create<AppState>((set, get) => ({
   user: null,
-  projects: [],
-  projectsLoading: true,
-  selectedProjectId: null,
-  messagesByProject: {},
   credits: null,
-  isAgentRunning: false,
-  agentStep: null,
+
+  projects: [],
+  projectsLoading: false,
+  projectsError: null,
+
+  messagesByProject: {},
   pcbStateByProject: {},
+
+  agentStep: null,
+  agentBusy: false,
+  selectedStage: {},
 
   fetchUser: async () => {
     const supabase = createSupabaseBrowserClient();
@@ -75,9 +95,17 @@ export const useAppStore = create<AppState>((set) => ({
 
   fetchCredits: async () => {
     const res = await fetch('/api/credits');
-    const json = await res.json() as { success: boolean; data?: { balance: number; plan: string } };
+    const json = (await res.json()) as {
+      success: boolean;
+      data?: { balance: number; plan: string };
+    };
     if (json.success && json.data) {
-      const dailyLimit: Record<string, number | null> = { free: 5, maker: null, pro: null, enterprise: null };
+      const dailyLimit: Record<string, number | null> = {
+        free: 5,
+        pro: null,
+        pro_max: null,
+        enterprise: null,
+      };
       set({
         credits: {
           balance: json.data.balance,
@@ -88,103 +116,98 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
 
-  fetchProjects: async () => {
-    set({ projectsLoading: true });
-    try {
-      const res = await fetch('/api/projects');
-      const json = await res.json() as { success: boolean; data?: Project[] };
-      if (json.success && json.data) {
-        set({ projects: json.data });
-      }
-    } finally {
-      set({ projectsLoading: false });
-    }
-  },
-
-  createProject: async (name) => {
-    const res = await fetch('/api/projects', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
-    });
-    const json = await res.json() as { success: boolean; data?: Project };
-    if (!json.success || !json.data) return null;
-    set((state) => ({ projects: [json.data!, ...state.projects] }));
-    return json.data;
-  },
-
-  setSelectedProjectId: (id) => set({ selectedProjectId: id }),
-
-  addProject: (project) =>
-    set((state) => ({ projects: [project, ...state.projects] })),
-
-  updateProjectName: (id, name) =>
-    set((state) => ({
-      projects: state.projects.map((p) =>
-        p.id === id ? { ...p, name, updated_at: new Date().toISOString() } : p
-      ),
-    })),
-
-  removeProject: (id) =>
-    set((state) => ({
-      projects: state.projects.filter((p) => p.id !== id),
-    })),
-
-  updateProjectStatus: (id, status) =>
-    set((state) => ({
-      projects: state.projects.map((p) =>
-        p.id === id ? { ...p, status, updated_at: new Date().toISOString() } : p
-      ),
-    })),
-
-  addMessage: (projectId, message) =>
-    set((state) => ({
-      messagesByProject: {
-        ...state.messagesByProject,
-        [projectId]: [...(state.messagesByProject[projectId] ?? []), message],
-      },
-    })),
-
-  setAgentRunning: (running, step = null) =>
-    set({ isAgentRunning: running, agentStep: running ? step : null }),
-
   deductCredits: (amount) => {
-    // Optimistic local update for immediate UI feedback
     set((state) => ({
       credits: state.credits
         ? { ...state.credits, balance: Math.max(0, state.credits.balance - amount) }
         : null,
     }));
-    // Re-fetch from DB to stay in sync (fire-and-forget)
-    void fetch('/api/credits')
-      .then((r) => r.json() as Promise<{ success: boolean; data?: { balance: number; plan: string } }>)
-      .then((json) => {
-        if (json.success && json.data) {
-          set((state) => ({
-            credits: state.credits
-              ? { ...state.credits, balance: json.data!.balance }
-              : null,
-          }));
-        }
-      })
-      .catch(() => { /* keep optimistic value on network error */ });
   },
 
-  setPcbState: (projectId, partial) =>
-    set((state) => {
-      const existing = state.pcbStateByProject[projectId] ?? { projectId, status: 'INITIAL' as PCBStatus, iteration: 0 };
-      // `pcb_status` is a signal field emitted by tool stubs to carry the PCBStatus value
-      // without colliding with the tool result's own `status: 'success'` field.
-      const { pcb_status, ...rest } = partial as typeof partial & { pcb_status?: PCBStatus };
-      return {
+  fetchProjects: async () => {
+    set({ projectsLoading: true, projectsError: null });
+    try {
+      const res = await fetch('/api/projects', { cache: 'no-store' });
+      const json = (await res.json()) as ProjectsApiResponse;
+      if (!res.ok || !json.success || !json.data) {
+        throw new Error(json.error ?? 'Failed to load projects');
+      }
+      set({ projects: json.data, projectsLoading: false });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      set({ projectsError: message, projectsLoading: false });
+    }
+  },
+
+  createProject: async ({ name, description }) => {
+    const res = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description }),
+    });
+    const json = (await res.json()) as ProjectApiResponse;
+    if (!res.ok || !json.success || !json.data) return null;
+    set((s) => ({ projects: [json.data!, ...s.projects] }));
+    return json.data;
+  },
+
+  deleteProject: async (id) => {
+    const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+    if (!res.ok) return false;
+    set((s) => ({ projects: s.projects.filter((p) => p.id !== id) }));
+    return true;
+  },
+
+  fetchPcbState: async (projectId) => {
+    const res = await fetch(`/api/projects/${projectId}/pcb-state`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const json = (await res.json()) as PcbStateApiResponse;
+    if (json.success && json.data) {
+      set((s) => ({
         pcbStateByProject: {
-          ...state.pcbStateByProject,
-          [projectId]: {
-            ...existing,
-            ...rest,
-            ...(pcb_status ? { status: pcb_status } : {}),
-          },
+          ...s.pcbStateByProject,
+          [projectId]: json.data!.pcb_state ?? null,
         },
-      };
-    }),
+      }));
+    }
+  },
+
+  setPcbState: (projectId, state) =>
+    set((s) => ({
+      pcbStateByProject: { ...s.pcbStateByProject, [projectId]: state },
+    })),
+
+  appendMessage: (projectId, msg) =>
+    set((s) => ({
+      messagesByProject: {
+        ...s.messagesByProject,
+        [projectId]: [...(s.messagesByProject[projectId] ?? []), msg],
+      },
+    })),
+
+  patchLastAssistantMessage: (projectId, chunk) => {
+    const list = get().messagesByProject[projectId] ?? [];
+    if (list.length === 0) return;
+    const last = list[list.length - 1]!;
+    if (last.role !== 'assistant') return;
+    const updated: Message = { ...last, content: last.content + chunk };
+    set((s) => ({
+      messagesByProject: {
+        ...s.messagesByProject,
+        [projectId]: [...list.slice(0, -1), updated],
+      },
+    }));
+  },
+
+  setMessages: (projectId, msgs) =>
+    set((s) => ({
+      messagesByProject: { ...s.messagesByProject, [projectId]: msgs },
+    })),
+
+  setAgentStep: (step) => set({ agentStep: step }),
+  setAgentBusy: (busy) => set({ agentBusy: busy }),
+  setSelectedStage: (projectId, stage) =>
+    set((s) => ({
+      selectedStage: { ...s.selectedStage, [projectId]: stage },
+    })),
 }));

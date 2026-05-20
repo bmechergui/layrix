@@ -249,6 +249,6 @@ export const addKicadJob = (type: string, payload: object) =>
 | `/drc` | POST | DRC check → violations JSON |
 | `/drc/fix` | POST | Application corrections DRC |
 | `/export/gerbers` | POST | Gerbers + drill + ZIP |
-| `/export/step` | POST | Modèle 3D STEP (plan Maker+) |
+| `/export/step` | POST | Modèle 3D STEP (plan Pro+) |
 | `/export/bom` | POST | BOM CSV JLCPCB-ready |
 | `/simulate` | POST | ngspice (plan Pro) |

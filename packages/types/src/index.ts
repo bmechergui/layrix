@@ -3,12 +3,13 @@
 export type PCBStatus =
   | 'INITIAL'
   | 'SCHEMA_DONE'
+  | 'ERC_CLEAN'
   | 'PLACEMENT_DONE'
   | 'ROUTING_DONE'
   | 'DRC_CLEAN'
   | 'PCB_LIVRÉ';
 
-export type Plan = 'free' | 'maker' | 'pro' | 'enterprise';
+export type Plan = 'free' | 'pro' | 'pro_max' | 'enterprise';
 
 export type FootprintSource =
   | 'kicad_official'
@@ -18,7 +19,9 @@ export type FootprintSource =
 
 export type AgentAction =
   | 'chat'
+  | 'spec'
   | 'schema'
+  | 'erc'
   | 'placement'
   | 'routing'
   | 'drc'
@@ -27,7 +30,7 @@ export type AgentAction =
   | 'view3d'
   | 'simulation';
 
-export type AgentStep = 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
+export type AgentStep = 'SPEC' | 'SCHEMA' | 'ERC' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
 
 export interface Project {
   id: string;
@@ -59,6 +62,58 @@ export interface DRCViolation {
   x_mm: number;
   y_mm: number;
   layer?: string;
+}
+
+/**
+ * Electrical Rules Check violation from kicad-cli sch erc.
+ * Severity reflects KiCad's report severity. `ref`/`pin` point to the offending
+ * symbol pin; coordinates (in mm) are in the schematic page space.
+ */
+export interface ERCViolation {
+  id: string;
+  severity: 'error' | 'warning';
+  /** Free-form description from KiCad (e.g. "Pin not connected") */
+  message: string;
+  /** ERC violation type identifier from KiCad (e.g. "pin_not_connected", "different_net_no_marker") */
+  type?: string;
+  ref?: string;
+  pin?: string;
+  x_mm?: number;
+  y_mm?: number;
+}
+
+// --- PCB Design types (high-level circuit context) ---
+
+/**
+ * High-level circuit design specification produced by the Design Agent.
+ * Generated from the user prompt before any schematic/component decisions.
+ * Provides context (type, layers, rules, constraints) that downstream agents
+ * (Schematic, Footprint, Placement, Routing, DRC) consume to make informed choices.
+ */
+export interface DesignJson {
+  /** Circuit category — e.g. "power_supply", "iot_sensor", "motor_driver". */
+  type: string;
+  /** Functional blocks identified — e.g. ["Power", "Decoupling", "MCU"]. */
+  blocks: string[];
+  /** Number of PCB copper layers — decided by the routing agent, bounded by user plan
+   *  (Free: 2 max · Pro: 4 max · Pro Max: 8 max · Enterprise: unlimited). */
+  layers: 2 | 4 | 8;
+  /** Design rules adapted to the circuit type. */
+  rules: {
+    trace_width_mm: number;
+    clearance_mm: number;
+    via_drill_mm: number;
+    min_text_mm: number;
+  };
+  /** Functional constraints derived from the prompt. */
+  constraints: {
+    output_voltage?: number;
+    max_current_A?: number;
+    /** [width_mm, height_mm] — board dimensions hint. */
+    max_board_mm?: [number, number];
+    /** Free-form additional constraints (e.g. {"power": "low", "connectivity": "wifi"}). */
+    [key: string]: number | string | [number, number] | undefined;
+  };
 }
 
 // --- PCB Schematic / Netlist types ---
@@ -103,6 +158,8 @@ export interface PCBState {
   projectId: string;
   status: PCBStatus;
   iteration: number;
+  /** High-level design context (from design step — first agent). */
+  design?: DesignJson;
   /** Schematic components list (from schema step) */
   components?: SchemaComponent[];
   /** Net names (from schema step) */
@@ -113,6 +170,9 @@ export interface PCBState {
   placement?: Record<string, unknown>;
   routing?: Record<string, unknown>;
   drcViolations?: DRCViolation[];
+  ercViolations?: ERCViolation[];
+  /** True when the ERC check was skipped (e.g. kicad-cli unavailable in dev). */
+  erc_skipped?: boolean;
   board_width_mm?: number;
   board_height_mm?: number;
   /** Supabase Storage signed URL for .kicad_sch file (Circuit-Synth output) */
@@ -123,7 +183,9 @@ export interface PCBState {
 
 export const CREDIT_COSTS: Record<AgentAction, number> = {
   chat: 0.5,
+  spec: 0.5,
   schema: 2,
+  erc: 0.5,
   placement: 2,
   routing: 3,
   drc: 1,

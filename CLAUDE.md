@@ -184,7 +184,7 @@ services/
 ## Système de crédits
 
 - Chat:0.5 | Schéma:2 | Placement:2 | Routage:3 | DRC:1 | Export:1 | Footprint IA:3 | Vue 3D:1 | Simulation:3
-- Plans : Free (5/jour) | Maker 25€/mois (100) | Pro 50€/mois (300) | Enterprise (illimité)
+- Plans : Free (5/jour, 2 couches max) | Pro 25€/mois (100, 4 couches) | Pro Max 50€/mois (300, 8 couches) | Enterprise (illimité)
 - **TOUJOURS** vérifier solde AVANT, déduire APRÈS succès
 
 ## Base de données

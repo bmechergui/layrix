@@ -11,7 +11,7 @@ version: 0.2.0
 ```
 Schéma (.kicad_sch) → KiCanvas web component → onglet Schematic
 PCB    (.kicad_pcb) → KiCanvas web component → onglet Routing
-STEP               → Three.js + occt-import-js → onglet 3D (plan Maker+)
+STEP               → Three.js + occt-import-js → onglet 3D (plan Pro+)
 ```
 
 Les fichiers `.kicad_sch` et `.kicad_pcb` sont stockés dans Supabase Storage :

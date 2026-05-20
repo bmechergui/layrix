@@ -18,4 +18,4 @@ export const MOCK_MESSAGES: Message[] = [
   { id: '6', role: 'assistant', content: '✅ **DRC clean!** Your PCB is ready.\n\n**Summary:**\n- Board: 60×40mm, 2 layers\n- Components: 14\n- Tracks: 47 · Vias: 8\n- DRC violations: 0\n\nReady to export Gerbers or order from JLCPCB?', timestamp: '10:36' },
 ];
 
-export const MOCK_CREDITS: Credits = { balance: 67.5, plan: 'maker', daily_limit: null };
+export const MOCK_CREDITS: Credits = { balance: 67.5, plan: 'pro', daily_limit: null };

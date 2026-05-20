@@ -7,11 +7,19 @@ Routes : /health, /place, /route, /drc, /drc/fix, /export/gerbers, /export/step,
 import os
 
 # Ensure KiCad symbol library path is set BEFORE importing any router that probes it.
-# Dev default: Windows KiCad 10.99 install.
+# Priority: env var → repo-local kicad-symbols/ → Windows KiCad install.
 if not os.environ.get("KICAD_SYMBOL_DIR"):
-    _default_sym_dir = r"C:\Program Files\KiCad\10.99\share\kicad\symbols"
-    if os.path.isdir(_default_sym_dir):
-        os.environ["KICAD_SYMBOL_DIR"] = _default_sym_dir
+    _candidates = [
+        os.path.join(os.path.dirname(__file__), "kicad-symbols"),
+        r"C:\Program Files\KiCad\10.99\share\kicad\symbols",
+        r"C:\Program Files\KiCad\9.0\share\kicad\symbols",
+        r"C:\Program Files\KiCad\8.0\share\kicad\symbols",
+        "/usr/share/kicad/symbols",  # Linux/Docker
+    ]
+    for _dir in _candidates:
+        if os.path.isdir(_dir):
+            os.environ["KICAD_SYMBOL_DIR"] = _dir
+            break
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -79,6 +87,22 @@ app.include_router(circuit_synth_router)
 # Placement router — /place (explicit) + /place/auto (grid algorithm, base64 I/O)
 from routers.placement import router as placement_router  # noqa: E402
 app.include_router(placement_router)
+
+# ERC router — /erc (kicad-cli sch erc with auto-fix loop)
+from routers.erc import router as erc_router  # noqa: E402
+app.include_router(erc_router)
+
+# Routing router — /route (path-based legacy) + /route/auto (base64 I/O, fallback skip)
+from routers.routing import router as routing_router  # noqa: E402
+app.include_router(routing_router)
+
+# DRC router — /drc/auto (base64 I/O, kicad-cli pcb drc with auto-fix loop)
+from routers.drc import router as drc_router  # noqa: E402
+app.include_router(drc_router)
+
+# Export router — /export/all (Gerbers + drill + CPL, b64 zip output, fallback skip)
+from routers.export import router as export_router  # noqa: E402
+app.include_router(export_router)
 
 # ============================================================
 # Routes

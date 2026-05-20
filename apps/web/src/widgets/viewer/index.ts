@@ -1,1 +1,1 @@
-export { ViewerPanel } from './ui/ViewerPanel';
+export { Stage } from './ui/Stage';

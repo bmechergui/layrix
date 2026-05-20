@@ -10,6 +10,7 @@ export function UserMenu() {
   const user = useAppStore((s) => s.user);
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -23,10 +24,18 @@ export function UserMenu() {
   }, []);
 
   const handleSignOut = async () => {
-    const supabase = createSupabaseBrowserClient();
-    await supabase.auth.signOut();
-    router.push('/login');
-    router.refresh();
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await supabase.auth.signOut();
+    } finally {
+      // Hard reload — clears Zustand store, forces middleware to re-check
+      // Supabase auth cookies server-side, and bypasses Next.js client cache.
+      // router.push() alone left stale user state in the Zustand store and
+      // sometimes failed to trigger the middleware redirect.
+      window.location.assign('/login');
+    }
   };
 
   const initials = user?.full_name
@@ -83,10 +92,11 @@ export function UserMenu() {
             <button
               type="button"
               onClick={handleSignOut}
-              className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors"
+              disabled={signingOut}
+              className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors disabled:opacity-50 disabled:cursor-wait"
             >
               <LogOut size={14} />
-              Sign out
+              {signingOut ? 'Signing out…' : 'Sign out'}
             </button>
           </div>
         </div>

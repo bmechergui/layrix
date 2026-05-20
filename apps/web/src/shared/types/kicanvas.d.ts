@@ -1,16 +1,24 @@
-// TypeScript declarations for KiCanvas web components
-// KiCanvas is loaded via CDN (no npm package available)
-// Docs: https://kicanvas.org
+import type { DetailedHTMLProps, HTMLAttributes } from 'react';
 
-declare namespace JSX {
-  interface IntrinsicElements {
-    'kicanvas-embed': React.DetailedHTMLProps<
-      React.HTMLAttributes<HTMLElement> & {
-        src?: string;
-        controls?: string;
-        theme?: 'dark' | 'light';
-      },
-      HTMLElement
-    >;
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      'kicanvas-embed': DetailedHTMLProps<
+        HTMLAttributes<HTMLElement> & {
+          src?: string;
+          controls?: 'none' | 'basic' | 'full';
+          controlslist?: string;
+          theme?: 'kicad' | 'witchhazel';
+          zoom?: string;
+        },
+        HTMLElement
+      >;
+      'kicanvas-source': DetailedHTMLProps<
+        HTMLAttributes<HTMLElement> & { src?: string },
+        HTMLElement
+      >;
+    }
   }
 }
+
+export {};

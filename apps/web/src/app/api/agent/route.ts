@@ -1,210 +1,99 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createRouteHandlerClient } from '@/shared/lib/supabase-server';
-import { runOrchestrator } from '@layrix/agents';
-import type { SSEEvent } from '@layrix/agents';
-import { CREDIT_COSTS } from '@layrix/types';
-import type { AgentAction } from '@layrix/types';
+import { encodeSse, sseHeaders } from './lib/sse';
+import { runSimulatorAgent } from './lib/simulator';
+import { runRealOrchestrator } from './lib/orchestrator-bridge';
+import { resolveAgentMode, isOrchestratorAvailable } from './lib/agent-mode';
 
-// Map tool name → AgentAction for per-step credit deduction
-const TOOL_ACTION_MAP: Record<string, AgentAction> = {
-  call_agent_schema:    'schema',
-  call_agent_placement: 'placement',
-  call_agent_routing:   'routing',
-  call_agent_drc:       'drc',
-  call_agent_export:    'export',
-  call_agent_footprint: 'footprint',
-};
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+export const maxDuration = 300; // 5 min for orchestrator runs
 
 const bodySchema = z.object({
   projectId: z.string().uuid(),
-  message: z.string().min(1).max(4000),
-  history: z
-    .array(
-      z.object({
-        role: z.enum(['user', 'assistant']),
-        content: z.string(),
-      })
-    )
-    .default([]),
+  prompt: z.string().min(1).max(4000).trim(),
 });
 
-const AGENT_CREDIT_COST = CREDIT_COSTS.chat;
-
 export async function POST(req: NextRequest) {
-  // Parse + validate body
-  let body: z.infer<typeof bodySchema>;
-  try {
-    const raw: unknown = await req.json();
-    body = bodySchema.parse(raw);
-  } catch {
-    return NextResponse.json({ success: false, error: 'Invalid request body' }, { status: 400 });
-  }
-
   const supabase = await createRouteHandlerClient();
-
-  // Auth check
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Credits check — BEFORE running the agent
-  const { data: credits, error: creditsError } = await supabase
-    .from('credits')
-    .select('balance')
-    .eq('user_id', user.id)
-    .single();
-
-  if (creditsError ?? !credits) {
-    return NextResponse.json({ success: false, error: 'Could not fetch credits' }, { status: 500 });
+  let payload: unknown;
+  try {
+    payload = await req.json();
+  } catch {
+    return NextResponse.json({ success: false, error: 'Invalid JSON' }, { status: 400 });
   }
-
-  if (credits.balance < AGENT_CREDIT_COST) {
+  const parsed = bodySchema.safeParse(payload);
+  if (!parsed.success) {
     return NextResponse.json(
-      { success: false, error: 'insufficient_credits' },
-      { status: 402 }
+      { success: false, error: parsed.error.issues.map((i) => i.message).join(', ') },
+      { status: 400 }
     );
   }
+  const { projectId, prompt } = parsed.data;
+
+  const { data: project } = await supabase
+    .from('projects')
+    .select('id, status, iteration_count, pcb_state')
+    .eq('id', projectId)
+    .single();
+  if (!project) {
+    return NextResponse.json({ success: false, error: 'Project not found' }, { status: 404 });
+  }
+
+  const { data: creditRow } = await supabase
+    .from('credits')
+    .select('balance, plan')
+    .eq('user_id', user.id)
+    .single();
+  const balance = creditRow?.balance ?? 0;
+  if (balance < 0.5) {
+    return NextResponse.json({ success: false, error: 'Insufficient credits' }, { status: 402 });
+  }
+
+  const requestedMode = resolveAgentMode();
+  const useOrchestrator = requestedMode === 'orchestrator' && isOrchestratorAvailable();
 
   const encoder = new TextEncoder();
-
-  const stream = new ReadableStream({
+  const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = (event: SSEEvent) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-      };
-
       try {
-        for await (const event of runOrchestrator({
-          userMessage: body.message,
-          projectId: body.projectId,
-          history: body.history,
-        })) {
-          send(event);
-
-          // Pre-step credit guard — check balance before each PCB tool executes
-          if (event.type === 'tool_call') {
-            const action = TOOL_ACTION_MAP[event.tool];
-            if (action) {
-              const { data: currentCredits } = await supabase
-                .from('credits')
-                .select('balance')
-                .eq('user_id', user.id)
-                .single();
-              if (!currentCredits || currentCredits.balance < CREDIT_COSTS[action]) {
-                send({ type: 'error', message: 'insufficient_credits' });
-                break;
-              }
-            }
-          }
-
-          // Persist PCB state to DB — merge with existing so circuit_json is never lost
-          // (DRC/export results don't carry circuit_json; a plain replace would wipe it)
-          if (event.type === 'pcb_state') {
-            const { data: current } = await supabase
-              .from('projects')
-              .select('pcb_state')
-              .eq('id', body.projectId)
-              .eq('user_id', user.id)
-              .single();
-
-            const stateWithUrls: Record<string, unknown> = { ...event.state };
-
-            // Upload .kicad_sch to Supabase Storage if present
-            const schContent = event.state['kicad_sch_content'] as string | undefined;
-            if (schContent) {
-              const schPath = `${user.id}/${body.projectId}/schema.kicad_sch`;
-              await supabase.storage
-                .from('kicad-files')
-                .upload(schPath, schContent, { contentType: 'text/plain', upsert: true });
-              const { data: schUrl } = await supabase.storage
-                .from('kicad-files')
-                .createSignedUrl(schPath, 3600);
-              if (schUrl) stateWithUrls['kicad_sch_url'] = schUrl.signedUrl;
-            }
-
-            // Upload .kicad_pcb to Supabase Storage if present
-            const pcbContent = event.state['kicad_pcb_content'] as string | undefined;
-            if (pcbContent) {
-              const pcbPath = `${user.id}/${body.projectId}/board.kicad_pcb`;
-              await supabase.storage
-                .from('kicad-files')
-                .upload(pcbPath, pcbContent, { contentType: 'text/plain', upsert: true });
-              const { data: pcbUrl } = await supabase.storage
-                .from('kicad-files')
-                .createSignedUrl(pcbPath, 3600);
-              if (pcbUrl) stateWithUrls['kicad_pcb_url'] = pcbUrl.signedUrl;
-            }
-
-            const merged = {
-              ...(current?.pcb_state as Record<string, unknown> ?? {}),
-              ...stateWithUrls,
-            };
-
-            // Derive project-level status from pcb_status (e.g. 'DRC_CLEAN' → projects.status)
-            const pcbStatus = event.state['pcb_status'] as string | undefined;
-            const projectUpdate: Record<string, unknown> = {
-              pcb_state: merged,
-              updated_at: new Date().toISOString(),
-            };
-            if (pcbStatus) {
-              projectUpdate['status'] = pcbStatus;
-            }
-
-            await supabase
-              .from('projects')
-              .update(projectUpdate)
-              .eq('id', body.projectId)
-              .eq('user_id', user.id);
-
-            // Re-emit the enriched state (with signed URLs) so the frontend can update KiCanvas
-            if (stateWithUrls['kicad_sch_url'] ?? stateWithUrls['kicad_pcb_url']) {
-              send({ type: 'pcb_state', projectId: body.projectId, state: stateWithUrls });
-            }
-          }
-
-          // Deduct credits per PCB pipeline step (schema, placement, routing, drc, export)
-          if (event.type === 'tool_result') {
-            const action = TOOL_ACTION_MAP[event.tool];
-            if (action) {
-              await supabase.rpc('deduct_credits', {
-                p_user_id: user.id,
-                p_amount: CREDIT_COSTS[action],
-                p_action: action,
-                p_project_id: body.projectId,
-              });
-            }
-          }
-
-          // Deduct chat credit on completion
-          if (event.type === 'done') {
-            await supabase.rpc('deduct_credits', {
-              p_user_id: user.id,
-              p_amount: AGENT_CREDIT_COST,
-              p_action: 'chat',
-              p_project_id: body.projectId,
-            });
-          }
+        if (useOrchestrator) {
+          await runRealOrchestrator({
+            controller,
+            encoder,
+            supabase,
+            userId: user.id,
+            projectId,
+            prompt,
+            iterationStart: project.iteration_count ?? 0,
+            balanceStart: balance,
+          });
+        } else {
+          await runSimulatorAgent({
+            controller,
+            encoder,
+            supabase,
+            userId: user.id,
+            projectId,
+            prompt,
+            iterationStart: project.iteration_count ?? 0,
+            balanceStart: balance,
+          });
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Agent error';
-        send({ type: 'error', message });
+        controller.enqueue(encoder.encode(encodeSse({ type: 'error', message })));
       } finally {
-        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
         controller.close();
       }
     },
   });
 
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    },
-  });
+  return new Response(stream, { headers: sseHeaders() });
 }

@@ -1,1 +1,1 @@
-export type { Project, PCBStatus } from './model';
+export * from './model/types';

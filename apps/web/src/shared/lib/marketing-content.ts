@@ -109,7 +109,7 @@ export const PRICING_PLANS: PricingPlan[] = [
     popular: false,
     credits: '5 credits / day',
     layers: '2 layers max',
-    features: ['2D viewer', 'Basic footprint search', 'TSCircuit engine', 'Community footprints'],
+    features: ['2D viewer', 'Basic footprint search', 'Circuit-Synth engine', 'Community footprints'],
     cta: 'Get started',
     ctaVariant: 'secondary',
   },

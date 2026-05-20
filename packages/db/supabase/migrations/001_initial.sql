@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS credits (
   user_id    uuid REFERENCES auth.users UNIQUE NOT NULL,
   balance    numeric(10, 2) DEFAULT 5,
   plan       text DEFAULT 'free'
-    CHECK (plan IN ('free','maker','pro','enterprise')),
+    CHECK (plan IN ('free','pro','pro_max','enterprise')),
   updated_at timestamptz DEFAULT now()
 );
 

@@ -1,27 +1,36 @@
 import { Badge } from '@/shared/ui/badge';
 import type { PCBStatus } from '@layrix/types';
 
-const STATUS_CONFIG: Record<PCBStatus, { label: string; variant: 'default' | 'secondary' | 'success' | 'warning' | 'destructive' | 'copper' | 'outline'; pulse?: boolean }> = {
-  INITIAL: { label: 'New', variant: 'secondary' },
-  SCHEMA_DONE: { label: 'Schema', variant: 'default', pulse: true },
-  PLACEMENT_DONE: { label: 'Placed', variant: 'default', pulse: true },
-  ROUTING_DONE: { label: 'Routed', variant: 'warning' },
-  DRC_CLEAN: { label: 'Ready', variant: 'success' },
-  PCB_LIVRÉ: { label: 'Ordered', variant: 'copper' },
+const STATUS_LABEL: Record<PCBStatus, string> = {
+  INITIAL: 'Draft',
+  SCHEMA_DONE: 'Schema',
+  ERC_CLEAN: 'ERC clean',
+  PLACEMENT_DONE: 'Placed',
+  ROUTING_DONE: 'Routed',
+  DRC_CLEAN: 'DRC clean',
+  PCB_LIVRÉ: 'Delivered',
+};
+
+const STATUS_VARIANT: Record<PCBStatus, 'secondary' | 'default' | 'success' | 'copper' | 'warning'> = {
+  INITIAL: 'secondary',
+  SCHEMA_DONE: 'default',
+  ERC_CLEAN: 'default',
+  PLACEMENT_DONE: 'default',
+  ROUTING_DONE: 'copper',
+  DRC_CLEAN: 'success',
+  PCB_LIVRÉ: 'success',
 };
 
 interface StatusBadgeProps {
   status: PCBStatus;
+  className?: string;
 }
 
-export function StatusBadge({ status }: StatusBadgeProps) {
-  const config = STATUS_CONFIG[status] ?? { label: status, variant: 'secondary' as const };
+export function StatusBadge({ status, className }: StatusBadgeProps) {
   return (
-    <Badge variant={config.variant} className="text-xs shrink-0">
-      {config.pulse && (
-        <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1.5 opacity-70" />
-      )}
-      {config.label}
+    <Badge variant={STATUS_VARIANT[status]} className={className}>
+      <span className="inline-block w-1.5 h-1.5 rounded-full bg-current mr-1.5" />
+      {STATUS_LABEL[status]}
     </Badge>
   );
 }
