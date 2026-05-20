@@ -58,7 +58,7 @@ interface ThemeColors {
   controlHover: string;
 }
 
-const THEMES: Record<'cyberpunk' | 'kicad' | 'retro', ThemeColors> = {
+const THEMES: Record<'cyberpunk' | 'retro', ThemeColors> = {
   cyberpunk: {
     name: 'Cyberpunk Neon',
     bg: '#050508',
@@ -84,32 +84,6 @@ const THEMES: Record<'cyberpunk' | 'kicad' | 'retro', ThemeColors> = {
     controlBorder: 'border-[#1f202e]',
     controlText: 'text-[#8a8a9a] hover:text-[#00c2ff]',
     controlHover: 'hover:bg-[#1a1a26]',
-  },
-  kicad: {
-    name: 'KiCad Dark',
-    bg: '#10141d',
-    gridColor: 'rgba(255, 255, 255, 0.04)',
-    gridOpacity: 0.8,
-    nodeBg: '#141822',
-    nodeBorder: '#232b3c',
-    icBorder: '#3b82f6',
-    passiveBorder: '#eab308',
-    connBorder: '#10b981',
-    headerIC: 'linear-gradient(180deg, #18233c 0%, #141822 100%)',
-    headerPassive: 'linear-gradient(180deg, #24221c 0%, #141822 100%)',
-    headerConnector: 'linear-gradient(180deg, #162a22 0%, #141822 100%)',
-    textMuted: '#56667d',
-    textPrimary: '#a5b4fc',
-    textNet: '#718096',
-    textRefIC: '#60a5fa',
-    textRefPassive: '#facc15',
-    textRefConnector: '#34d399',
-    wireOpacity: 0.8,
-    wireGlow: '#3b82f6',
-    controlBg: 'bg-[#151a26]/95',
-    controlBorder: 'border-[#232b3c]',
-    controlText: 'text-[#718096] hover:text-[#60a5fa]',
-    controlHover: 'hover:bg-[#1c2333]',
   },
   retro: {
     name: 'Retro Paper',
@@ -241,7 +215,7 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
   const [hoveredNet, setHoveredNet] = useState<string | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [theme, setTheme] = useState<'cyberpunk' | 'kicad' | 'retro'>('cyberpunk');
+  const [theme, setTheme] = useState<'cyberpunk' | 'retro'>('cyberpunk');
   const [tooltip, setTooltip] = useState<{ x: number; y: number; content: string } | null>(null);
 
   // References
@@ -446,17 +420,17 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
           <div className="flex items-center gap-1 border rounded-lg p-0.5 bg-black/10"
             style={{ borderColor: theme === 'retro' ? '#d3cfc5' : '#1f202e' }}
           >
-            {(['cyberpunk', 'kicad', 'retro'] as const).map((t) => (
+            {(['cyberpunk', 'retro'] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTheme(t)}
                 className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-all ${
-                  theme === t 
-                    ? theme === 'retro' ? 'bg-[#c3bfb5] text-white' : 'bg-primary/20 text-primary border border-primary/20' 
+                  theme === t
+                    ? theme === 'retro' ? 'bg-[#c3bfb5] text-white' : 'bg-primary/20 text-primary border border-primary/20'
                     : 'text-foreground/40 hover:text-foreground/80'
                 }`}
               >
-                {t === 'cyberpunk' ? 'Neon' : t === 'kicad' ? 'KiCad' : 'Paper'}
+                {t === 'cyberpunk' ? 'Neon' : 'Paper'}
               </button>
             ))}
           </div>
