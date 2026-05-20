@@ -366,17 +366,24 @@ export async function executeToolStub(
         if (!(err instanceof ErcServiceUnavailableError)) {
           log.warn({ err }, 'ERC service threw unexpected error — falling back');
         }
-        const fallback = runErcFallback();
+        // Pass cached schema so the TS ERC can validate connectivity
+        const fallback = runErcFallback(cached?.schema);
+        const errorCount = fallback.violations.filter(v => v.severity === 'error').length;
+        const newStatus: 'ERC_CLEAN' | 'SCHEMA_DONE' = fallback.ercClean ? 'ERC_CLEAN' : 'SCHEMA_DONE';
         return {
           status: 'success',
-          pcb_status: 'ERC_CLEAN',
+          pcb_status: newStatus,
           ercViolations: fallback.violations,
           erc_skipped: fallback.skipped,
           fixed_count: fallback.fixedCount,
           kicad_sch_content: schContent,
           engine: fallback.engine,
           warning: fallback.warning,
-          note: `ERC sauté (fallback) — ${fallback.warning}`,
+          note: fallback.skipped
+            ? `ERC sauté — kicad-cli indisponible, pas de schéma en cache.`
+            : fallback.ercClean
+            ? `ERC TypeScript OK — 0 erreur (${fallback.violations.length} warnings). kicad-cli indisponible pour validation complète.`
+            : `ERC TypeScript — ${errorCount} erreur(s) détectée(s). Corriger avant placement.`,
         };
       }
     }
