@@ -1,7 +1,7 @@
 ---
 name: layrix-prompt-improver
-version: 2.0.0
-description: Améliore tout prompt avant exécution — détecte phase active, ajoute contexte Layrix Phase 2, détecte le skill à invoquer. Mettre à jour quand la phase change.
+version: 3.0.0
+description: Améliore tout prompt avant exécution — détecte phase active, ajoute contexte Layrix Phase 4, détecte le skill à invoquer. Mettre à jour quand la phase change.
 ---
 
 ## Quand invoquer
@@ -10,21 +10,26 @@ description: Améliore tout prompt avant exécution — détecte phase active, a
 
 ---
 
-## Phase active : Phase 2 — Dashboard + Auth + Chat Agent MVP
+## Phase active : Phase 4 — Agent Footprint + Pipeline KiCad complet
 
 > Pour les autres phases, lire `PLAN.md`. Mettre à jour ce skill quand la phase change.
 
-**Focus :** Supabase Auth, chat agent Claude SDK, streaming SSE, viewer KiCanvas, crédits, Circuit-Synth
-**Fichiers :** `apps/web/src/`, `packages/agents/src/orchestrator.ts`, `apps/api/app/api/`
+**Phases complétées :** Phase 0 ✓ · Phase 1 ✓ · Phase 2 ✓ · Phase 3 ✓ · Phase 4.1 ✓
+
+**Focus :** footprint cascade (KiCad → SnapMagic → LCSC → AI Haiku), pcbnew placement/routing réels, DRC natif, export Gerbers/BOM/STEP, viewer KiCanvas dual-mode, JLCPCB commande
+**Fichiers :** `packages/agents/src/engines/`, `services/kicad/routers/`, `apps/web/src/widgets/viewer/`
 **Contraintes à toujours mentionner :**
-- Skill `layrix-pcb-agent` pour la boucle agentique
+- Skill `layrix-footprint` : cascade 4 étapes — s'arrêter à la 1ère réussite
+- Skill `layrix-kicad-service` : FastAPI pcbnew (`/place/auto`, `/route`, `/drc`, `/export`)
+- Skill `layrix-drc` : boucle DRC max 3×, corrections pcbnew automatiques
 - Skill `layrix-credits` : vérifier solde AVANT, déduire APRÈS succès
-- Skill `layrix-viewer` pour KiCanvas (`.kicad_sch` / `.kicad_pcb` depuis Supabase Storage signed URL)
+- Skill `layrix-viewer` : KiCanvas dual-mode (native `.kicad_pcb` / spec SVG custom)
 - Moteur PCB : **Circuit-Synth** (Python) — JAMAIS TSCircuit en nouveau code
+- JLCPCB : confirmation **"OUI JE CONFIRME"** obligatoire — jamais automatique
 - Streaming SSE : `Content-Type: text/event-stream`, event `[DONE]` en fin
-- Middleware auth déjà en place : `apps/web/src/middleware.ts` → `/dashboard/*`
+- Orchestrateur = Sonnet 4.6, agents spécialisés = Haiku 4.5, max 15 itérations
+- Middleware auth : `apps/web/src/middleware.ts` → `/dashboard/*`
 - Zustand store : `apps/web/src/shared/store/app-store.ts`
-- FSD : features → `apps/web/src/features/`, widgets → `apps/web/src/widgets/`, entities → `apps/web/src/entities/`
 
 ---
 
@@ -32,7 +37,7 @@ description: Améliore tout prompt avant exécution — détecte phase active, a
 
 ```
 1. prompt-master-layrix  → optimise pour Claude Code (9D matrix, XML, signal words)
-2. layrix-prompt-improver → ajoute contexte Phase 2 + détecte skill
+2. layrix-prompt-improver → ajoute contexte Phase 4 + détecte skill
    ↓
 prompt final XML + skill sélectionné
 ```
@@ -43,8 +48,10 @@ prompt final XML + skill sélectionné
 
 ### Étape 1 — Détecter la phase
 
-Mots-clés Phase 2 : `dashboard`, `auth`, `login`, `chat`, `agent`, `streaming`, `viewer`, `crédits`, `SSE`, `Supabase`
-Afficher : `[Phase 2 — Dashboard + Auth + Chat Agent MVP]`
+Mots-clés Phase 4 : `footprint`, `kicad_mod`, `snapmagic`, `lcsc`, `gerber`, `bom`, `step`, `jlcpcb`, `drc`, `commande`, `placement réel`, `pcbnew`, `freerouting`
+Mots-clés Phase 3 (encore actifs) : `placement`, `routage`, `drc`, `export`, `pcbnew`, `docker`
+Mots-clés Phase 2 (toujours valides) : `dashboard`, `auth`, `chat`, `viewer`, `crédits`, `SSE`
+Afficher : `[Phase 4 — Agent Footprint + Pipeline KiCad complet]`
 
 ### Étape 2 — Analyser
 
@@ -56,7 +63,7 @@ Afficher : `[Phase 2 — Dashboard + Auth + Chat Agent MVP]`
 ### Étape 3 — Réécrire en XML
 
 ```
-[Phase 2 — Dashboard + Auth + Chat Agent MVP]
+[Phase 4 — Agent Footprint + Pipeline KiCad complet]
 [Skill détecté : layrix-xxx ou /skill-name]
 
 📝 Prompt reçu :
@@ -64,7 +71,7 @@ Afficher : `[Phase 2 — Dashboard + Auth + Chat Agent MVP]`
 
 ✨ Prompt amélioré :
 <context>
-Phase 2. Fichier : [chemin exact]. État actuel : [ce que fait le fichier maintenant].
+Phase 4. Fichier : [chemin exact]. État actuel : [ce que fait le fichier maintenant].
 </context>
 <task>
 [Verbe fort] [opération précise].

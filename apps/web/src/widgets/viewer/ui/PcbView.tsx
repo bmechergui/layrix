@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef, useLayoutEffect, useCallback } from 'react';
 import { Layers, ZoomIn, ZoomOut, Maximize2, List, LayoutGrid } from 'lucide-react';
 import type { PCBState } from '@layrix/types';
 import { Button } from '@/shared/ui/button';
@@ -295,6 +295,7 @@ export function PcbView({ state, title = 'PCB Layout', showRouting = false }: Pc
   const [zoom, setZoom]   = useState(1);
   const [layer, setLayer] = useState<LayerTab>('both');
   const [pcbTab, setPcbTab] = useState<PcbTab>('canvas');
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
 
   const nativeUrl = state.kicad_pcb_url;
   const [mode, setMode] = useState<ViewMode>(nativeUrl ? 'native' : 'spec');
@@ -302,6 +303,20 @@ export function PcbView({ state, title = 'PCB Layout', showRouting = false }: Pc
 
   const widthMm  = state.board_width_mm  ?? 50;
   const heightMm = state.board_height_mm ?? 40;
+
+  // Auto-fit: compute zoom so board fills ~85% of the canvas container on mount.
+  const computeFitZoom = useCallback(() => {
+    const el = canvasContainerRef.current;
+    if (!el) return;
+    const svgW = widthMm  * PX_PER_MM + 44 * 2;
+    const svgH = heightMm * PX_PER_MM + 44 * 2;
+    const fit = Math.min((el.clientWidth * 0.85) / svgW, (el.clientHeight * 0.85) / svgH);
+    setZoom(Math.max(0.4, Math.min(3, fit)));
+  }, [widthMm, heightMm]);
+
+  useLayoutEffect(() => {
+    computeFitZoom();
+  }, [computeFitZoom]);
   const components  = useMemo(() => state.components  ?? [], [state.components]);
   const connections = useMemo(() => state.connections ?? [], [state.connections]);
 
@@ -355,7 +370,7 @@ export function PcbView({ state, title = 'PCB Layout', showRouting = false }: Pc
                   onClick={() => setZoom((z) => Math.min(3, z + 0.2))}>
                   <ZoomIn size={12} />
                 </Button>
-                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setZoom(1)}>
+                <Button size="icon" variant="ghost" className="h-7 w-7" title="Fit to screen" onClick={computeFitZoom}>
                   <Maximize2 size={12} />
                 </Button>
               </div>
@@ -426,7 +441,7 @@ export function PcbView({ state, title = 'PCB Layout', showRouting = false }: Pc
 
           <div className="flex-1 min-h-0 overflow-hidden">
             {pcbTab === 'canvas' && (
-              <div className="h-full overflow-auto flex items-center justify-center p-4 bg-[#060606]">
+              <div ref={canvasContainerRef} className="h-full overflow-auto flex items-center justify-center p-4 bg-[#060606]">
                 <BoardCanvas
                   placed={placed}
                   widthMm={widthMm}
