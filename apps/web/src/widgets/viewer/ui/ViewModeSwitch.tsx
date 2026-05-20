@@ -14,7 +14,7 @@ interface ViewModeSwitchProps {
 export function ViewModeSwitch({ mode, onChange, nativeDisabled }: ViewModeSwitchProps) {
   return (
     <div className="flex items-center gap-0.5 bg-[#111111] rounded-lg p-0.5 border border-[#1e1e1e]">
-      {/* Native KiCad button */}
+      {/* Native button */}
       <button
         type="button"
         onClick={() => !nativeDisabled && onChange('native')}
@@ -33,22 +33,14 @@ export function ViewModeSwitch({ mode, onChange, nativeDisabled }: ViewModeSwitc
           ? <Lock size={9} className="shrink-0" />
           : <Cpu size={10} className="shrink-0" />
         }
-        <span>KiCad</span>
-        {!nativeDisabled && (
-          <span className={cn(
-            'text-[8px] font-mono px-1 py-px rounded leading-none',
-            mode === 'native' ? 'bg-[#1d5fa0]/30 text-[#5baeff]' : 'bg-[#1a1a1a] text-[#3d3d3d]'
-          )}>
-            native
-          </span>
-        )}
+        <span>Native</span>
       </button>
 
-      {/* Spec button */}
+      {/* Layrix spec button */}
       <button
         type="button"
         onClick={() => onChange('spec')}
-        title="Logical view — netlist, components, diagram"
+        title="Layrix view — netlist, components, diagram"
         className={cn(
           'flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[10px] font-medium transition-all duration-150',
           mode === 'spec'
@@ -57,7 +49,7 @@ export function ViewModeSwitch({ mode, onChange, nativeDisabled }: ViewModeSwitc
         )}
       >
         <LayoutList size={10} className="shrink-0" />
-        <span>Logical</span>
+        <span>Layrix</span>
       </button>
     </div>
   );
