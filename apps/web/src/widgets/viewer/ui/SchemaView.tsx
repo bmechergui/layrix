@@ -153,7 +153,7 @@ function BomTab({ components }: { components: SchemaComponent[] }) {
             {/* Table */}
             <table className="w-full text-xs">
               <thead>
-                <tr className="text-left text-[9px] uppercase tracking-widest text-[#2e2e2e] border-b border-[#141414]">
+                <tr className="text-left text-[9px] uppercase tracking-widest text-[#555] border-b border-[#1e1e1e]">
                   <th className="px-4 py-2 font-medium w-16">Ref</th>
                   <th className="px-4 py-2 font-medium">Value</th>
                   <th className="px-4 py-2 font-medium hidden sm:table-cell">Footprint</th>
@@ -161,9 +161,9 @@ function BomTab({ components }: { components: SchemaComponent[] }) {
                   <th className="px-4 py-2 font-medium w-24">LCSC</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#0f0f0f]">
+              <tbody className="divide-y divide-[#1a1a1a]">
                 {items.map((c) => (
-                  <tr key={c.ref} className="hover:bg-[#111] transition-colors group">
+                  <tr key={c.ref} className="hover:bg-[#141414] transition-colors group">
                     <td className="px-4 py-2">
                       <span
                         className="font-mono font-bold text-[11px]"
@@ -172,11 +172,11 @@ function BomTab({ components }: { components: SchemaComponent[] }) {
                         {c.ref}
                       </span>
                     </td>
-                    <td className="px-4 py-2 text-foreground/80">{c.value}</td>
-                    <td className="px-4 py-2 text-[#4a4a4a] font-mono text-[10px] hidden sm:table-cell truncate max-w-[140px]">
+                    <td className="px-4 py-2 text-foreground/90 font-medium">{c.value}</td>
+                    <td className="px-4 py-2 text-[#777] font-mono text-[10px] hidden sm:table-cell truncate max-w-[140px]">
                       {c.footprint}
                     </td>
-                    <td className="px-4 py-2 text-[#3d3d3d] font-mono text-[10px] hidden md:table-cell">
+                    <td className="px-4 py-2 text-[#666] font-mono text-[10px] hidden md:table-cell">
                       {c.symbol ?? '—'}
                     </td>
                     <td className="px-4 py-2">
@@ -191,7 +191,7 @@ function BomTab({ components }: { components: SchemaComponent[] }) {
                           <ExternalLink size={8} />
                         </a>
                       ) : (
-                        <span className="text-[9px] text-[#2a2a2a] font-mono">—</span>
+                        <span className="text-[9px] text-[#444] font-mono">—</span>
                       )}
                     </td>
                   </tr>
@@ -221,7 +221,7 @@ function NetsTab({ nets, connections }: { nets: string[]; connections: NonNullab
 
   if (nets.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-xs text-[#3d3d3d] font-mono">
+      <div className="flex items-center justify-center h-full text-xs text-[#555] font-mono">
         No nets
       </div>
     );
@@ -231,14 +231,14 @@ function NetsTab({ nets, connections }: { nets: string[]; connections: NonNullab
     <div className="h-full overflow-auto">
       <table className="w-full text-xs">
         <thead className="sticky top-0 z-10">
-          <tr className="text-left text-[9px] uppercase tracking-widest text-[#2e2e2e] bg-[#0a0a0a] border-b border-[#141414]">
+          <tr className="text-left text-[9px] uppercase tracking-widest text-[#555] bg-[#0a0a0a] border-b border-[#1e1e1e]">
             <th className="px-4 py-2.5 font-medium w-8">#</th>
             <th className="px-4 py-2.5 font-medium">Net</th>
             <th className="px-4 py-2.5 font-medium w-32 hidden sm:table-cell">Connections</th>
             <th className="px-4 py-2.5 font-medium hidden md:table-cell">Pins</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-[#0e0e0e]">
+        <tbody className="divide-y divide-[#1a1a1a]">
           {sorted.map((name, idx) => {
             const conn = connections.find((c) => c.name === name);
             const pinCount = conn?.pins.length ?? 0;
@@ -248,9 +248,9 @@ function NetsTab({ nets, connections }: { nets: string[]; connections: NonNullab
             const pct = Math.round((pinCount / maxPins) * 100);
 
             return (
-              <tr key={name} className="hover:bg-[#0f0f0f] transition-colors">
+              <tr key={name} className="hover:bg-[#141414] transition-colors">
                 <td className="px-4 py-2.5">
-                  <span className="text-[9px] font-mono text-[#2a2a2a]">{idx + 1}</span>
+                  <span className="text-[9px] font-mono text-[#555]">{idx + 1}</span>
                 </td>
                 <td className="px-4 py-2.5">
                   <div className="flex items-center gap-2">
@@ -260,7 +260,7 @@ function NetsTab({ nets, connections }: { nets: string[]; connections: NonNullab
                     />
                     <span
                       className="font-mono font-semibold text-[11px]"
-                      style={{ color: isGnd ? '#525252' : isPwr ? '#D4820A' : color }}
+                      style={{ color: isGnd ? '#888' : isPwr ? '#D4820A' : color }}
                     >
                       {name}
                     </span>
@@ -268,9 +268,9 @@ function NetsTab({ nets, connections }: { nets: string[]; connections: NonNullab
                       <span
                         className="text-[8px] font-mono px-1 py-px rounded leading-none"
                         style={{
-                          background: isGnd ? '#1a1a1a' : '#1a1000',
-                          color: isGnd ? '#525252' : '#D4820A',
-                          border: `1px solid ${isGnd ? '#2a2a2a' : '#D4820A30'}`,
+                          background: isGnd ? '#222' : '#1a1000',
+                          color: isGnd ? '#888' : '#D4820A',
+                          border: `1px solid ${isGnd ? '#3a3a3a' : '#D4820A40'}`,
                         }}
                       >
                         {isGnd ? 'GND' : 'PWR'}
@@ -280,18 +280,17 @@ function NetsTab({ nets, connections }: { nets: string[]; connections: NonNullab
                 </td>
                 <td className="px-4 py-2.5 hidden sm:table-cell">
                   <div className="flex items-center gap-2">
-                    {/* Visual bar */}
-                    <div className="w-20 h-1.5 rounded-full bg-[#141414] overflow-hidden">
+                    <div className="w-20 h-1.5 rounded-full bg-[#1e1e1e] overflow-hidden">
                       <div
                         className="h-full rounded-full"
-                        style={{ width: `${pct}%`, background: color, opacity: 0.7 }}
+                        style={{ width: `${pct}%`, background: color, opacity: 0.8 }}
                       />
                     </div>
-                    <span className="text-[10px] font-mono text-[#3d3d3d]">{pinCount}</span>
+                    <span className="text-[10px] font-mono text-[#666]">{pinCount}</span>
                   </div>
                 </td>
                 <td className="px-4 py-2.5 hidden md:table-cell">
-                  <span className="text-[10px] font-mono text-[#2e2e2e] break-all leading-relaxed">
+                  <span className="text-[10px] font-mono text-[#555] break-all leading-relaxed">
                     {conn?.pins.map((p) => `${p.ref}.${p.pin}`).join(' · ') ?? '—'}
                   </span>
                 </td>
