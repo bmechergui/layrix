@@ -78,7 +78,7 @@ export function DrcView({ state }: { state: PCBState }) {
     : `${errors.length} error${errors.length !== 1 ? 's' : ''} · ${warnings.length} warning${warnings.length !== 1 ? 's' : ''}`;
 
   return (
-    <div className="flex flex-col h-full bg-[#080808]">
+    <div className="flex flex-col h-full bg-[#080808] overflow-hidden">
       <StageHeader
         icon={<ShieldCheck size={12} />}
         title="DRC — Design Rules Check"

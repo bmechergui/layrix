@@ -1,21 +1,123 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Layers, RefreshCw, ZoomIn, ZoomOut, Move } from 'lucide-react';
+import { Layers, RefreshCw, ZoomIn, ZoomOut, Move, Hand, MousePointer, Maximize } from 'lucide-react';
 import { loadKiCanvas } from '../lib/kicanvas-loader';
 
 interface KiCanvasViewerProps {
   src: string;
   controls?: 'none' | 'basic' | 'full';
+  zoom?: string;
 }
 
-export function KiCanvasViewer({ src, controls = 'basic' }: KiCanvasViewerProps) {
+function getScrollParent(node: HTMLElement | null): HTMLElement | null {
+  if (node == null) return null;
+  if (node.scrollHeight > node.clientHeight) {
+    const overflowY = window.getComputedStyle(node).overflowY;
+    if (overflowY === 'auto' || overflowY === 'scroll') {
+      return node;
+    }
+  }
+  return getScrollParent(node.parentElement);
+}
+
+function dispatchSimulatedPointerEvent(
+  target: EventTarget,
+  type: string,
+  original: PointerEvent,
+  override: { button?: number; buttons?: number }
+) {
+  const init: PointerEventInit = {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    pointerId: original.pointerId,
+    width: original.width,
+    height: original.height,
+    pressure: original.pressure,
+    tangentialPressure: original.tangentialPressure,
+    tiltX: original.tiltX,
+    tiltY: original.tiltY,
+    twist: original.twist,
+    pointerType: original.pointerType,
+    isPrimary: original.isPrimary,
+    screenX: original.screenX,
+    screenY: original.screenY,
+    clientX: original.clientX,
+    clientY: original.clientY,
+    ctrlKey: original.ctrlKey,
+    shiftKey: original.shiftKey,
+    altKey: original.altKey,
+    metaKey: original.metaKey,
+    button: override.button !== undefined ? override.button : original.button,
+    buttons: override.buttons !== undefined ? override.buttons : original.buttons,
+  };
+
+  const simPointerEvent = new PointerEvent(type, init);
+  target.dispatchEvent(simPointerEvent);
+
+  let mouseType = '';
+  if (type === 'pointerdown') mouseType = 'mousedown';
+  else if (type === 'pointermove') mouseType = 'mousemove';
+  else if (type === 'pointerup') mouseType = 'mouseup';
+
+  if (mouseType) {
+    const simMouseEvent = new MouseEvent(mouseType, init);
+    target.dispatchEvent(simMouseEvent);
+  }
+}
+
+export function KiCanvasViewer({ src, controls = 'basic', zoom = 'objects' }: KiCanvasViewerProps) {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showHints, setShowHints] = useState(false);
+  const [isPanMode, setIsPanMode] = useState(false);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountRef = useRef(0);
   const embedRef = useRef<HTMLElement | null>(null);
+
+  const handleZoomIn = useCallback(() => {
+    const el = embedRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const event = new WheelEvent('wheel', {
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+      deltaY: -120,
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    });
+    el.dispatchEvent(event);
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    const el = embedRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const event = new WheelEvent('wheel', {
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+      deltaY: 120,
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    });
+    el.dispatchEvent(event);
+  }, []);
+
+  const handleZoomToFit = useCallback(() => {
+    const el = embedRef.current;
+    if (!el) return;
+    const canvas = el.shadowRoot?.querySelector('canvas');
+    const evt = new KeyboardEvent('keydown', { key: 'Home', code: 'Home', bubbles: true, composed: true });
+    if (canvas) canvas.dispatchEvent(evt);
+    else window.dispatchEvent(evt);
+    el.removeAttribute('zoom');
+    setTimeout(() => el.setAttribute('zoom', 'objects'), 10);
+  }, []);
 
   const startHints = useCallback((cancelled: () => boolean) => {
     hintTimerRef.current = setTimeout(() => {
@@ -80,6 +182,203 @@ export function KiCanvasViewer({ src, controls = 'basic' }: KiCanvasViewerProps)
     return () => el.removeEventListener('error', handleError);
   }, [status, src]);
 
+  // Synchronize custom elements attributes manually because React 18
+  // does not always map JSX properties to DOM attributes for custom elements.
+  useEffect(() => {
+    const el = embedRef.current;
+    if (!el || status !== 'ready') return;
+
+    el.setAttribute('zoom', zoom);
+  }, [zoom, status]);
+
+  // Zoom & Pan, custom cursors, and zoom=objects re-application
+  useEffect(() => {
+    const el = embedRef.current;
+    if (!el || status !== 'ready') return;
+
+    // Set cursor on host element
+    el.style.cursor = isPanMode ? 'grab' : 'default';
+
+    // 1. Inject cursor styles into shadowRoot to inherit host cursor
+    const injectCursorStyles = () => {
+      const shadow = el.shadowRoot;
+      if (shadow) {
+        if (!shadow.querySelector('#kicanvas-custom-cursor-style')) {
+          const style = document.createElement('style');
+          style.id = 'kicanvas-custom-cursor-style';
+          style.textContent = `
+            canvas, div, .canvas-container, :host {
+              cursor: inherit !important;
+            }
+          `;
+          shadow.appendChild(style);
+        }
+      }
+    };
+
+    injectCursorStyles();
+    const observer = new MutationObserver(() => injectCursorStyles());
+    observer.observe(el, { childList: true, subtree: true });
+
+    // 2. Wheel Zoom Event Handler (Ctrl+Wheel to zoom, regular scroll to scroll page)
+    const handleWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) {
+        e.preventDefault(); // Stop browser page zoom
+      } else {
+        e.stopPropagation(); // Stop KiCanvas zoom
+        const parent = getScrollParent(el);
+        if (parent) {
+          parent.scrollBy({ left: e.deltaX, top: e.deltaY, behavior: 'auto' });
+        } else {
+          window.scrollBy({ left: e.deltaX, top: e.deltaY, behavior: 'auto' });
+        }
+      }
+    };
+
+    el.addEventListener('wheel', handleWheel, { capture: true, passive: false });
+
+    // 3. Pointer event mapping (Left drag -> Middle click pan)
+    const target = el.shadowRoot || el;
+    const getInnerTarget = () => el.shadowRoot?.querySelector('canvas') || target;
+    let isPending = false;
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let pendingEvent: PointerEvent | null = null;
+    let isSimulating = false;
+
+    const handlePointerDown = (e: PointerEvent) => {
+      if (!isPanMode || isSimulating || e.button !== 0) return;
+      isPending = true;
+      isDragging = false;
+      startX = e.clientX;
+      startY = e.clientY;
+      pendingEvent = e;
+      // Do not stopPropagation here. We must let the first click reach the overlay so it activates!
+    };
+
+    const handlePointerMove = (e: PointerEvent) => {
+      if (isSimulating) return;
+      if (!isPanMode && !isDragging && !isPending) return;
+      if (isPending && pendingEvent) {
+        const dist = Math.hypot(e.clientX - startX, e.clientY - startY);
+        if (dist > 3) {
+          isDragging = true;
+          isPending = false;
+          el.style.cursor = 'grabbing';
+
+          isSimulating = true;
+          try {
+            const innerTarget = getInnerTarget();
+            dispatchSimulatedPointerEvent(innerTarget, 'pointerdown', pendingEvent, {
+              button: 1,
+              buttons: 4,
+            });
+            dispatchSimulatedPointerEvent(innerTarget, 'pointermove', e, {
+              button: -1,
+              buttons: 4,
+            });
+          } finally {
+            isSimulating = false;
+          }
+
+          e.stopPropagation();
+        } else {
+          e.stopPropagation();
+        }
+      } else if (isDragging) {
+        isSimulating = true;
+        try {
+          dispatchSimulatedPointerEvent(getInnerTarget(), 'pointermove', e, {
+            button: -1,
+            buttons: 4,
+          });
+        } finally {
+          isSimulating = false;
+        }
+        e.stopPropagation();
+      }
+    };
+
+    const handlePointerUp = (e: PointerEvent) => {
+      if (isSimulating) return;
+      if (!isPanMode && !isDragging && !isPending) return;
+      if (isPending && pendingEvent) {
+        isPending = false;
+        isSimulating = true;
+        try {
+          const innerTarget = getInnerTarget();
+          dispatchSimulatedPointerEvent(innerTarget, 'pointerdown', pendingEvent, {
+            button: 0,
+            buttons: 1,
+          });
+          dispatchSimulatedPointerEvent(innerTarget, 'pointerup', e, {
+            button: 0,
+            buttons: 0,
+          });
+        } finally {
+          isSimulating = false;
+        }
+        e.stopPropagation();
+      } else if (isDragging) {
+        isDragging = false;
+        el.style.cursor = 'grab';
+        isSimulating = true;
+        try {
+          dispatchSimulatedPointerEvent(getInnerTarget(), 'pointerup', e, {
+            button: 1,
+            buttons: 0,
+          });
+        } finally {
+          isSimulating = false;
+        }
+        e.stopPropagation();
+      }
+    };
+
+    const handlePointerCancel = (e: PointerEvent) => {
+      if (isSimulating) return;
+      if (!isPanMode && !isDragging && !isPending) return;
+      if (isDragging) {
+        isDragging = false;
+        el.style.cursor = 'grab';
+        isSimulating = true;
+        try {
+          dispatchSimulatedPointerEvent(getInnerTarget(), 'pointerup', e, {
+            button: 1,
+            buttons: 0,
+          });
+        } finally {
+          isSimulating = false;
+        }
+      }
+      isPending = false;
+    };
+
+    target.addEventListener('pointerdown', handlePointerDown as EventListener, { capture: true });
+    target.addEventListener('pointermove', handlePointerMove as EventListener, { capture: true });
+    target.addEventListener('pointerup', handlePointerUp as EventListener, { capture: true });
+    target.addEventListener('pointercancel', handlePointerCancel as EventListener, { capture: true });
+
+    // 4. Zoom="objects" re-application on loaded events
+    const handleLoad = () => {
+      el.setAttribute('zoom', zoom);
+    };
+    el.addEventListener('load', handleLoad);
+    el.addEventListener('kicanvas:load', handleLoad);
+
+    return () => {
+      observer.disconnect();
+      el.removeEventListener('wheel', handleWheel, { capture: true });
+      target.removeEventListener('pointerdown', handlePointerDown as EventListener, { capture: true });
+      target.removeEventListener('pointermove', handlePointerMove as EventListener, { capture: true });
+      target.removeEventListener('pointerup', handlePointerUp as EventListener, { capture: true });
+      target.removeEventListener('pointercancel', handlePointerCancel as EventListener, { capture: true });
+      el.removeEventListener('load', handleLoad);
+      el.removeEventListener('kicanvas:load', handleLoad);
+    };
+  }, [status, zoom, isPanMode]);
+
   // 400 means the file was not found/expired; other errors are generic failures
   const isExpiredUrl = errorMsg?.includes('400');
 
@@ -140,9 +439,67 @@ export function KiCanvasViewer({ src, controls = 'basic' }: KiCanvasViewerProps)
             ref={(el: HTMLElement | null) => { embedRef.current = el; }}
             src={src}
             controls={controls}
-            theme="kicad"
+            theme="witchhazel"
+            {...(zoom ? { zoom } : {})}
             style={{ width: '100%', height: '100%', display: 'block' }}
           />
+
+          {/* HUD Toolbar */}
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5 p-1 rounded-xl bg-[#0a0a0a]/80 border border-[#1e1e1e] backdrop-blur-md shadow-2xl z-20 select-none">
+            <div className="flex items-center gap-0.5 bg-[#111]/60 p-0.5 rounded-lg border border-[#1a1a1a]">
+              <button
+                type="button"
+                onClick={() => setIsPanMode(false)}
+                className={`p-1.5 rounded-md transition-all ${
+                  !isPanMode
+                    ? 'bg-primary/20 text-primary border border-primary/30'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-[#1a1a1a] border border-transparent'
+                }`}
+                title="Select Mode (Click components to view details)"
+              >
+                <MousePointer size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsPanMode(true)}
+                className={`p-1.5 rounded-md transition-all ${
+                  isPanMode
+                    ? 'bg-primary/20 text-primary border border-primary/30'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-[#1a1a1a] border border-transparent'
+                }`}
+                title="Pan Mode (Click and drag to move canvas)"
+              >
+                <Hand size={14} />
+              </button>
+            </div>
+            <div className="w-px h-5 bg-[#1e1e1e]" />
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={handleZoomIn}
+                className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-[#1a1a1a] transition-all"
+                title="Zoom In (Ctrl + Scroll Up)"
+              >
+                <ZoomIn size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={handleZoomOut}
+                className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-[#1a1a1a] transition-all"
+                title="Zoom Out (Ctrl + Scroll Down)"
+              >
+                <ZoomOut size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={handleZoomToFit}
+                className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-[#1a1a1a] transition-all"
+                title="Zoom to Fit (Center schematic)"
+              >
+                <Maximize size={14} />
+              </button>
+            </div>
+          </div>
 
           {/* File type badge */}
           <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#0a0a0a]/80 border border-[#1e1e1e] backdrop-blur-sm pointer-events-none">
@@ -162,7 +519,7 @@ export function KiCanvasViewer({ src, controls = 'basic' }: KiCanvasViewerProps)
             >
               {[
                 { icon: <Move size={10} />, label: 'Drag to pan' },
-                { icon: <ZoomIn size={10} />, label: 'Scroll to zoom' },
+                { icon: <ZoomIn size={10} />, label: 'Ctrl + Scroll to zoom' },
               ].map(({ icon, label }) => (
                 <div
                   key={label}

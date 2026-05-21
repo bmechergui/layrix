@@ -27,8 +27,8 @@ export interface SchematicLayout {
   wires: SchematicWire[];
 }
 
-const POWER_NET = /^(VCC|VDD|VIN|VBUS|VBAT|3V3|5V|12V)/i;
-const GND_NET = /^GND$/i;
+export const POWER_NET = /^(VCC|VDD|VIN|VBUS|VBAT|VOUT|3V3|5V|12V|PWR)/i;
+export const GND_NET = /^GND$/i;
 const INPUT_HINT = /^(VIN|IN|INPUT|J1|USB)/i;
 const OUTPUT_HINT = /^(VOUT|OUT|OUTPUT|J2)/i;
 
@@ -121,6 +121,8 @@ export function buildSchematicLayout(
   // 5. Wires: for each net, connect consecutive pins in the order components appear
   const wires: SchematicWire[] = [];
   connections.forEach((cn) => {
+    if (POWER_NET.test(cn.name) || GND_NET.test(cn.name)) return; // Prevent spaghetti by hiding global Power/GND nets
+
     const pins = cn.pins.filter((p) => nodes.some((n) => n.ref === p.ref));
     for (let i = 1; i < pins.length; i++) {
       const a = pins[i - 1]!;
@@ -139,11 +141,18 @@ export function buildSchematicLayout(
 }
 
 export function netColor(name: string): string {
-  if (GND_NET.test(name)) return '#71717A';
-  if (POWER_NET.test(name)) return '#D4820A';
   // Hash to a pleasant color
-  const palette = ['#00C2FF', '#22C55E', '#A855F7', '#F472B6', '#FACC15', '#38BDF8', '#F87171', '#10B981'];
+  const palette = [
+    '#00C2FF', '#22C55E', '#A855F7', '#F472B6', 
+    '#FACC15', '#38BDF8', '#F87171', '#10B981',
+    '#FB923C', '#818CF8'
+  ];
   let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
+  for (let i = 0; i < name.length; i++) {
+    h = Math.imul(31, h) + name.charCodeAt(i) | 0;
+  }
+  // Mix in more entropy to avoid collisions
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
   return palette[Math.abs(h) % palette.length]!;
 }

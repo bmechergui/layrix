@@ -84,7 +84,7 @@ export function ErcView({ state }: { state: PCBState }) {
     : `${errors.length} error${errors.length !== 1 ? 's' : ''} · ${warnings.length} warning${warnings.length !== 1 ? 's' : ''}`;
 
   return (
-    <div className="flex flex-col h-full bg-[#08080c] relative">
+    <div className="flex flex-col h-full bg-[#08080c] relative overflow-hidden">
       {/* Grid Pattern */}
       <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.005)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.005)_1px,transparent_1px)] bg-[size:24px_24px] pointer-events-none" />
 

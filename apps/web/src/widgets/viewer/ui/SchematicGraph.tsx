@@ -20,8 +20,13 @@ interface SchematicGraphProps {
 }
 
 // Layout constants — EDA-grade proportions
-const NODE_W = 162;
+function getNodeW(role: string): number {
+  if (role === 'IC') return 162;
+  if (role === 'INPUT' || role === 'OUTPUT') return 60; // Slim connector
+  return 36; // PASSIVE body width
+}
 const HDR_H = 40;
+const CONN_HDR_H = 20;
 const PIN_H = 17;
 const PIN_PAD = 6;
 const PIN_STUB = 8;        // stub length extending outside box
@@ -52,6 +57,8 @@ interface ThemeColors {
   textRefConnector: string;
   wireOpacity: number;
   wireGlow: string;
+  accent: string;
+  borderDim: string;
   controlBg: string;
   controlBorder: string;
   controlText: string;
@@ -80,6 +87,8 @@ const THEMES: Record<'cyberpunk' | 'retro', ThemeColors> = {
     textRefConnector: '#4ade80',
     wireOpacity: 0.75,
     wireGlow: '#00c2ff',
+    accent: '#00c2ff',
+    borderDim: '#1a1a26',
     controlBg: 'bg-[#0f0f16]/95',
     controlBorder: 'border-[#1f202e]',
     controlText: 'text-[#8a8a9a] hover:text-[#00c2ff]',
@@ -106,6 +115,8 @@ const THEMES: Record<'cyberpunk' | 'retro', ThemeColors> = {
     textRefConnector: '#064e3b',
     wireOpacity: 0.85,
     wireGlow: '#ef4444',
+    accent: '#1e1b4b',
+    borderDim: '#d4d0c7',
     controlBg: 'bg-[#ffffff]/95',
     controlBorder: 'border-[#c3bfb5]',
     controlText: 'text-[#6b6659] hover:text-[#1e1b4b]',
@@ -113,35 +124,54 @@ const THEMES: Record<'cyberpunk' | 'retro', ThemeColors> = {
   },
 };
 
-function nodeH(pinCount: number): number {
-  return HDR_H + Math.max(pinCount, 1) * PIN_H + PIN_PAD * 2;
+function nodeH(role: string, pinCount: number): number {
+  if (role === 'PASSIVE') return 14; // Passive body height
+  const hdr = (role === 'INPUT' || role === 'OUTPUT') ? CONN_HDR_H : HDR_H;
+  return hdr + Math.max(pinCount, 1) * PIN_H + PIN_PAD * 2;
 }
 
 function nodePos(nodes: SchematicNode[], node: SchematicNode) {
-  const x = COL_X[node.col] ?? 20 + node.col * (NODE_W + COL_GAP);
+  const w = getNodeW(node.role);
+  const centerX = (COL_X[node.col] ?? 20 + node.col * (162 + COL_GAP)) + 81;
+  const x = centerX - w / 2;
   const before = nodes.filter((n) => n.col === node.col && n.row < node.row);
-  const y = SVG_MARGIN_TOP + before.reduce((s, n) => s + nodeH(n.pinRows.length) + ROW_GAP, 0);
-  return { x, y, h: nodeH(node.pinRows.length) };
+  const y = SVG_MARGIN_TOP + before.reduce((s, n) => s + nodeH(n.role, n.pinRows.length) + ROW_GAP, 0);
+  return { x, y, w, h: nodeH(node.role, node.pinRows.length) };
 }
 
-function pinY(pos: { y: number }, rowIndex: number): number {
-  return pos.y + HDR_H + PIN_PAD + rowIndex * PIN_H + PIN_H / 2;
+function pinY(role: string, pos: { y: number; h: number }, rowIndex: number): number {
+  if (role === 'PASSIVE') return pos.y + pos.h / 2;
+  const hdr = (role === 'INPUT' || role === 'OUTPUT') ? CONN_HDR_H : HDR_H;
+  return pos.y + hdr + PIN_PAD + rowIndex * PIN_H + PIN_H / 2;
+}
+
+function getPinSide(role: string, pin: string, net: string, rowIndex: number, totalPins: number): 'left' | 'right' {
+  if (role === 'PASSIVE') return rowIndex === 0 ? 'left' : 'right';
+  if (role === 'INPUT') return 'right';
+  if (role === 'OUTPUT') return 'left';
+  // ICs
+  if (/IN|EN/i.test(net) || /IN|EN/i.test(pin)) return 'left';
+  if (/OUT/i.test(net) || /OUT/i.test(pin)) return 'right';
+  return rowIndex < totalPins / 2 ? 'left' : 'right';
 }
 
 function pinAnchor(
   nodes: SchematicNode[],
   ref: string,
   pin: string,
-  side: 'left' | 'right',
-): { x: number; y: number } | null {
+): { x: number; y: number; side: 'left' | 'right' } | null {
   const node = nodes.find((n) => n.ref === ref);
   if (!node) return null;
   const pos = nodePos(nodes, node);
   const idx = node.pinRows.findIndex((p) => p.pin === pin);
-  const py = pinY(pos, idx >= 0 ? idx : 0);
+  const rowIndex = idx >= 0 ? idx : 0;
+  const net = node.pinRows[rowIndex]?.net || '';
+  const py = pinY(node.role, pos, rowIndex);
+  const side = getPinSide(node.role, pin, net, rowIndex, node.pinRows.length);
   return {
-    x: side === 'left' ? pos.x - PIN_STUB : pos.x + NODE_W + PIN_STUB,
+    x: side === 'left' ? pos.x - PIN_STUB : pos.x + pos.w + PIN_STUB,
     y: py,
+    side,
   };
 }
 
@@ -152,66 +182,30 @@ function isGndNet(name: string) {
   return /^GND$/i.test(name);
 }
 
-// Computes a clean orthogonal (Manhattan) path with rounded corners
-function getOrthogonalPath(x1: number, y1: number, x2: number, y2: number, r = 6): string {
-  if (Math.abs(y1 - y2) < 0.5) {
-    return `M ${x1} ${y1} H ${x2}`;
-  }
-  if (Math.abs(x1 - x2) < 0.5) {
-    return `M ${x1} ${y1} V ${y2}`;
-  }
-
-  // Flowing from left to right (typical column transition)
-  if (x2 > x1 + 2 * r + 10) {
-    const midX = (x1 + x2) / 2;
-    const dy = y2 - y1;
-    const signY = Math.sign(dy);
-
-    if (Math.abs(dy) < r * 2) {
-      // Too tight vertically, use smooth bezier curve as a backup
-      return `M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`;
-    }
-
-    return `M ${x1} ${y1} ` +
-           `H ${midX - r} ` +
-           `Q ${midX} ${y1} ${midX} ${y1 + r * signY} ` +
-           `V ${y2 - r * signY} ` +
-           `Q ${midX} ${y2} ${midX + r} ${y2} ` +
-           `H ${x2}`;
-  } else {
-    // Backward path or same column (loop-around bypass routing)
-    const dy = y2 - y1;
-    const signY = Math.sign(dy);
-    const offset = 22; // clearance to step around components
-    const midY = y1 + dy / 2;
-
-    if (Math.abs(dy) < r * 4) {
-      // Too tight, use S-curve fallback to prevent intersections
-      return `M ${x1} ${y1} C ${x1 + 40} ${y1}, ${x2 - 40} ${y2}, ${x2} ${y2}`;
-    }
-
-    return `M ${x1} ${y1} ` +
-           `H ${x1 + offset - r} ` +
-           `Q ${x1 + offset} ${y1} ${x1 + offset} ${y1 + r * signY} ` +
-           `V ${midY - r * signY} ` +
-           `Q ${x1 + offset} ${midY} ${x1 + offset - r} ${midY} ` +
-           `H ${x2 - offset + r} ` +
-           `Q ${x2 - offset} ${midY} ${x2 - offset} ${midY + r * signY} ` +
-           `V ${y2 - r * signY} ` +
-           `Q ${x2 - offset} ${y2} ${x2 - offset + r} ${y2} ` +
-           `H ${x2}`;
-  }
+// Computes a clean schematic path using smooth bezier curves to avoid sharp overlaps
+function getOrthogonalPath(x1: number, y1: number, s1: 'left'|'right', x2: number, y2: number, s2: 'left'|'right', r = 6): string {
+  const dx1 = s1 === 'right' ? 1 : -1;
+  const dx2 = s2 === 'right' ? 1 : -1;
+  const dist = Math.max(50, Math.abs(x2 - x1) * 0.5);
+  return `M ${x1} ${y1} C ${x1 + dist * dx1} ${y1}, ${x2 + dist * dx2} ${y2}, ${x2} ${y2}`;
 }
 
 export function SchematicGraph({ components, connections }: SchematicGraphProps) {
+  // Fix invisible whitespace issues in netlists from database
+  const normalizedConnections = useMemo(
+    () => connections.map(c => ({ ...c, name: c.name.trim() })),
+    [connections]
+  );
+
   const { nodes, wires } = useMemo(
-    () => buildSchematicLayout(components, connections),
-    [components, connections],
+    () => buildSchematicLayout(components, normalizedConnections),
+    [components, normalizedConnections],
   );
 
   // States
   const [zoom, setZoom] = useState<number>(1.0);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [clickedNet, setClickedNet] = useState<string | null>(null);
   const [hoveredNet, setHoveredNet] = useState<string | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -229,7 +223,7 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
     let max = 0;
     for (let c = 0; c <= 4; c++) {
       const col = nodes.filter((n) => n.col === c);
-      const h = col.reduce((s, n) => s + nodeH(n.pinRows.length) + ROW_GAP, 0);
+      const h = col.reduce((s, n) => s + nodeH(n.role, n.pinRows.length) + ROW_GAP, 0);
       max = Math.max(max, h);
     }
     return Math.max(450, SVG_MARGIN_TOP + max + SVG_MARGIN_BOTTOM);
@@ -241,6 +235,7 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
   const handleZoomToFit = () => {
     if (!svgRef.current) return;
     const rect = svgRef.current.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
     const scaleX = rect.width / svgW;
     const scaleY = rect.height / svgH;
     const newZoom = Math.min(scaleX, scaleY, 1.1) * 0.92;
@@ -252,7 +247,24 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
   };
 
   useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+
+    // Initial fit
     handleZoomToFit();
+
+    // Re-run whenever the container resizes
+    const observer = new ResizeObserver((entries) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        handleZoomToFit();
+      }
+    });
+
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [components, connections]);
 
@@ -350,13 +362,13 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
   const matchedNets = useMemo(() => {
     if (!searchNormalized) return new Set<string>();
     const matches = new Set<string>();
-    connections.forEach((conn) => {
+    normalizedConnections.forEach((conn) => {
       if (conn.name.toLowerCase().includes(searchNormalized)) {
         matches.add(conn.name);
       }
     });
     return matches;
-  }, [connections, searchNormalized]);
+  }, [normalizedConnections, searchNormalized]);
 
   const isSearchActive = searchNormalized.length > 0;
 
@@ -438,13 +450,14 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
       </header>
 
       {/* SVG Canvas Area */}
-      <div className="relative flex-1 min-h-[400px] overflow-hidden">
+      <div className="relative flex-1 min-h-0 overflow-hidden">
         <svg
           ref={svgRef}
           width="100%"
           height="100%"
           viewBox={`0 0 ${svgW} ${svgH}`}
           xmlns="http://www.w3.org/2000/svg"
+          onClick={() => setClickedNet(null)}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
@@ -519,7 +532,7 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
             {/* Column labels */}
             {colLabels.map((label, col) => {
               if (nodes.filter((n) => n.col === col).length === 0) return null;
-              const x = (COL_X[col] ?? 0) + NODE_W / 2;
+              const x = (COL_X[col] ?? 0) + 81;
               return (
                 <text
                   key={label}
@@ -538,90 +551,177 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
               );
             })}
 
-            {/* Wires */}
-            {wires.map((w, i) => {
-              const from = pinAnchor(nodes, w.fromRef, w.fromPin, 'right');
-              const to = pinAnchor(nodes, w.toRef, w.toPin, 'left');
-              if (!from || !to) return null;
 
-              const color = netColor(w.net);
-              const path = getOrthogonalPath(from.x, from.y, to.x, to.y);
-
-              const isHighlighted = hoveredNet === w.net || 
-                                    (hoveredNode === w.fromRef || hoveredNode === w.toRef) ||
-                                    (isSearchActive && matchedNets.has(w.net));
-
-              const isDimmed = (hoveredNet && hoveredNet !== w.net) || 
-                               (hoveredNode && hoveredNode !== w.fromRef && hoveredNode !== w.toRef) ||
-                               (isSearchActive && !matchedNets.has(w.net) && matchedNodes.size > 0);
-
-              const isPwr = isPowerNet(w.net);
-              const isGnd = isGndNet(w.net);
-
-              return (
-                <g 
-                  key={`wire-${i}`}
-                  className="transition-opacity duration-300"
-                  opacity={isDimmed ? 0.15 : 1.0}
-                  onMouseEnter={() => setHoveredNet(w.net)}
-                  onMouseLeave={() => setHoveredNet(null)}
-                  cursor="pointer"
-                >
-                  {/* Invisible wide path for easier mouse hover selection */}
-                  <path
-                    d={path}
-                    stroke="transparent"
-                    strokeWidth={8}
-                    fill="none"
-                  />
-
-                  {/* Wire glow */}
-                  {isHighlighted && (
-                    <path
-                      d={path}
-                      stroke={color}
-                      strokeWidth={isPwr || isGnd ? 3.5 : 2.8}
-                      fill="none"
-                      opacity={0.6}
-                      filter="url(#neon-wire-glow)"
-                    />
-                  )}
-
-                  {/* Physical wire */}
-                  <path
-                    d={path}
-                    stroke={color}
-                    strokeWidth={isHighlighted ? 1.8 : (isPwr || isGnd ? 1.4 : 1.1)}
-                    fill="none"
-                    opacity={isHighlighted ? 1.0 : activeTheme.wireOpacity}
-                    strokeDasharray={isGnd ? '3 2' : undefined}
-                    className="transition-all duration-200"
-                  />
-
-                  {/* Junction points */}
-                  <circle 
-                    cx={from.x} 
-                    cy={from.y} 
-                    r={isHighlighted ? 3.0 : 2.2} 
-                    fill={color} 
-                    opacity={0.9} 
-                  />
-                  <circle 
-                    cx={to.x} 
-                    cy={to.y} 
-                    r={isHighlighted ? 3.0 : 2.2} 
-                    fill={color} 
-                    opacity={0.9} 
-                  />
-                </g>
-              );
-            })}
 
             {/* Nodes */}
             {nodes.map((node) => {
               const pos = nodePos(nodes, node);
               const isIC = node.role === 'IC';
               const isConnector = node.role === 'INPUT' || node.role === 'OUTPUT';
+
+              // Highlight/Dim Logic
+              const activeNet = clickedNet || hoveredNet;
+              const isHighlighted = hoveredNode === node.ref || 
+                                    (activeNet && node.pinRows.some(p => p.net === activeNet)) ||
+                                    (isSearchActive && matchedNodes.has(node.ref));
+
+              const isDimmed = (hoveredNode && hoveredNode !== node.ref) ||
+                               (activeNet && !node.pinRows.some(p => p.net === activeNet)) ||
+                               (isSearchActive && !matchedNodes.has(node.ref) && matchedNets.size === 0);
+
+              const pBorder = isHighlighted ? activeTheme.accent : (isDimmed ? activeTheme.borderDim : '#94A3B8');
+
+              if (node.role === 'PASSIVE') {
+                const cx = pos.x + pos.w / 2;
+                const cy = pos.y + pos.h / 2;
+                const isResistor = node.ref.startsWith('R') || node.ref.startsWith('L');
+                const isCapacitor = node.ref.startsWith('C');
+                const isDiode = node.ref.startsWith('D');
+
+                return (
+                  <g 
+                    key={node.ref}
+                    className="transition-opacity duration-300"
+                    opacity={isDimmed ? 0.1 : 1.0}
+                    onMouseEnter={() => setHoveredNode(node.ref)}
+                    onMouseLeave={() => setHoveredNode(null)}
+                  >
+                    {isHighlighted && (
+                      <rect
+                        x={pos.x - 2}
+                        y={pos.y - 2}
+                        width={pos.w + 4}
+                        height={pos.h + 4}
+                        rx={4}
+                        fill="none"
+                        stroke={pBorder}
+                        strokeWidth={1.8}
+                        opacity={0.7}
+                        filter="url(#neon-wire-glow)"
+                      />
+                    )}
+
+                    {/* Passive Symbol */}
+                    {isCapacitor && (
+                      <g>
+                        <line x1={pos.x - PIN_STUB} y1={cy} x2={cx - 2.5} y2={cy} stroke={pBorder} strokeWidth={1.2} />
+                        <line x1={cx - 2.5} y1={pos.y} x2={cx - 2.5} y2={pos.y + pos.h} stroke={pBorder} strokeWidth={1.8} />
+                        <line x1={cx + 2.5} y1={pos.y} x2={cx + 2.5} y2={pos.y + pos.h} stroke={pBorder} strokeWidth={1.8} />
+                        <line x1={cx + 2.5} y1={cy} x2={pos.x + pos.w + PIN_STUB} y2={cy} stroke={pBorder} strokeWidth={1.2} />
+                      </g>
+                    )}
+                    {isDiode && (
+                      <g>
+                        <polygon points={`${cx - 5},${pos.y + 1} ${cx - 5},${pos.y + pos.h - 1} ${cx + 5},${cy}`} fill={activeTheme.nodeBg} stroke={pBorder} strokeWidth={1.2} />
+                        <line x1={cx + 5} y1={pos.y + 1} x2={cx + 5} y2={pos.y + pos.h - 1} stroke={pBorder} strokeWidth={1.8} />
+                        <line x1={pos.x - PIN_STUB} y1={cy} x2={cx - 5} y2={cy} stroke={pBorder} strokeWidth={1.2} />
+                        <line x1={cx + 5} y1={cy} x2={pos.x + pos.w + PIN_STUB} y2={cy} stroke={pBorder} strokeWidth={1.2} />
+                      </g>
+                    )}
+                    {(!isCapacitor && !isDiode) && (
+                      <g>
+                        <rect x={pos.x + 4} y={pos.y + 2} width={pos.w - 8} height={pos.h - 4} fill={activeTheme.nodeBg} stroke={pBorder} strokeWidth={1.2} />
+                        <line x1={pos.x - PIN_STUB} y1={cy} x2={pos.x + 4} y2={cy} stroke={pBorder} strokeWidth={1.2} />
+                        <line x1={pos.x + pos.w - 4} y1={cy} x2={pos.x + pos.w + PIN_STUB} y2={cy} stroke={pBorder} strokeWidth={1.2} />
+                      </g>
+                    )}
+
+                    {/* Text above & below */}
+                    <text
+                      x={cx}
+                      y={pos.y - 6}
+                      textAnchor="middle"
+                      fill={isDimmed ? activeTheme.textMuted : '#F8FAFC'}
+                      fontSize={9}
+                      fontWeight={700}
+                      fontFamily="ui-monospace, monospace"
+                    >
+                      {node.ref}
+                    </text>
+                    <text
+                      x={cx}
+                      y={pos.y + pos.h + 10}
+                      textAnchor="middle"
+                      fill={isDimmed ? activeTheme.textMuted : '#CBD5E1'}
+                      fontSize={8}
+                      fontFamily="ui-monospace, monospace"
+                      className="opacity-80"
+                    >
+                      {node.value}
+                    </text>
+
+                    {/* Invisible Hitboxes for Pins & Net Labels */}
+                    {node.pinRows.map((p, i) => {
+                       const side = getPinSide(node.role, p.pin, p.net, i, node.pinRows.length);
+                       const px = side === 'left' ? pos.x - PIN_STUB : pos.x + pos.w + PIN_STUB;
+                       const hx = side === 'left' ? pos.x - PIN_STUB - 6 : cx;
+                       const hw = pos.w / 2 + PIN_STUB + 6;
+                       const activeNet = clickedNet || hoveredNet;
+                       const isPinNetHighlighted = activeNet === p.net;
+                       const pColor = netColor(p.net);
+                       
+                       // Calculate vertical offset to prevent text overlap if multiple nets are on the same side
+                       const sameSidePinsBefore = node.pinRows.slice(0, i).filter((prevP, prevI) => 
+                         getPinSide(node.role, prevP.pin, prevP.net, prevI, node.pinRows.length) === side
+                       ).length;
+                       const yOffset = sameSidePinsBefore * 12;
+
+                       return (
+                         <g key={i}>
+                           {isPinNetHighlighted && (
+                             <circle 
+                               cx={px} 
+                               cy={cy + yOffset} 
+                               r={3.0} 
+                               fill={pColor} 
+                             />
+                           )}
+                           
+                           {/* Net Name label for Passives */}
+                           <text
+                             x={side === 'left' ? px - 6 : px + 6}
+                             y={cy + 3 + yOffset}
+                             textAnchor={side === 'left' ? 'end' : 'start'}
+                             fill={isPinNetHighlighted ? pColor : (activeNet ? activeTheme.textMuted : pColor)}
+                             fontSize={9}
+                             fontFamily="ui-monospace, monospace"
+                             fontWeight={isPinNetHighlighted ? 800 : 600}
+                             opacity={activeNet && !isPinNetHighlighted ? 0.3 : 1}
+                             className="transition-colors duration-150"
+                           >
+                             {p.net}
+                           </text>
+
+                           <rect
+                             x={hx}
+                             y={cy - 8 + yOffset}
+                             width={hw}
+                             height={16}
+                             fill="transparent"
+                             cursor="pointer"
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               setClickedNet(clickedNet === p.net ? null : p.net);
+                             }}
+                             onMouseEnter={() => {
+                               setHoveredNet(p.net);
+                               setTooltip({
+                                 x: side === 'left' ? pos.x - 10 : pos.x + pos.w + 10,
+                                 y: pos.y - 10,
+                                 content: `Net: ${p.net}`
+                               });
+                             }}
+                             onMouseLeave={() => {
+                               setHoveredNet(null);
+                               setTooltip(null);
+                             }}
+                           />
+                         </g>
+                       );
+                    })}
+                  </g>
+                );
+              }
 
               // Visual styling choices
               let borderColor = activeTheme.nodeBorder;
@@ -638,20 +738,11 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
                 refColor = activeTheme.textRefConnector;
               }
 
-              // Highlight/Dim Logic
-              const isHighlighted = hoveredNode === node.ref || 
-                                    (hoveredNet && node.pinRows.some(p => p.net === hoveredNet)) ||
-                                    (isSearchActive && matchedNodes.has(node.ref));
-
-              const isDimmed = (hoveredNode && hoveredNode !== node.ref) ||
-                               (hoveredNet && !node.pinRows.some(p => p.net === hoveredNet)) ||
-                               (isSearchActive && !matchedNodes.has(node.ref) && matchedNets.size === 0);
-
               return (
                 <g 
                   key={node.ref}
                   className="transition-all duration-300"
-                  opacity={isDimmed ? 0.35 : 1.0}
+                  opacity={isDimmed ? 0.1 : 1.0}
                   onMouseEnter={() => setHoveredNode(node.ref)}
                   onMouseLeave={() => setHoveredNode(null)}
                 >
@@ -660,7 +751,7 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
                     <rect
                       x={pos.x - 2}
                       y={pos.y - 2}
-                      width={NODE_W + 4}
+                      width={pos.w + 4}
                       height={pos.h + 4}
                       rx={6}
                       fill="none"
@@ -675,7 +766,7 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
                   <rect
                     x={pos.x}
                     y={pos.y}
-                    width={NODE_W}
+                    width={pos.w}
                     height={pos.h}
                     rx={5}
                     fill={activeTheme.nodeBg}
@@ -691,17 +782,17 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
                   <rect
                     x={pos.x + 0.5}
                     y={pos.y + 0.5}
-                    width={NODE_W - 1}
-                    height={HDR_H}
+                    width={pos.w - 1}
+                    height={(node.role === 'INPUT' || node.role === 'OUTPUT') ? CONN_HDR_H : HDR_H}
                     rx={4}
                     fill={hdrFill}
                   />
 
                   <line
                     x1={pos.x}
-                    y1={pos.y + HDR_H}
-                    x2={pos.x + NODE_W}
-                    y2={pos.y + HDR_H}
+                    y1={pos.y + ((node.role === 'INPUT' || node.role === 'OUTPUT') ? CONN_HDR_H : HDR_H)}
+                    x2={pos.x + pos.w}
+                    y2={pos.y + ((node.role === 'INPUT' || node.role === 'OUTPUT') ? CONN_HDR_H : HDR_H)}
                     stroke={borderColor}
                     strokeWidth={0.6}
                     opacity={0.4}
@@ -709,31 +800,33 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
 
                   {/* Reference Designator */}
                   <text
-                    x={pos.x + 8}
-                    y={pos.y + 16}
+                    x={pos.x + 10}
+                    y={pos.y + 15}
                     fill={refColor}
-                    fontSize={10.5}
+                    fontSize={11}
                     fontWeight={700}
                     fontFamily="ui-monospace, monospace"
+                    className="transition-colors duration-200"
                   >
                     {node.ref}
                   </text>
 
-                  {/* Component Value */}
+                  {/* Value / Name */}
                   <text
-                    x={pos.x + 8}
-                    y={pos.y + 29}
+                    x={pos.x + 10}
+                    y={pos.y + 28}
                     fill={activeTheme.textMuted}
-                    fontSize={8.5}
+                    fontSize={9}
                     fontFamily="ui-monospace, monospace"
-                    className="opacity-80"
+                    className="opacity-90"
+                    visibility={(node.role === 'INPUT' || node.role === 'OUTPUT') ? 'hidden' : 'visible'}
                   >
                     {node.value}
                   </text>
 
                   {/* Header Badge */}
                   <text
-                    x={pos.x + NODE_W - 8}
+                    x={pos.x + pos.w - 8}
                     y={pos.y + 15}
                     textAnchor="end"
                     fill={activeTheme.textMuted}
@@ -746,23 +839,27 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
                     {node.role}
                   </text>
 
-                  {/* Pins List */}
+                  {/* Pins list */}
                   {node.pinRows.map((p, i) => {
-                    const py = pinY(pos, i);
+                    const py = pinY(node.role, pos, i);
+                    const activeNet = clickedNet || hoveredNet;
+                    const isPinNetHighlighted = activeNet === p.net;
                     const color = netColor(p.net);
-                    const isPwr = isPowerNet(p.net);
-                    const isGnd = isGndNet(p.net);
-
-                    const isPinNetHighlighted = hoveredNet === p.net;
+                    const side = getPinSide(node.role, p.pin, p.net, i, node.pinRows.length);
+                    const px = side === 'left' ? pos.x - PIN_STUB : pos.x + pos.w + PIN_STUB;
 
                     return (
                       <g 
-                        key={`${node.ref}-pin-${i}`}
-                        className="group/pin cursor-pointer"
+                        key={i}
+                        cursor="pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setClickedNet(clickedNet === p.net ? null : p.net);
+                        }}
                         onMouseEnter={(e) => {
                           setHoveredNet(p.net);
                           setTooltip({
-                            x: pos.x + NODE_W + 12,
+                            x: px + (side === 'left' ? -20 : 20),
                             y: py - 16,
                             content: `Net: ${p.net}`
                           });
@@ -777,28 +874,43 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
                           <line
                             x1={pos.x + 1}
                             y1={py - PIN_H / 2}
-                            x2={pos.x + NODE_W - 1}
+                            x2={pos.x + pos.w - 1}
                             y2={py - PIN_H / 2}
                             stroke={theme === 'retro' ? '#eae6db' : '#171722'}
                             strokeWidth={0.6}
                           />
                         )}
 
-                        {/* Left stub */}
+                        {/* Pin Stub */}
                         <line
-                          x1={pos.x - PIN_STUB}
+                          x1={side === 'left' ? pos.x - PIN_STUB : pos.x + pos.w}
                           y1={py}
-                          x2={pos.x}
+                          x2={side === 'left' ? pos.x : pos.x + pos.w + PIN_STUB}
                           y2={py}
-                          stroke={borderColor}
-                          strokeWidth={0.8}
-                          opacity={0.3}
+                          stroke={color}
+                          strokeWidth={1.5}
+                          opacity={0.8}
                         />
 
-                        {/* Pin Index */}
+                        {/* External Net Name Label (colored tag) */}
                         <text
-                          x={pos.x + 7}
+                          x={side === 'left' ? px - 6 : px + 6}
                           y={py + 3}
+                          textAnchor={side === 'left' ? 'end' : 'start'}
+                          fill={isPinNetHighlighted ? color : (activeNet || isDimmed ? activeTheme.textMuted : color)}
+                          fontSize={9}
+                          fontFamily="ui-monospace, monospace"
+                          fontWeight={isPinNetHighlighted ? 800 : 600}
+                          className="transition-colors duration-150"
+                        >
+                          {p.net}
+                        </text>
+
+                        {/* Pin Index (Internal) */}
+                        <text
+                          x={side === 'left' ? pos.x + 7 : pos.x + pos.w - 7}
+                          y={py + 3}
+                          textAnchor={side === 'left' ? 'start' : 'end'}
                           fill={activeTheme.textMuted}
                           fontSize={8}
                           fontFamily="ui-monospace, monospace"
@@ -806,39 +918,14 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
                           {p.pin}
                         </text>
 
-                        {/* Net Name label */}
-                        <text
-                          x={pos.x + NODE_W - PIN_STUB - 12}
-                          y={py + 3}
-                          textAnchor="end"
-                          fill={isPinNetHighlighted ? color : (isGnd ? '#52526b' : isPwr ? '#D4820A' : activeTheme.textNet)}
-                          fontSize={8}
-                          fontFamily="ui-monospace, monospace"
-                          fontWeight={isPinNetHighlighted ? 700 : 500}
-                          className="transition-colors duration-150"
-                        >
-                          {p.net}
-                        </text>
-
                         {/* Pin Dot indicator */}
                         <circle 
-                          cx={pos.x + NODE_W - 10} 
+                          cx={side === 'left' ? pos.x + 2 : pos.x + pos.w - 2} 
                           cy={py} 
-                          r={isPinNetHighlighted ? 3.0 : 2.2} 
-                          fill={color} 
+                          r={isPinNetHighlighted ? 3.5 : 2.2} 
+                          fill={isPinNetHighlighted ? color : (activeNet || isDimmed ? activeTheme.textMuted : color)} 
                           className="transition-transform duration-150"
-                          opacity={isPinNetHighlighted ? 1.0 : 0.75} 
-                        />
-
-                        {/* Right stub */}
-                        <line
-                          x1={pos.x + NODE_W}
-                          y1={py}
-                          x2={pos.x + NODE_W + PIN_STUB}
-                          y2={py}
-                          stroke={color}
-                          strokeWidth={0.8}
-                          opacity={0.4}
+                          opacity={isPinNetHighlighted ? 1.0 : (activeNet || isDimmed ? 0.3 : 0.75)} 
                         />
                       </g>
                     );

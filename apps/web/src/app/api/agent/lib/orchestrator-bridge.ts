@@ -77,6 +77,37 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
             if (up.signedUrl) kicad_sch_url = up.signedUrl;
           }
           if (typeof raw.kicad_pcb_content === 'string' && raw.kicad_pcb_content.length > 0) {
+            const kicadServiceUrl = process.env.KICAD_SERVICE_URL;
+            if (kicadServiceUrl) {
+              try {
+                const b64 = Buffer.from(raw.kicad_pcb_content).toString('base64');
+                const boardWidth = (raw.board_width_mm as number) ?? (mergedState.board_width_mm as number) ?? 100;
+                const boardHeight = (raw.board_height_mm as number) ?? (mergedState.board_height_mm as number) ?? 80;
+                
+                const res = await fetch(`${kicadServiceUrl}/place/auto`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    kicad_pcb_b64: b64,
+                    board_width_mm: boardWidth,
+                    board_height_mm: boardHeight,
+                  }),
+                });
+                
+                if (res.ok) {
+                  const json = await res.json() as any;
+                  if (json.kicad_pcb_b64) {
+                    raw.kicad_pcb_content = Buffer.from(json.kicad_pcb_b64, 'base64').toString('utf-8');
+                    log.debug({ placedCount: json.placed_count }, 'auto-placement SUCCESS');
+                  }
+                } else {
+                  log.error({ status: res.status, text: await res.text() }, 'auto-placement FAILED');
+                }
+              } catch (err) {
+                log.error({ err }, 'auto-placement exception');
+              }
+            }
+
             const up = await uploadKicadArtifact(
               supabase, userId, projectId, 'pcb.kicad_pcb', raw.kicad_pcb_content,
             );

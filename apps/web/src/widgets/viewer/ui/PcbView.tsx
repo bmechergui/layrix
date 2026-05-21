@@ -722,7 +722,7 @@ export function PcbView({ state, title = 'PCB Layout', showRouting = false }: Pc
   const meta = `${widthMm}×${heightMm} mm · ${components.length} comp${components.length !== 1 ? 's' : ''}${showRouting ? ` · ${traces.length} traces` : ''}`;
 
   return (
-    <div className="flex flex-col h-full bg-[#08080c]">
+    <div className="flex flex-col h-full bg-[#08080c] overflow-hidden">
       <StageHeader
         icon={<Layers size={12} />}
         title={title}
@@ -755,7 +755,7 @@ export function PcbView({ state, title = 'PCB Layout', showRouting = false }: Pc
       />
 
       {effectiveMode === 'native' && nativeUrl ? (
-        <KiCanvasViewer src={nativeUrl} controls="basic" />
+        <KiCanvasViewer src={nativeUrl} controls="basic" zoom="objects" />
       ) : (
         <>
           {/* Sub-tab bar */}

@@ -192,9 +192,14 @@ function mstEdges(
   return edges;
 }
 
-function footprintToLibId(ref: string, footprint: string): string {
+function footprintToLibId(ref: string, footprint: string, value?: string): string {
   const fp = footprint.toUpperCase();
   const r  = ref.toUpperCase();
+  const v  = value ? value.toUpperCase() : '';
+
+  if (v === 'NE555' || v.includes('555')) return 'Timer:NE555P';
+  if (v.includes('7805') || v === 'LM7805') return 'Device:VReg_3Pin';
+
   if (fp.includes('LED')   || r.startsWith('LED'))             return 'Device:LED';
   if (fp.includes('SOT-23'))                                   return 'Device:Q_NPN_BCE';
   if (fp.includes('DIP')   || fp.includes('SOIC') || fp.includes('TSSOP')) return 'Device:IC';
@@ -213,10 +218,10 @@ const INLINE_LIB_SYMBOLS = `
     (pin_numbers hide) (pin_names (offset 0)) (in_bom yes) (on_board yes)
     (property "Reference" "R" (at 0 -2.5 0) (effects (font (size 1.27 1.27))))
     (property "Value" "R" (at 0 2.5 0) (effects (font (size 1.27 1.27))))
-    (symbol "R_0_1"
+    (symbol "Device:R_0_1"
       (rectangle (start -2.032 -0.762) (end 2.032 0.762)
         (stroke (width 0.254) (type default)) (fill (type none))))
-    (symbol "R_1_1"
+    (symbol "Device:R_1_1"
       (pin passive line (at -3.81 0 0) (length 1.778)
         (name "~" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
       (pin passive line (at 3.81 0 180) (length 1.778)
@@ -225,12 +230,12 @@ const INLINE_LIB_SYMBOLS = `
     (pin_numbers hide) (pin_names (offset 0)) (in_bom yes) (on_board yes)
     (property "Reference" "C" (at 0 -2.5 0) (effects (font (size 1.27 1.27))))
     (property "Value" "C" (at 0 2.5 0) (effects (font (size 1.27 1.27))))
-    (symbol "C_0_1"
+    (symbol "Device:C_0_1"
       (polyline (pts (xy -2.032 0.381) (xy 2.032 0.381))
         (stroke (width 0.508) (type default)) (fill (type none)))
       (polyline (pts (xy -2.032 -0.381) (xy 2.032 -0.381))
         (stroke (width 0.508) (type default)) (fill (type none))))
-    (symbol "C_1_1"
+    (symbol "Device:C_1_1"
       (pin passive line (at -3.81 0 0) (length 1.778)
         (name "+" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
       (pin passive line (at 3.81 0 180) (length 1.778)
@@ -239,12 +244,12 @@ const INLINE_LIB_SYMBOLS = `
     (pin_numbers hide) (pin_names (offset 0)) (in_bom yes) (on_board yes)
     (property "Reference" "D" (at 0 -2.5 0) (effects (font (size 1.27 1.27))))
     (property "Value" "LED" (at 0 2.5 0) (effects (font (size 1.27 1.27))))
-    (symbol "LED_0_1"
+    (symbol "Device:LED_0_1"
       (polyline (pts (xy -1.778 -1.778) (xy -1.778 1.778) (xy 1.778 0) (xy -1.778 -1.778))
         (stroke (width 0.254) (type default)) (fill (type none)))
       (polyline (pts (xy 1.778 -1.778) (xy 1.778 1.778))
         (stroke (width 0.254) (type default)) (fill (type none))))
-    (symbol "LED_1_1"
+    (symbol "Device:LED_1_1"
       (pin passive line (at -3.81 0 0) (length 2.032)
         (name "A" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
       (pin passive line (at 3.81 0 180) (length 2.032)
@@ -253,10 +258,10 @@ const INLINE_LIB_SYMBOLS = `
     (pin_numbers hide) (pin_names (offset 1.016)) (in_bom yes) (on_board yes)
     (property "Reference" "J" (at 0 -2.5 0) (effects (font (size 1.27 1.27))))
     (property "Value" "Conn_01x02" (at 0 2.5 0) (effects (font (size 1.27 1.27))))
-    (symbol "Conn_01x02_0_1"
+    (symbol "Connector_Generic:Conn_01x02_0_1"
       (rectangle (start -1.524 -0.762) (end 1.524 0.762)
         (stroke (width 0.254) (type default)) (fill (type none))))
-    (symbol "Conn_01x02_1_1"
+    (symbol "Connector_Generic:Conn_01x02_1_1"
       (pin passive line (at -3.81 0 0) (length 2.286)
         (name "Pin_1" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
       (pin passive line (at 3.81 0 180) (length 2.286)
@@ -265,14 +270,14 @@ const INLINE_LIB_SYMBOLS = `
     (pin_numbers hide) (pin_names (offset 0)) (in_bom yes) (on_board yes)
     (property "Reference" "Q" (at 0 -4 0) (effects (font (size 1.27 1.27))))
     (property "Value" "Q" (at 0 4 0) (effects (font (size 1.27 1.27))))
-    (symbol "Q_NPN_BCE_0_1"
+    (symbol "Device:Q_NPN_BCE_0_1"
       (polyline (pts (xy -1.27 1.27) (xy -1.27 -1.27))
         (stroke (width 0.508) (type default)) (fill (type none)))
       (polyline (pts (xy -1.27 0.635) (xy 1.27 2.54))
         (stroke (width 0.254) (type default)) (fill (type none)))
       (polyline (pts (xy -1.27 -0.635) (xy 1.27 -2.54))
         (stroke (width 0.254) (type default)) (fill (type none))))
-    (symbol "Q_NPN_BCE_1_1"
+    (symbol "Device:Q_NPN_BCE_1_1"
       (pin input line (at -5.08 2.54 0) (length 3.81)
         (name "B" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
       (pin passive line (at -5.08 -2.54 0) (length 3.81)
@@ -283,10 +288,10 @@ const INLINE_LIB_SYMBOLS = `
     (pin_numbers hide) (pin_names (offset 0.254)) (in_bom yes) (on_board yes)
     (property "Reference" "U" (at 0 -6 0) (effects (font (size 1.27 1.27))))
     (property "Value" "IC" (at 0 6 0) (effects (font (size 1.27 1.27))))
-    (symbol "IC_0_1"
+    (symbol "Device:IC_0_1"
       (rectangle (start -4 -4.5) (end 4 4.5)
         (stroke (width 0.254) (type default)) (fill (type none))))
-    (symbol "IC_1_1"
+    (symbol "Device:IC_1_1"
       (pin input line (at -5.08 -3.81 0) (length 1.016)
         (name "1" (effects (font (size 1.016 1.016)))) (number "1" (effects (font (size 1.016 1.016)))))
       (pin input line (at -5.08 -1.27 0) (length 1.016)
@@ -303,26 +308,64 @@ const INLINE_LIB_SYMBOLS = `
         (name "7" (effects (font (size 1.016 1.016)))) (number "7" (effects (font (size 1.016 1.016)))))
       (pin output line (at 5.08 -3.81 180) (length 1.016)
         (name "8" (effects (font (size 1.016 1.016)))) (number "8" (effects (font (size 1.016 1.016)))))))
+  (symbol "Device:VReg_3Pin"
+    (pin_numbers hide) (pin_names (offset 0)) (in_bom yes) (on_board yes)
+    (property "Reference" "U" (at 0 -4 0) (effects (font (size 1.27 1.27))))
+    (property "Value" "VReg" (at 0 4 0) (effects (font (size 1.27 1.27))))
+    (symbol "Device:VReg_3Pin_0_1"
+      (rectangle (start -4 -4) (end 4 4)
+        (stroke (width 0.254) (type default)) (fill (type none))))
+    (symbol "Device:VReg_3Pin_1_1"
+      (pin input line (at -6.35 0 0) (length 2.35)
+        (name "VI" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
+      (pin power_in line (at 0 -6.35 90) (length 2.35)
+        (name "GND" (effects (font (size 1.27 1.27)))) (number "2" (effects (font (size 1.27 1.27)))))
+      (pin power_out line (at 6.35 0 180) (length 2.35)
+        (name "VO" (effects (font (size 1.27 1.27)))) (number "3" (effects (font (size 1.27 1.27)))))))
+  (symbol "Timer:NE555P"
+    (pin_numbers hide) (pin_names (offset 0.254)) (in_bom yes) (on_board yes)
+    (property "Reference" "U" (at 0 -6 0) (effects (font (size 1.27 1.27))))
+    (property "Value" "NE555P" (at 0 6 0) (effects (font (size 1.27 1.27))))
+    (symbol "Timer:NE555P_0_1"
+      (rectangle (start -5 -5) (end 5 5)
+        (stroke (width 0.254) (type default)) (fill (type none))))
+    (symbol "Timer:NE555P_1_1"
+      (pin input line (at -7.54 -2.54 0) (length 2.54)
+        (name "GND" (effects (font (size 1.016 1.016)))) (number "1" (effects (font (size 1.016 1.016)))))
+      (pin input line (at -7.54 0 0) (length 2.54)
+        (name "TRIG" (effects (font (size 1.016 1.016)))) (number "2" (effects (font (size 1.016 1.016)))))
+      (pin output line (at 7.54 2.54 180) (length 2.54)
+        (name "OUT" (effects (font (size 1.016 1.016)))) (number "3" (effects (font (size 1.016 1.016)))))
+      (pin input line (at -7.54 2.54 0) (length 2.54)
+        (name "RESET" (effects (font (size 1.016 1.016)))) (number "4" (effects (font (size 1.016 1.016)))))
+      (pin input line (at 7.54 0 180) (length 2.54)
+        (name "CTRL" (effects (font (size 1.016 1.016)))) (number "5" (effects (font (size 1.016 1.016)))))
+      (pin input line (at 7.54 -2.54 180) (length 2.54)
+        (name "THR" (effects (font (size 1.016 1.016)))) (number "6" (effects (font (size 1.016 1.016)))))
+      (pin input line (at 7.54 -5.08 180) (length 2.54)
+        (name "DIS" (effects (font (size 1.016 1.016)))) (number "7" (effects (font (size 1.016 1.016)))))
+      (pin power_in line (at 0 7.54 270) (length 2.54)
+        (name "VCC" (effects (font (size 1.016 1.016)))) (number "8" (effects (font (size 1.016 1.016)))))))
   (symbol "power:GND"
     (pin_names (offset 0)) (in_bom no) (on_board no)
     (property "Reference" "#PWR" (at 0 -4 0) (effects (font (size 1.27 1.27)) (hide yes)))
     (property "Value" "GND" (at 0 -4 0) (effects (font (size 1.27 1.27))))
-    (symbol "GND_0_1"
+    (symbol "power:GND_0_1"
       (polyline (pts (xy 0 0) (xy 0 -1.27)) (stroke (width 0) (type default)) (fill (type none)))
       (polyline (pts (xy -1.27 -1.27) (xy 1.27 -1.27)) (stroke (width 0) (type default)) (fill (type none)))
       (polyline (pts (xy -0.762 -1.778) (xy 0.762 -1.778)) (stroke (width 0) (type default)) (fill (type none)))
       (polyline (pts (xy -0.254 -2.286) (xy 0.254 -2.286)) (stroke (width 0) (type default)) (fill (type none))))
-    (symbol "GND_1_1"
+    (symbol "power:GND_1_1"
       (pin power_in line (at 0 0 270) (length 0)
         (name "GND" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))))
   (symbol "power:VCC"
     (pin_names (offset 0)) (in_bom no) (on_board no)
     (property "Reference" "#PWR" (at 0 2.5 0) (effects (font (size 1.27 1.27)) (hide yes)))
     (property "Value" "VCC" (at 0 2.5 0) (effects (font (size 1.27 1.27))))
-    (symbol "VCC_0_1"
+    (symbol "power:VCC_0_1"
       (polyline (pts (xy 0 0) (xy 0 1.27)) (stroke (width 0) (type default)) (fill (type none)))
       (polyline (pts (xy -1.27 1.27) (xy 1.27 1.27)) (stroke (width 0) (type default)) (fill (type none))))
-    (symbol "VCC_1_1"
+    (symbol "power:VCC_1_1"
       (pin power_in line (at 0 0 90) (length 0)
         (name "VCC" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))))`;
 
@@ -332,18 +375,34 @@ const INLINE_LIB_SYMBOLS = `
 // Multi-pin ICs: pins at ±5.08mm on X, spaced 2.54mm on Y
 // ============================================================
 
-function schPinOffset(footprint: string, pinIndex: number): { dx: number; dy: number } {
-  const fp = footprint.toUpperCase();
-  const pads = padCount(footprint);
-
-  if (pads === 2) {
+function schPinOffset(libId: string, pinIndex: number): { dx: number; dy: number } {
+  if (libId === 'Device:R' || libId === 'Device:C' || libId === 'Device:LED' || libId === 'Connector_Generic:Conn_01x02') {
     return { dx: pinIndex === 0 ? -3.81 : 3.81, dy: 0 };
   }
-  if (fp.includes('SOT-23')) {
+  if (libId === 'Device:Q_NPN_BCE') {
     const offsets = [{ dx: -5.08, dy: 2.54 }, { dx: -5.08, dy: -2.54 }, { dx: 5.08, dy: 0 }];
     return offsets[pinIndex] ?? { dx: 0, dy: 0 };
   }
-  // ICs: left column (pins 1..N/2) and right column (pins N/2+1..N)
+  if (libId === 'Device:VReg_3Pin') {
+    const offsets = [{ dx: -6.35, dy: 0 }, { dx: 0, dy: -6.35 }, { dx: 6.35, dy: 0 }];
+    return offsets[pinIndex] ?? { dx: 0, dy: 0 };
+  }
+  if (libId === 'Timer:NE555P') {
+    const offsets = [
+      { dx: -7.54, dy: -2.54 },
+      { dx: -7.54, dy: 0 },
+      { dx: 7.54, dy: 2.54 },
+      { dx: -7.54, dy: 2.54 },
+      { dx: 7.54, dy: 0 },
+      { dx: 7.54, dy: -2.54 },
+      { dx: 7.54, dy: -5.08 },
+      { dx: 0, dy: 7.54 }
+    ];
+    return offsets[pinIndex] ?? { dx: 0, dy: 0 };
+  }
+  
+  // Generic IC fallback
+  const pads = 8;
   const half = Math.floor(pads / 2);
   if (pinIndex < half) {
     return { dx: -5.08, dy: (pinIndex - (half - 1) / 2) * 2.54 };
@@ -452,7 +511,7 @@ function generateSchematic(
   // Component symbols
   components.forEach((comp, i) => {
     const { x, y } = compPos[i]!;
-    const libId = footprintToLibId(comp.ref, comp.footprint);
+    const libId = footprintToLibId(comp.ref, comp.footprint, comp.value);
     const ref   = comp.ref.replace(/"/g, '\\"');
     const val   = comp.value.replace(/"/g, '\\"');
     const fp    = comp.footprint.replace(/"/g, '\\"');
@@ -477,7 +536,9 @@ function generateSchematic(
       const idx = compIdx.get(pin.ref);
       if (idx === undefined) return;
       const { x, y } = compPos[idx]!;
-      const off = schPinOffset(components[idx]!.footprint, (typeof pin.pin === 'number' ? pin.pin : 1) - 1);
+      const targetComp = components[idx]!;
+      const targetLibId = footprintToLibId(targetComp.ref, targetComp.footprint, targetComp.value);
+      const off = schPinOffset(targetLibId, (typeof pin.pin === 'number' ? pin.pin : 1) - 1);
       const px  = +(x + off.dx).toFixed(2);
       const py  = +(y + off.dy).toFixed(2);
       const netUpper = conn.name.toUpperCase();

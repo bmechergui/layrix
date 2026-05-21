@@ -22,6 +22,25 @@ export function Workspace({ project }: WorkspaceProps) {
     void fetchCredits();
   }, [fetchUser, fetchCredits]);
 
+  useEffect(() => {
+    const origHtmlOverflow = document.documentElement.style.overflow;
+    const origBodyOverflow = document.body.style.overflow;
+    const origHtmlHeight = document.documentElement.style.height;
+    const origBodyHeight = document.body.style.height;
+
+    document.documentElement.style.overflow = 'hidden';
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.height = '100%';
+    document.body.style.height = '100%';
+
+    return () => {
+      document.documentElement.style.overflow = origHtmlOverflow;
+      document.body.style.overflow = origBodyOverflow;
+      document.documentElement.style.height = origHtmlHeight;
+      document.body.style.height = origBodyHeight;
+    };
+  }, []);
+
   const effectiveStatus = livePcbStatus ?? project.status;
   const effectiveProject: Project = { ...project, status: effectiveStatus };
 

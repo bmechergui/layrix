@@ -311,7 +311,7 @@ export function SchemaView({ state }: { state: PCBState }) {
   ].filter(Boolean).join(' · ');
 
   return (
-    <div className="flex flex-col h-full bg-[#080808]">
+    <div className="flex flex-col h-full bg-[#080808] overflow-hidden">
       <StageHeader
         icon={<FileText size={12} />}
         title="Schematic"
@@ -326,7 +326,11 @@ export function SchemaView({ state }: { state: PCBState }) {
       />
 
       {effectiveMode === 'native' && nativeUrl ? (
-        <KiCanvasViewer src={nativeUrl} controls="basic" />
+        <KiCanvasViewer
+          src={nativeUrl}
+          controls="basic"
+          zoom="objects"
+        />
       ) : (
         <>
           {/* Sub-tabs */}
@@ -355,7 +359,7 @@ export function SchemaView({ state }: { state: PCBState }) {
 
           <div className="flex-1 min-h-0 overflow-hidden">
             {tab === 'diagram' && (
-              <div className="h-full overflow-auto p-4 bg-[#080808]">
+              <div className="h-full overflow-hidden p-3 bg-[#080808]">
                 <SchematicGraph components={components} connections={connections} />
               </div>
             )}

@@ -7,7 +7,8 @@
     "lint": "turbo run lint",
     "type-check": "turbo run type-check",
     "test": "turbo run test",
-    "clean": "turbo run clean && rm -rf node_modules"
+    "clean": "turbo run clean && rm -rf node_modules",
+    "visual-test-check": "node C:\\Users\\Mechegui\\.gemini\\antigravity\\scratch\\test-playwright.js"
   },
   "devDependencies": {
     "turbo": "^2.0.0",
