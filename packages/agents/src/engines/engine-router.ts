@@ -27,7 +27,11 @@ export function selectEngine(): PCBEngine {
   return 'circuit-synth';
 }
 
-/** Run Circuit-Synth and return KiCad files + placement summary */
+/**
+ * Run Circuit-Synth and return KiCad files + grid placement summary.
+ * Real pcbnew placement is applied by call_agent_placement in tools.ts;
+ * the grid here is only used as a fallback base for downstream steps.
+ */
 export async function runPCBEngine(
   schema: import('@layrix/types').SchemaJson,
   boardWidthMm = 50,
@@ -36,22 +40,18 @@ export async function runPCBEngine(
 ): Promise<PCBEngineResult> {
   const result = await runCircuitSynthEngine(schema, boardWidthMm, boardHeightMm, projectId);
 
-  // Compute placements for chat summary (grid layout, same as S-expression generator)
   const cols = Math.max(1, Math.ceil(Math.sqrt(schema.components.length)));
-  const placements = schema.components.map((comp, i) => {
-    const margin = 5;
-    const usableW = boardWidthMm - 2 * margin;
-    const usableH = boardHeightMm - 2 * margin;
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    return {
-      ref: comp.ref,
-      x_mm: +(margin + (col + 0.5) * (usableW / cols)).toFixed(1),
-      y_mm: +(margin + (row + 0.5) * (usableH / Math.ceil(schema.components.length / cols))).toFixed(1),
-      rotation: 0,
-      side: 'front',
-    };
-  });
+  const margin = 5;
+  const usableW = boardWidthMm - 2 * margin;
+  const usableH = boardHeightMm - 2 * margin;
+  const rows = Math.ceil(schema.components.length / cols);
+  const placements = schema.components.map((comp, i) => ({
+    ref: comp.ref,
+    x_mm: +(margin + (i % cols + 0.5) * (usableW / cols)).toFixed(1),
+    y_mm: +(margin + (Math.floor(i / cols) + 0.5) * (usableH / rows)).toFixed(1),
+    rotation: 0,
+    side: 'front',
+  }));
 
   return {
     engine: 'circuit-synth',

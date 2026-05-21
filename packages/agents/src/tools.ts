@@ -519,9 +519,11 @@ export async function executeToolStub(
       const decidedLayers: 2 | 4 | 8 =
         schema.components.length <= 12 && schema.nets.length <= 8 ? 2 : 4;
 
-      // Always have a base .kicad_pcb to ship to the viewer — Circuit-Synth
-      // regenerates with traces simulated when the real service is unreachable.
-      const base = await runPCBEngine(schema, boardW, boardH, projectId);
+      // Use the placed .kicad_pcb from cache when call_agent_placement ran first.
+      // Regenerate from Circuit-Synth only on a cold cache (e.g. routing called standalone).
+      const base = cached?.kicad_pcb_content
+        ? { kicad_pcb_content: cached.kicad_pcb_content }
+        : await runPCBEngine(schema, boardW, boardH, projectId);
 
       if (schema.components.length === 0) {
         return {
