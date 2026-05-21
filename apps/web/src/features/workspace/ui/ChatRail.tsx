@@ -130,16 +130,6 @@ export function ChatRail({ projectId, projectDescription }: ChatRailProps) {
               Describe your circuit in plain English. I&apos;ll design the schematic, place components,
               route the PCB, and run DRC.
             </p>
-            {projectDescription && (
-              <div className="mt-3 pt-3 border-t border-border/60">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground/60 mb-1">
-                  Project brief
-                </p>
-                <p className="text-xs text-foreground/80 italic leading-relaxed">
-                  {projectDescription}
-                </p>
-              </div>
-            )}
           </div>
         )}
 
