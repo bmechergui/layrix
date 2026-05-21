@@ -1,5 +1,6 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import {
   Download, FileArchive, FileSpreadsheet, Box, AlertCircle,
@@ -8,6 +9,15 @@ import {
 import { Button } from '@/shared/ui/button';
 import { StageHeader } from './StageHeader';
 import type { PCBState } from '@layrix/types';
+
+const View3D = dynamic(() => import('./View3D').then((m) => ({ default: m.View3D })), {
+  ssr: false,
+  loading: () => (
+    <div className="flex items-center justify-center h-full text-[#2a2a2a] text-xs font-mono">
+      Loading 3D…
+    </div>
+  ),
+});
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
@@ -106,8 +116,11 @@ function FileCard({ file, ready }: { file: OutputFile; ready: boolean }) {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
+type ExportTab = 'files' | '3d';
+
 export function ExportView({ state }: { state: PCBState }) {
   const ready     = state.status === 'DRC_CLEAN' || state.status === 'PCB_LIVRÉ';
+  const [tab, setTab] = useState<ExportTab>('files');
   const [qty, setQty] = useState<Qty>(5);
   const [showOrder, setShowOrder] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
@@ -127,14 +140,34 @@ export function ExportView({ state }: { state: PCBState }) {
     : <span className="text-warning">Pending DRC</span>;
 
   return (
-    <div className="flex flex-col h-full bg-[#080808]">
+    <div className="flex flex-col h-full bg-[#080808] overflow-hidden">
       <StageHeader
         icon={<Download size={12} />}
         title="Export & Manufacture"
         meta={metaBadge}
+        actions={
+          <div className="flex items-center gap-0.5 bg-[#111] rounded-lg p-0.5 border border-[#1e1e1e]">
+            {([['files', <Download key="d" size={10} />, 'Files'] , ['3d', <Box key="b" size={10} />, '3D']] as const).map(([id, icon, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setTab(id)}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-medium transition-all duration-150 ${
+                  tab === id
+                    ? 'bg-[#1a1a1a] text-foreground border border-[#2e2e2e]'
+                    : 'text-[#3d3d3d] hover:text-[#666]'
+                }`}
+              >
+                {icon}{label}
+              </button>
+            ))}
+          </div>
+        }
       />
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+      {tab === '3d' && <View3D state={state} />}
+
+      {tab === 'files' && <div className="flex-1 overflow-y-auto p-4 space-y-6">
 
         {/* Not ready warning */}
         {!ready && (
@@ -325,7 +358,7 @@ export function ExportView({ state }: { state: PCBState }) {
           </section>
         )}
 
-      </div>
+      </div>}
     </div>
   );
 }
