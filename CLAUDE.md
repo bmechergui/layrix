@@ -127,7 +127,12 @@ packages/
 services/
 └── kicad/          ← FastAPI Python headless KiCad
     ├── routers/circuit_synth.py  ← /circuit-synth/generate + /validate-symbols
-    └── tools/      ← placement, routing, drc, export, simulation (Phase 3)
+    ├── routers/placement.py      ← POST /place (explicit) + POST /place/auto (base64 I/O)
+    ├── routers/routing.py        ← POST /route/auto (Freerouting, base64 I/O)
+    ├── routers/drc.py            ← POST /drc/auto (kicad-cli, boucle auto-fix, base64 I/O)
+    ├── routers/export.py         ← POST /export/all (Gerbers + drill + CPL, zip base64)
+    ├── routers/erc.py            ← POST /erc (kicad-cli sch erc, auto-fix loop)
+    └── tools/      ← placement.py | placement_layout.py | routing.py | drc.py | export.py
 ```
 
 **Import paths :**
@@ -164,24 +169,35 @@ services/
 - System prompts dans `docs/agentdescription.md` — ne pas réécrire
 - **JAMAIS** de commande JLCPCB automatique — confirmation "OUI JE CONFIRME" obligatoire
 
-## Stratégie moteur PCB
+## Stratégie moteur PCB (état actuel — Phase 4)
 
-### Phase 2 (actuel) — Schéma + Viewer
-- **Haiku 4.5** génère JSON schema `{ components, nets, connections }` avec pin names KiCad
-- `validateAndCorrectSchema()` → POST `/circuit-synth/validate-symbols` (pré-vol)
-- **Circuit-Synth Python** → `CSComponent()` + `_safe_symbol()` → `.kicad_sch` + `.kicad_pcb`
+### Pipeline complet opérationnel
+
+```
+User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
+  ↓ call_agent_schema
+Haiku 4.5 → JSON schema { components, nets, connections, pin names KiCad }
+  ↓ validateAndCorrectSchema() → POST /circuit-synth/validate-symbols
+FastAPI circuit_synth.py → CSComponent() + _safe_symbol() → .kicad_sch + .kicad_pcb
+  ↓ call_agent_placement
+runRealPlacement() → POST /place/auto (pcbnew SetPosition/SetOrientationDegrees, base64 I/O)
+  fallback : placement-fallback.ts (algo pur TS si KICAD_SERVICE_URL absent)
+  ↓ call_agent_routing
+runRealRouting() → POST /route/auto (Freerouting .dsn → .ses → .kicad_pcb, base64 I/O)
+  fallback : routing-fallback.ts (MST pur TS)
+  ↓ call_agent_drc (boucle max 3×)
+runRealDRC() → POST /drc/auto (kicad-cli pcb drc, auto-fix, base64 I/O)
+  ↓ call_agent_export
+runRealExport() → POST /export/all (Gerbers + drill + CPL, zip base64)
+  ↓ Upload Supabase Storage → signed URLs KiCanvas
+```
+
 - Fallback inline : S-expression TypeScript si FastAPI indisponible
-- Placement / Routage / DRC : **stubs TypeScript** (géométrie simple) — suffisant pour Phase 2
 - **KiCanvas** → charge `.kicad_sch` / `.kicad_pcb` depuis Supabase Storage (signed URL 1h)
-
-### Phase 3 (à venir) — Placement + Routage + DRC réels
-- `POST /place` → pcbnew `SetPosition()` / `SetOrientation()`
-- `POST /route` → Freerouting Java (`.kicad_pcb → .dsn → .ses → .kicad_pcb`)
-- `POST /drc` → pcbnew DRC natif → violations JSON
-- Export Gerbers / BOM LCSC / STEP 3D
-- Commande JLCPCB : **"OUI JE CONFIRME" obligatoire — jamais automatique**
+- Client TS : `packages/agents/src/engines/placement-service.ts` | `routing-service.ts` | `drc-service.ts` | `export-service.ts`
 
 **NEVER** TSCircuit en nouveau code — déprécié depuis v0.3.0
+**NEVER** de commande JLCPCB automatique — confirmation "OUI JE CONFIRME" obligatoire
 
 ## Système de crédits
 
@@ -244,11 +260,11 @@ hidden md:block shrink-0
 
 ## Phase actuelle
 
-**Phase 2 — Dashboard + Auth + Chat Agent MVP** ✅ COMPLÉTÉE. Voir `PLAN.md`.
+**Phase 4 — 3D + JLCPCB + Paiement** (en cours). Voir `PLAN.md`.
 
-Phases complétées : Phase 0 ✓ · Phase 1 ✓ · **Phase 2 ✓**
+Phases complétées : Phase 0 ✓ · Phase 1 ✓ · Phase 2 ✓ · Phase 3 ✓ · **Phase 4.1 ✓**
 
-### Phase 2 — Réalisations
+### Phase 2 — Réalisations ✅
 - ✅ Auth Supabase + middleware JWT (`/dashboard/*`)
 - ✅ Chat + Viewer split layout (ChatPanel + ViewerPanel)
 - ✅ Orchestrateur Sonnet 4.6 + SSE streaming
@@ -260,13 +276,25 @@ Phases complétées : Phase 0 ✓ · Phase 1 ✓ · **Phase 2 ✓**
 - ✅ KiCanvas viewer — auto-switch tab Schematic/Routing à l'arrivée SSE
 - ✅ Crédits déduction atomique Supabase RPC
 
-### Prochaine phase : Phase 3 — KiCad réel (pcbnew + Freerouting)
-Objectif : remplacer les stubs TS par le vrai pipeline KiCad
-1. FastAPI `/place` → pcbnew placement
-2. FastAPI `/route` → Freerouting
-3. FastAPI `/drc` → pcbnew DRC natif
-4. Export Gerbers + BOM LCSC
-5. Agent Footprint cascade 8 étapes (LCSC + SnapMagic + Octopart)
+### Phase 3 — Réalisations ✅
+- ✅ FastAPI `POST /place/auto` → pcbnew `SetPosition()` / `SetOrientationDegrees()` (base64 I/O)
+- ✅ FastAPI `POST /route/auto` → Freerouting `.kicad_pcb → .dsn → .ses → .kicad_pcb` (base64 I/O)
+- ✅ FastAPI `POST /drc/auto` → kicad-cli DRC natif, boucle auto-fix max 3× (base64 I/O)
+- ✅ FastAPI `POST /export/all` → Gerbers + drill + CPL, zip base64
+- ✅ FastAPI `POST /erc` → kicad-cli ERC schéma, auto-fix loop
+- ✅ Client TS : `placement-service.ts` | `routing-service.ts` | `drc-service.ts` | `export-service.ts`
+- ✅ Fallbacks TS purs : `placement-fallback.ts` | `erc-fallback.ts`
+- ✅ Algorithm layout pur Python : `placement_layout.py` (IC centre, passifs cluster, conn bord)
+- ✅ Agent Footprint cascade pgvector community cache (étape 1.5) + 4 étapes KiCad/SnapMagic/LCSC/AI
+- ✅ Tests unitaires : `placement-service.test.ts` | `drc-service.test.ts` | `routing-service.test.ts` | etc.
+
+### Phase 4 — Réalisations ✅
+- ✅ Viewer 3D Three.js (STEP via occt-import-js, onglet Export, 1 crédit, plan Pro+)
+
+### Prochaines étapes Phase 4
+- **4.2** — Simulation ngspice (agent Haiku → netlist SPICE → `/simulate` → graphes Recharts)
+- **4.3** — Agent BOM/Export + JLCPCB (Gerbers.zip + BOM CSV + devis + modal "OUI JE CONFIRME")
+- **4.4** — Paiement Lemon Squeezy (webhook + page billing + top-ups)
 
 ---
 
@@ -278,17 +306,17 @@ Objectif : remplacer les stubs TS par le vrai pipeline KiCad
 3. `npx skills find "query"` → skills.sh
 4. `/skill-creator:skill-creator` → créer si rien n'existe
 
-**Skills prioritaires Phase 3 :**
+**Skills prioritaires Phase 4 :**
 1. `layrix-prompt-improver` — TOUJOURS en premier
 2. `layrix-circuit-synth` — génération schéma KiCad, mapping symbols, pin names
 3. `layrix-kicad-service` — FastAPI pcbnew : placement, Freerouting, DRC, export
 4. `layrix-pcb-agent` — boucle agentique + états machine
-5. `layrix-footprint` — cascade 8 étapes LCSC/SnapMagic/Octopart
+5. `layrix-footprint` — cascade LCSC/SnapMagic/Octopart/AI + pgvector community cache
 6. `layrix-drc` — boucle DRC max 3×, corrections pcbnew
 7. `layrix-credits` — déduction crédits Supabase
-8. `layrix-viewer` — KiCanvas + Three.js 3D
-9. `/everything-claude-code:python-patterns` — FastAPI / pcbnew
-10. `/everything-claude-code:security-scan` — avant commit
+8. `layrix-viewer` — KiCanvas dual-mode + Three.js 3D
+9. `/everything-claude-code:python-patterns` — FastAPI / pcbnew / ngspice
+10. `/everything-claude-code:security-scan` — avant commit (auth / paiement)
 
 **Créer un skill :** `/skill-creator:skill-creator` → `.claude/skills/layrix-xxx/`
 **Améliorer un skill :** montrer les changements proposés → attendre confirmation
