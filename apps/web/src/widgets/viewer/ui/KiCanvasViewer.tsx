@@ -238,8 +238,8 @@ export function KiCanvasViewer({ src, controls = 'basic', zoom = 'objects' }: Ki
     el.addEventListener('wheel', handleWheel, { capture: true, passive: false });
 
     // 3. Pointer event mapping (Left drag -> Middle click pan)
-    const target = el.shadowRoot || el;
-    const getInnerTarget = () => el.shadowRoot?.querySelector('canvas') || target;
+    const target = el.shadowRoot ?? el;
+    const getInnerTarget = () => findCanvasInShadow(el) ?? target;
     let isPending = false;
     let isDragging = false;
     let startX = 0;
