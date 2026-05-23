@@ -10,6 +10,22 @@ interface KiCanvasViewerProps {
   zoom?: string;
 }
 
+type KiViewer = { zoom_to_board?: () => void; zoom_to_page?: () => void };
+
+function findKiCanvasViewer(el: Element): KiViewer | null {
+  const shadow = (el as HTMLElement).shadowRoot;
+  if (!shadow) return null;
+  for (const tag of ['kc-board-viewer', 'kc-schematic-viewer']) {
+    const ve = shadow.querySelector(tag) as (HTMLElement & { viewer?: KiViewer }) | null;
+    if (ve?.viewer) return ve.viewer;
+  }
+  for (const d of Array.from(shadow.querySelectorAll('*'))) {
+    const found = findKiCanvasViewer(d);
+    if (found) return found;
+  }
+  return null;
+}
+
 function findCanvasInShadow(el: Element): HTMLCanvasElement | null {
   const shadow = (el as HTMLElement).shadowRoot;
   if (!shadow) return null;
@@ -111,12 +127,10 @@ export function KiCanvasViewer({ src, controls = 'basic', zoom = 'objects' }: Ki
   const handleZoomToFit = useCallback(() => {
     const el = embedRef.current;
     if (!el) return;
-    const canvas = findCanvasInShadow(el);
-    const evt = new KeyboardEvent('keydown', { key: 'Home', code: 'Home', bubbles: true, composed: true });
-    if (canvas) canvas.dispatchEvent(evt);
-    else window.dispatchEvent(evt);
-    el.removeAttribute('zoom');
-    setTimeout(() => el.setAttribute('zoom', 'objects'), 10);
+    const viewer = findKiCanvasViewer(el);
+    if (viewer) {
+      viewer.zoom_to_board?.() ?? viewer.zoom_to_page?.();
+    }
   }, []);
 
   const startHints = useCallback((cancelled: () => boolean) => {
