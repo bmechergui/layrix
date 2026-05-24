@@ -35,7 +35,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
                kicad-footprints \
                python3-pip \
                python3-dev \
-               python3-pcbnew \
                xvfb \
                openjdk-17-jre-headless \
                zip \
