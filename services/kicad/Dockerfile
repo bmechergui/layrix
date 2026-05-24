@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gnupg \
         curl \
         ca-certificates \
+        git \
     && rm -rf /var/lib/apt/lists/* \
     && echo "deb https://ppa.launchpadcontent.net/kicad/kicad-8.0-releases/ubuntu jammy main" \
         > /etc/apt/sources.list.d/kicad-kicad-8_0-releases.list \
@@ -68,7 +69,7 @@ RUN mkdir -p /tmp/kicad-jobs
 
 EXPOSE 8766
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:8766/health || exit 1
 
 # Start Xvfb (headless display for kicad-cli) then uvicorn on port 8766
