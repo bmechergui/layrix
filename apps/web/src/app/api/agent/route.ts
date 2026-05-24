@@ -4,6 +4,7 @@ import { createRouteHandlerClient } from '@/shared/lib/supabase-server';
 import { encodeSse, sseHeaders } from './lib/sse';
 import { runSimulatorAgent } from './lib/simulator';
 import { runRealOrchestrator } from './lib/orchestrator-bridge';
+import { runLocalPipeline } from './lib/local-pipeline';
 import { resolveAgentMode, isOrchestratorAvailable } from './lib/agent-mode';
 
 export const dynamic = 'force-dynamic';
@@ -64,16 +65,34 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       try {
         if (useOrchestrator) {
-          await runRealOrchestrator({
-            controller,
-            encoder,
-            supabase,
-            userId: user.id,
-            projectId,
-            prompt,
-            iterationStart: project.iteration_count ?? 0,
-            balanceStart: balance,
-          });
+          try {
+            await runRealOrchestrator({
+              controller,
+              encoder,
+              supabase,
+              userId: user.id,
+              projectId,
+              prompt,
+              iterationStart: project.iteration_count ?? 0,
+              balanceStart: balance,
+            });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg.includes('credit') || msg.includes('402')) {
+              await runLocalPipeline({
+                controller,
+                encoder,
+                supabase,
+                userId: user.id,
+                projectId,
+                prompt,
+                iterationStart: project.iteration_count ?? 0,
+                balanceStart: balance,
+              });
+            } else {
+              throw err;
+            }
+          }
         } else {
           await runSimulatorAgent({
             controller,

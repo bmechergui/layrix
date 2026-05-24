@@ -138,6 +138,9 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
           break;
 
         case 'error':
+          if (ev.message.includes('credit') || ev.message.includes('402')) {
+            throw new Error(ev.message); // Throw to trigger fallback
+          }
           controller.enqueue(encoder.encode(encodeSse({ type: 'error', message: ev.message })));
           break;
 
@@ -162,6 +165,9 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Orchestrator failed';
+    if (message.includes('credit') || message.includes('402')) {
+      throw err; // Re-throw to trigger fallback in route.ts
+    }
     controller.enqueue(encoder.encode(encodeSse({ type: 'error', message })));
   }
 }
