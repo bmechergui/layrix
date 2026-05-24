@@ -1,6 +1,6 @@
 'use client';
 
-import { Activity, Zap } from 'lucide-react';
+import { Activity, Zap, AlertTriangle } from 'lucide-react';
 import type { PCBState, SimulationVector } from '@layrix/types';
 import { StageHeader } from './StageHeader';
 import {
@@ -175,6 +175,7 @@ export function SimulationView({ state }: SimulationViewProps) {
 
   const isAC = sim.sim_type === 'ac';
   const groups = groupByUnit(sim.vectors);
+  const excluded = sim.excluded_components ?? [];
 
   return (
     <div className="flex flex-col h-full bg-[#060606] overflow-y-auto">
@@ -189,6 +190,18 @@ export function SimulationView({ state }: SimulationViewProps) {
           </span>
         }
       />
+
+      {excluded.length > 0 && (
+        <div className="mx-4 mt-3 flex items-start gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+          <AlertTriangle size={12} className="text-amber-400 mt-0.5 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-[10px] font-medium text-amber-400">Analog subsystem only</p>
+            <p className="text-[9px] text-amber-400/70 mt-0.5 font-mono">
+              Excluded (no SPICE model): {excluded.join(', ')}
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-col gap-6 p-4">
         {Array.from(groups.entries()).map(([unit, vecs]) => (

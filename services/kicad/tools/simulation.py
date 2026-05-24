@@ -55,6 +55,12 @@ def run_simulation_from_content(
             log.warning("kicad-cli unavailable, using stub netlist: %s", exc)
             netlist = _stub_netlist(sch_content)
 
+        # --- Filter out digital ICs that have no SPICE models ---
+        netlist, excluded_refs = _filter_analog_netlist(netlist)
+        if excluded_refs:
+            log.info("Analog-only simulation: excluded %d component(s): %s",
+                     len(excluded_refs), ", ".join(excluded_refs))
+
         # --- Build .sp command file ---
         sp_content = _build_sp(netlist, sim_type)
         with open(sp_path, "w", encoding="utf-8") as f:
@@ -82,7 +88,12 @@ def run_simulation_from_content(
             log.warning("ngspice failed — returning synthetic demo waveforms: %s", exc)
             vectors = _demo_vectors(sim_type)
 
-        return {"status": "ok", "sim_type": sim_type, "vectors": vectors}
+        return {
+            "status": "ok",
+            "sim_type": sim_type,
+            "vectors": vectors,
+            "excluded_components": excluded_refs,
+        }
 
 
 def run_simulation(netlist_path: str, sim_type: str, output_dir: str) -> dict[str, Any]:
@@ -117,6 +128,74 @@ def run_simulation(netlist_path: str, sim_type: str, output_dir: str) -> dict[st
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+# Component model names that lack SPICE simulation models (MCUs, digital ICs, etc.)
+_DIGITAL_IC_PATTERNS = [
+    r"STM32", r"STM8",                     # ST MCUs
+    r"ESP32", r"ESP8266",                   # Espressif
+    r"ATMEGA", r"ATTINY", r"ATXMEGA",      # Microchip AVR
+    r"PIC\d", r"DSPIC",                    # Microchip PIC
+    r"LPC\d",                               # NXP LPC
+    r"RP\d",                                # RP2040
+    r"MSP430",                              # TI MSP430
+    r"FPGA", r"CPLD",                       # Programmable logic
+    r"XC\d",                                # Xilinx FPGA
+    r"FT232", r"FT245", r"FT4232",         # FTDI USB bridges
+    r"CH340", r"CH341", r"CP210",           # USB-UART bridges
+    r"W25Q", r"MX25L", r"AT25",            # SPI Flash
+    r"24LC", r"24C0", r"M24C",             # I2C EEPROM
+    r"MPU6050", r"BME280", r"BMP280",      # Complex sensors
+    r"SSD1306", r"ILI9341",                # Display controllers
+]
+
+
+def _is_digital_ic(model_name: str) -> bool:
+    """Return True if model_name matches a known digital IC without a SPICE model."""
+    upper = model_name.upper()
+    return any(re.search(pat, upper) for pat in _DIGITAL_IC_PATTERNS)
+
+
+def _filter_analog_netlist(netlist: str) -> tuple[str, list[str]]:
+    """Remove non-simulatable digital ICs from a SPICE netlist.
+
+    Returns (filtered_netlist, excluded_refs). Subcircuit instantiations (X
+    lines) whose model matches a known digital IC are dropped along with their
+    SPICE continuation lines.
+    """
+    lines = netlist.splitlines(keepends=True)
+    kept: list[str] = []
+    excluded_refs: list[str] = []
+    skip_continuation = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # SPICE continuation line — inherit the fate of the previous element
+        if stripped.startswith("+"):
+            if not skip_continuation:
+                kept.append(line)
+            continue
+
+        skip_continuation = False
+
+        # Empty lines, comments, directives — always keep
+        if not stripped or stripped.startswith("*") or stripped.startswith("."):
+            kept.append(line)
+            continue
+
+        if stripped[0].upper() == "X":
+            tokens = stripped.split()
+            model = tokens[-1] if len(tokens) > 1 else ""
+            ref = tokens[0] if tokens else stripped
+            if _is_digital_ic(model):
+                excluded_refs.append(ref)
+                skip_continuation = True
+                continue
+
+        kept.append(line)
+
+    return "".join(kept), excluded_refs
+
 
 _SIM_CMDS: dict[str, str] = {
     "transient": ".tran 1us 1ms\n.probe v(*) i(*)",

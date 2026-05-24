@@ -201,6 +201,7 @@ export interface SimulationVector {
 export interface SimulationData {
   sim_type: string;
   vectors: SimulationVector[];
+  excluded_components?: string[];
 }
 
 export const CREDIT_COSTS: Record<AgentAction, number> = {
