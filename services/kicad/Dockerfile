@@ -45,6 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && for i in 1 2 3; do \
            apt-get install -y --no-install-recommends --fix-missing \
                kicad \
+               kicad-symbols \
                kicad-footprints \
                python3-pip \
                python3-dev \
@@ -54,6 +55,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
            && break || sleep 30; \
        done \
     && rm -rf /var/lib/apt/lists/*
+
+ENV KICAD_SYMBOL_DIR=/usr/share/kicad/symbols
+ENV KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints
 
 # Copier les requirements et installer Python deps
 WORKDIR /app

@@ -125,7 +125,8 @@ def _export_specctra(pcb_bytes: bytes, dsn_path: Path) -> None:
         tmp_pcb_path = tmp_pcb.name
     try:
         board = pcbnew.LoadBoard(tmp_pcb_path)
-        pcbnew.ExportSpecctraSession(board, str(dsn_path))
+        # KiCad 8 uses ExportSpecctraDSN instead of ExportSpecctraSession
+        pcbnew.ExportSpecctraDSN(board, str(dsn_path))
     finally:
         Path(tmp_pcb_path).unlink(missing_ok=True)
 
