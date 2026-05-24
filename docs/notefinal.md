@@ -459,6 +459,59 @@ Utiliser Haiku pour "décider" du placement — inutile et coûteux.
 
 ---
 
+### 2026-05-24 — Architecture placement actuelle + module payant circuit-synth
+
+**Où on utilise le placement :**
+
+```
+call_agent_placement (tools.ts)
+  ↓
+Priorité 1 — Backend Docker/WSL up :
+  runRealPlacement() → POST /place/auto (FastAPI)
+    → placement_layout.py (algo Python)
+    → pcbnew.SetPosition() (validation physique)
+    → engine: 'pcbnew'
+
+Priorité 2 — Backend absent (Windows dev) :
+  computeLayout() → placement-fallback.ts (algo TS identique)
+  applyLayoutToPcb() (réécrit (at X Y) dans S-expression)
+  → engine: 'fallback-ts'
+```
+
+**Algo de placement actuel (les deux modes) :**
+- ICs → centre du board
+- Résistances / caps / diodes → cluster autour des ICs
+- Connecteurs → bords gauche/droite
+- Misc → bas du board
+
+Pas d'intelligence topologique — C1 n'est pas forcément placé près du pin VCC de U1.
+
+**Module payant circuit-synth pour le placement intelligent :**
+
+`circuit-synth` 0.12.1 contient un module PCB (`kicad-pcb-api`) avec placement hiérarchique et force-directed, mais il a été **retiré de la version open source** :
+
+```python
+# services/kicad/.venv/.../circuit_synth/pcb/__init__.py
+"""
+PCB generation functionality is no longer included in the open source version.
+Contact Circuit Synth for licensing information if you need PCB features.
+"""
+```
+
+Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de prix public affiché).
+
+**Alternative gratuite envisagée :** RL_PCB (Reinforcement Learning)
+→ https://github.com/LukeVassallo/RL_PCB
+→ Combinaison recommandée : LLM (Claude) suggère la stratégie → RL_PCB optimise → pcbnew valide
+
+**Fichiers concernés :**
+- `packages/agents/src/tools.ts` — `call_agent_placement`
+- `packages/agents/src/engines/placement-fallback.ts` — algo TS
+- `services/kicad/tools/placement_layout.py` — algo Python
+- `services/kicad/tools/placement.py` — appel pcbnew
+
+---
+
 ## Template pour la prochaine décision
 
 ```
