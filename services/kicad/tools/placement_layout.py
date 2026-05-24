@@ -143,12 +143,19 @@ def _place_cluster(
             ax, ay = ic_positions[ic_idx]
         else:
             ax, ay = board_w / 2.0, board_h / 2.0
-        radius = CLUSTER_RADIUS_BASE_MM + CLUSTER_RADIUS_STEP_MM * len(refs)
-        for i, ref in enumerate(refs):
-            angle = 2 * math.pi * i / max(1, len(refs))
-            x = _clamp(ax + radius * math.cos(angle), MARGIN_MM, board_w - MARGIN_MM)
-            y = _clamp(ay + radius * math.sin(angle), MARGIN_MM, board_h - MARGIN_MM)
-            out[ref] = (x, y, 0.0)
+        signal_refs = [r for r in refs if classify_kind(r) != "CAP"]
+        cap_refs = [r for r in refs if classify_kind(r) == "CAP"]
+        signal_radius = CLUSTER_RADIUS_BASE_MM + CLUSTER_RADIUS_STEP_MM * len(signal_refs)
+        cap_radius = max(4.0, CLUSTER_RADIUS_BASE_MM / 2)
+        for group_refs, radius, rotation in (
+            (signal_refs, signal_radius, 0.0),
+            (cap_refs, cap_radius, 90.0),
+        ):
+            for i, ref in enumerate(group_refs):
+                angle = 2 * math.pi * i / max(1, len(group_refs))
+                x = _clamp(ax + radius * math.cos(angle), MARGIN_MM, board_w - MARGIN_MM)
+                y = _clamp(ay + radius * math.sin(angle), MARGIN_MM, board_h - MARGIN_MM)
+                out[ref] = (x, y, rotation)
     return out
 
 
@@ -171,7 +178,7 @@ def _place_connectors(
         step = usable_h / (len(refs) + 1)
         for i, ref in enumerate(refs):
             y = _clamp(MARGIN_MM + step * (i + 1), MARGIN_MM, board_h - MARGIN_MM)
-            out[ref] = (_clamp(x, MARGIN_MM, board_w - MARGIN_MM), y, 0.0)
+            out[ref] = (_clamp(x, MARGIN_MM, board_w - MARGIN_MM), y, 90.0)
     return out
 
 

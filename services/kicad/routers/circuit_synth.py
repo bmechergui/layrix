@@ -911,19 +911,153 @@ def _generate_schematic_fallback(
     return "\n".join(lines)
 
 
-def _pad_count(footprint: str) -> int:
-    fp = footprint.upper()
-    if "SOT-23-5" in fp:
-        return 5
-    if "SOT-23" in fp:
-        return 3
-    if "DIP-8" in fp or "TSSOP-8" in fp or "SOIC-8" in fp:
-        return 8
-    if "DIP-14" in fp:
-        return 14
-    if "DIP-16" in fp or "SOIC-16" in fp:
-        return 16
-    return 2
+def _footprint_pads(fp: str) -> list[str]:
+    """Return KiCad pad S-expression lines for the given footprint.
+
+    Each line contains the literal ``{NET}`` placeholder to be replaced by the
+    caller with `` (net N "NAME")`` or '' before the closing ``)``.
+    """
+    fp_up = fp.upper()
+
+    def _smd(num: str, x: float, y: float, w: float, h: float) -> str:
+        return (f'    (pad "{num}" smd roundrect '
+                f'(at {x} {y}) (size {w} {h}) '
+                f'(layers "F.Cu" "F.Paste" "F.Mask") '
+                f'(roundrect_rratio 0.25){{NET}})')
+
+    def _tht(num: str, x: float, y: float, drill: float, size: float, sq: bool = False) -> str:
+        shape = "rect" if sq else "circle"
+        return (f'    (pad "{num}" thru_hole {shape} '
+                f'(at {x} {y}) (size {size} {size}) '
+                f'(drill {drill}) '
+                f'(layers "*.Cu" "*.Mask"){{NET}})')
+
+    # ── SMD 2-pad passives ───────────────────────────────────────────────────
+    if any(t in fp_up for t in ("0402", "1005METRIC")):
+        return [_smd("1", -0.65, 0, 1.3, 0.9), _smd("2", 0.65, 0, 1.3, 0.9)]
+    if any(t in fp_up for t in ("0603", "1608METRIC")):
+        return [_smd("1", -0.8, 0, 1.8, 1.2), _smd("2", 0.8, 0, 1.8, 1.2)]
+    if any(t in fp_up for t in ("0805", "2012METRIC")):
+        return [_smd("1", -1.05, 0, 2.2, 1.5), _smd("2", 1.05, 0, 2.2, 1.5)]
+    if any(t in fp_up for t in ("1206", "3216METRIC")):
+        return [_smd("1", -1.6, 0, 3.2, 1.8), _smd("2", 1.6, 0, 3.2, 1.8)]
+
+    # ── THT axial resistor ───────────────────────────────────────────────────
+    if "AXIAL" in fp_up:
+        return [_tht("1", -5.08, 0, 0.8, 1.8, sq=True), _tht("2", 5.08, 0, 0.8, 1.8)]
+
+    # ── THT LED ─────────────────────────────────────────────────────────────
+    if "LED_D" in fp_up or ("LED" in fp_up and "THT" in fp_up):
+        return [_tht("1", -1.27, 0, 0.8, 1.6, sq=True), _tht("2", 1.27, 0, 0.8, 1.6)]
+
+    # ── THT radial capacitor ─────────────────────────────────────────────────
+    if "RADIAL" in fp_up:
+        return [_tht("1", 0, 0, 0.8, 1.6, sq=True), _tht("2", 1.75, 0, 0.8, 1.6)]
+
+    # ── SOT-23-5 ─────────────────────────────────────────────────────────────
+    if "SOT-23-5" in fp_up or "SOT23-5" in fp_up:
+        return [
+            _smd("1", -1.5, -1.3, 0.6, 1.0), _smd("2", -1.5, 0, 0.6, 1.0),
+            _smd("3", -1.5, 1.3, 0.6, 1.0),  _smd("4", 1.5, 1.3, 0.6, 1.0),
+            _smd("5", 1.5, 0, 0.6, 1.0),
+        ]
+
+    # ── SOT-23 ───────────────────────────────────────────────────────────────
+    if "SOT-23" in fp_up or "SOT23" in fp_up:
+        return [
+            _smd("1", -0.95, 1.2, 1.0, 1.4),
+            _smd("2", -0.95, -1.2, 1.0, 1.4),
+            _smd("3", 0.95, 0, 1.0, 1.4),
+        ]
+
+    # ── SOT-223 ──────────────────────────────────────────────────────────────
+    if "SOT-223" in fp_up or "SOT223" in fp_up:
+        return [
+            _smd("1", -2.3, 1.65, 1.2, 2.0),
+            _smd("2", 0, 1.65, 1.2, 2.0),
+            _smd("3", 2.3, 1.65, 1.2, 2.0),
+            _smd("2", 0, -2.85, 3.5, 2.0),  # tab shares pin 2
+        ]
+
+    # ── TO-220 ───────────────────────────────────────────────────────────────
+    if "TO-220" in fp_up:
+        return [
+            _tht("1", -2.54, 0, 1.0, 2.1, sq=True),
+            _tht("2", 0, 0, 1.0, 2.1),
+            _tht("3", 2.54, 0, 1.0, 2.1),
+        ]
+
+    # ── DIP-8 ────────────────────────────────────────────────────────────────
+    if "DIP-8" in fp_up:
+        row_x, pitch, half = 3.81, 2.54, 3.81
+        pads: list[str] = []
+        for i in range(4):
+            y = round(-half + i * pitch, 3)
+            pads.append(_tht(str(i + 1), -row_x, y, 0.8, 1.6, sq=(i == 0)))
+            pads.append(_tht(str(8 - i), row_x, y, 0.8, 1.6))
+        return pads
+
+    # ── TSSOP-8 ──────────────────────────────────────────────────────────────
+    if "TSSOP-8" in fp_up or "TSSOP8" in fp_up:
+        pitch, row_x = 0.65, 2.175
+        half = 1.5 * pitch
+        pads = []
+        for i in range(4):
+            y = round(-half + i * pitch, 3)
+            pads.append(_smd(str(i + 1), -row_x, y, 0.3, 1.0))
+            pads.append(_smd(str(8 - i), row_x, y, 0.3, 1.0))
+        return pads
+
+    # ── SOIC-8 ───────────────────────────────────────────────────────────────
+    if "SOIC-8" in fp_up or "SOIC8" in fp_up:
+        pitch, row_x = 1.27, 2.7
+        half = 1.5 * pitch
+        pads = []
+        for i in range(4):
+            y = round(-half + i * pitch, 3)
+            pads.append(_smd(str(i + 1), -row_x, y, 0.6, 1.55))
+            pads.append(_smd(str(8 - i), row_x, y, 0.6, 1.55))
+        return pads
+
+    # ── PinHeader connectors ─────────────────────────────────────────────────
+    if any(t in fp_up for t in ("PINHEADER", "CONN_01X", "CONN_1X")):
+        m = re.search(r'(\d+)', fp.split(":")[-1])
+        n = min(int(m.group(1)) if m else 2, 24)
+        half = (n - 1) * 2.54 / 2
+        return [
+            _tht(str(i + 1), 0, round(-half + i * 2.54, 3), 1.0, 1.8, sq=(i == 0))
+            for i in range(n)
+        ]
+
+    # ── Fallback: 2 SMD pads (0402-sized) ────────────────────────────────────
+    return [_smd("1", -0.65, 0, 1.3, 0.9), _smd("2", 0.65, 0, 1.3, 0.9)]
+
+
+def _net_classes_sexpr(power_net_names: list[str]) -> str:
+    """KiCad net_settings: Default 0.2 mm signal, Power 0.5 mm for GND/VCC nets."""
+    adds = "".join(f'\n        (add_net "{n}")' for n in sorted(set(power_net_names)))
+    return (
+        "  (net_settings\n"
+        "    (net_classes\n"
+        '      (net_class "Default" ""\n'
+        "        (clearance 0.2)\n"
+        "        (trace_width 0.2)\n"
+        "        (diff_pair_gap 0.25)\n"
+        "        (diff_pair_via_gap 0.25)\n"
+        "        (via_dia 0.6)\n"
+        "        (via_drill 0.3)\n"
+        "        (uvia_dia 0.3)\n"
+        "        (uvia_drill 0.1))\n"
+        '      (net_class "Power" ""\n'
+        "        (clearance 0.25)\n"
+        "        (trace_width 0.5)\n"
+        "        (diff_pair_gap 0.25)\n"
+        "        (diff_pair_via_gap 0.25)\n"
+        "        (via_dia 0.8)\n"
+        "        (via_drill 0.4)\n"
+        "        (uvia_dia 0.3)\n"
+        f"        (uvia_drill 0.1){adds})))"
+    )
 
 
 def _generate_pcb_sexpr(
@@ -947,64 +1081,67 @@ def _generate_pcb_sexpr(
     lines.append('  )')
     lines.append('  (setup (pad_to_mask_clearance 0.05))')
 
+    # Net declarations
+    net_idx_map: dict[str, int] = {}
+    net_name_map: dict[int, str] = {}
     lines.append('  (net 0 "")')
-    for i, net_name in enumerate(([c.name for c in connections] or []), start=1):
-        escaped = net_name.replace('"', '\\"')
+    for i, net in enumerate(connections, start=1):
+        escaped = net.name.replace('"', '\\"')
         lines.append(f'  (net {i} "{escaped}")')
+        net_idx_map[net.name] = i
+        net_name_map[i] = net.name
 
+    # Net classes (Power 0.5mm for GND/VCC, Default 0.2mm signal)
+    power_nets = [n.name for n in connections if any(
+        p in n.name.upper() for p in ("GND", "VCC", "VDD", "VBUS", "+5V", "+3V3", "PWR", "AVCC", "AGND")
+    )]
+    lines.append(_net_classes_sexpr(power_nets))
+
+    # Board outline
     bw, bh = board_w, board_h
     for x1, y1, x2, y2 in [(0, 0, bw, 0), (bw, 0, bw, bh), (bw, bh, 0, bh), (0, bh, 0, 0)]:
         lines.append(
             f'  (gr_line (start {x1} {y1}) (end {x2} {y2}) (layer "Edge.Cuts") (width 0.05))'
         )
 
-    comp_positions: dict[str, tuple[float, float]] = {}
+    # Build pad→net map: (ref, pad_num_str) → net_id
+    pad_net_map: dict[tuple[str, str], int] = {}
+    for net in connections:
+        net_id = net_idx_map.get(net.name, 0)
+        for pin_ref in net.pins:
+            pad_net_map[(pin_ref.ref, str(pin_ref.pin))] = net_id
+
+    # Grid placement (real placement done later by /place/auto)
     cols = max(1, math.ceil(math.sqrt(len(components))))
+    margin = 5.0
     for idx, comp in enumerate(components):
         col = idx % cols
         row = idx // cols
-        margin = 5.0
         x = margin + (col + 0.5) * ((board_w - 2 * margin) / cols)
         y = margin + (row + 0.5) * ((board_h - 2 * margin) / math.ceil(len(components) / cols))
         x, y = round(x, 3), round(y, 3)
-        comp_positions[comp.ref] = (x, y)
+
+        fp_full = _expand_footprint(comp)
+        fp_e = fp_full.replace('"', '\\"')
         ref_e = comp.ref.replace('"', '\\"')
         val_e = comp.value.replace('"', '\\"')
-        fp_e = comp.footprint.replace('"', '\\"')
-        pad_count = _pad_count(comp.footprint)
+
         lines.append(f'  (footprint "{fp_e}" (layer "F.Cu") (at {x} {y})')
         lines.append(f'    (property "Reference" "{ref_e}" (at 0 -2 0) (layer "F.SilkS"))')
         lines.append(f'    (property "Value" "{val_e}" (at 0 2 0) (layer "F.Fab"))')
-        spacing = 1.0
-        start_x = -(pad_count - 1) * spacing / 2
-        for p in range(pad_count):
-            px = round(start_x + p * spacing, 3)
-            lines.append(
-                f'    (pad "{p + 1}" smd rect (at {px} 0) (size 0.6 0.6) (layers "F.Cu" "F.Paste" "F.Mask"))'
-            )
-        lines.append('  )')
 
-    net_idx_map = {c.name: i + 1 for i, c in enumerate(connections)}
-    for conn in connections:
-        net_i = net_idx_map.get(conn.name, 0)
-        pts: list[tuple[float, float]] = []
-        for pin_ref in conn.pins:
-            pos = comp_positions.get(pin_ref.ref)
-            if pos:
-                pad_c = _pad_count(
-                    next((c.footprint for c in components if c.ref == pin_ref.ref), "0402")
-                )
-                spacing = 1.0
-                start_x = -(pad_c - 1) * spacing / 2
-                px = round(start_x + (pin_ref.pin - 1) * spacing, 3)
-                pts.append((round(pos[0] + px, 3), round(pos[1], 3)))
-        for i in range(len(pts) - 1):
-            x1, y1 = pts[i]
-            x2, y2 = pts[i + 1]
-            lines.append(
-                f'  (segment (start {x1} {y1}) (end {x2} {y2}) '
-                f'(width 0.2) (layer "F.Cu") (net {net_i}))'
-            )
+        for pad_line in _footprint_pads(fp_full):
+            m = re.search(r'\(pad "(\w+)"', pad_line)
+            pad_num = m.group(1) if m else "1"
+            net_id = pad_net_map.get((comp.ref, pad_num), 0)
+            if net_id and net_id in net_name_map:
+                net_name_esc = net_name_map[net_id].replace('"', '\\"')
+                net_sexpr = f' (net {net_id} "{net_name_esc}")'
+            else:
+                net_sexpr = ''
+            lines.append(pad_line.replace('{NET}', net_sexpr))
+
+        lines.append('  )')
 
     lines.append(')')
     return "\n".join(lines)
