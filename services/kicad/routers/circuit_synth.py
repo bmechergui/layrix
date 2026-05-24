@@ -427,13 +427,12 @@ def _generate_with_circuit_synth(
     circ = _build()
     project_path = str(output_dir / project_name)
 
-    # generate_pcb=True → circuit-synth places components hierarchically and
-    # produces a .kicad_pcb ready for Freerouting. No pcbnew needed.
+    # generate_pcb=False — PCB placement is handled by pcbnew (POST /place/auto).
+    # circuit-synth's PCB placement requires kicad-pcb-api (proprietary, not in OSS).
     circ.generate_kicad_project(
         project_path,
         force_regenerate=True,
-        generate_pcb=True,
-        placement_algorithm="hierarchical",
+        generate_pcb=False,
     )
 
     sch_files = list(output_dir.rglob("*.kicad_sch"))
