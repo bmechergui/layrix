@@ -152,7 +152,10 @@ def _place_cluster(
             (cap_refs, cap_radius, 90.0),
         ):
             for i, ref in enumerate(group_refs):
-                angle = 2 * math.pi * i / max(1, len(group_refs))
+                # Start at 90° (upward) so passives spread vertically first.
+                # Starting at 0° (rightward) collides with left-edge connectors
+                # when there are no ICs and the centroid anchor is used.
+                angle = math.pi / 2 + 2 * math.pi * i / max(1, len(group_refs))
                 x = _clamp(ax + radius * math.cos(angle), MARGIN_MM, board_w - MARGIN_MM)
                 y = _clamp(ay + radius * math.sin(angle), MARGIN_MM, board_h - MARGIN_MM)
                 out[ref] = (x, y, rotation)

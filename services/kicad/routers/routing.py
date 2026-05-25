@@ -104,6 +104,12 @@ def _specctra_roundtrip(pcb_bytes: bytes, ses_path: Path) -> bytes:
         out_pcb = Path(tmp) / "out.kicad_pcb"
         in_pcb.write_bytes(pcb_bytes)
         board = pcbnew.LoadBoard(str(in_pcb))
+        # Remove stale tracks — Freerouting's SES output replaces them entirely.
+        # Without this, old tracks (from circuit-synth or a previous routing pass)
+        # survive in the final PCB alongside Freerouting's routes and cause
+        # "Track has unconnected end" DRC violations.
+        for track in list(board.GetTracks()):
+            board.Remove(track)
         pcbnew.ImportSpecctraSES(board, str(ses_path))
         for zone in board.Zones():
             zone.SetFilled(True)

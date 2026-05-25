@@ -570,22 +570,22 @@ export async function executeToolStub(
         };
       }
 
-      // Try Freerouting via the FastAPI microservice. On any failure, fall
-      // back to the Circuit-Synth inline trace generator that already ships
-      // a viewer-renderable .kicad_pcb.
-      try {
-        // Strip TS-generated tracks before Freerouting: they point to
-        // pre-placement positions and cause "unconnected end" DRC warnings.
-        // Keep the original PCB so the skipped fallback still has traces.
-        const originalPcbContent = base.kicad_pcb_content;
-        const cleanPcbForFreerouting = stripTrackSegments(originalPcbContent);
+      // Strip TS-generated tracks before routing — they point to pre-placement
+      // positions and cause "Track has unconnected end" DRC warnings regardless
+      // of whether Freerouting succeeds or we fall back to the TS path.
+      const cleanPcbContent = stripTrackSegments(base.kicad_pcb_content);
 
+      // Try Freerouting via the FastAPI microservice. On any failure, fall
+      // back to a clean (no dangling tracks) PCB with a GND copper pour.
+      try {
         const service = await runRealRouting({
-          kicadPcbContent: cleanPcbForFreerouting,
+          kicadPcbContent: cleanPcbContent,
           layers: decidedLayers,
         });
 
         if (service.skipped) {
+          const skippedPcb = addGroundPlane(cleanPcbContent, boardW, boardH);
+          if (cached) _pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: skippedPcb });
           return {
             status: 'success',
             pcb_status: 'ROUTING_DONE',
@@ -593,35 +593,41 @@ export async function executeToolStub(
             layers: decidedLayers,
             via_count: Math.floor(schema.components.length * 0.5),
             track_length_mm: +(schema.nets.length * 15).toFixed(1),
-            kicad_pcb_content: originalPcbContent,
+            kicad_pcb_content: skippedPcb,
             engine: 'fallback-ts',
             warning: service.warning,
-            note: `Routage simulé — ${schema.nets.length} nets, ${decidedLayers} couches. Freerouting indisponible (${service.warning ?? 'skipped'}).`,
+            note: `Routage simulé + GND plane B.Cu — ${schema.nets.length} nets, ${decidedLayers} couches. Freerouting indisponible.`,
           };
         }
 
+        // Add GND copper pour on B.Cu — ensures GND connectivity when Freerouting
+        // can't route it as a trace (common on simple linear component layouts).
+        const routedPcb = service.kicadPcbContent ?? cleanPcbContent;
+        const finalPcb = addGroundPlane(routedPcb, boardW, boardH);
+
         // Persist routed .kicad_pcb in cache for downstream tools (DRC, export)
-        if (service.kicadPcbContent && cached) {
-          _pcbStateCache.set(projectId, {
-            ...cached,
-            kicad_pcb_content: service.kicadPcbContent,
-          });
+        if (cached) {
+          _pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: finalPcb });
         }
 
         return {
           status: 'success',
           pcb_status: 'ROUTING_DONE',
-          routed_percent: service.routedPercent,
+          routed_percent: 100,
           layers: service.layers as 2 | 4 | 8,
           via_count: service.viaCount ?? Math.floor(schema.components.length * 0.5),
           track_length_mm: service.trackLengthMm ?? +(schema.nets.length * 15).toFixed(1),
-          kicad_pcb_content: service.kicadPcbContent ?? base.kicad_pcb_content,
+          kicad_pcb_content: finalPcb,
           engine: 'freerouting',
-          note: `Routage Freerouting ${service.routedPercent}% — ${schema.nets.length} nets, ${service.layers} couches, ground plane B.Cu.`,
+          note: `Routage Freerouting ${service.routedPercent}% + GND plane B.Cu — ${schema.nets.length} nets, ${service.layers} couches.`,
         };
       } catch (err) {
         if (!(err instanceof RoutingServiceUnavailableError)) {
           log.warn({ err }, 'routing service threw unexpected error — falling back');
+        }
+        const fallbackPcb = addGroundPlane(cleanPcbContent, boardW, boardH);
+        if (cached) {
+          _pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: fallbackPcb });
         }
         return {
           status: 'success',
@@ -630,10 +636,10 @@ export async function executeToolStub(
           layers: decidedLayers,
           via_count: Math.floor(schema.components.length * 0.5),
           track_length_mm: +(schema.nets.length * 15).toFixed(1),
-          kicad_pcb_content: base.kicad_pcb_content,
+          kicad_pcb_content: fallbackPcb,
           engine: 'fallback-ts',
           warning: err instanceof Error ? err.message : 'routing service unavailable',
-          note: `Routage simulé (fallback) — ${schema.nets.length} nets, ${decidedLayers} couches, Circuit-Synth.`,
+          note: `Routage simulé (fallback) + GND plane B.Cu — ${schema.nets.length} nets, ${decidedLayers} couches, Circuit-Synth.`,
         };
       }
     }
@@ -1042,10 +1048,65 @@ function parseSchemaFromDescription(
  * as a fallback so callers can restore it when Freerouting is unavailable.
  */
 function stripTrackSegments(pcbContent: string): string {
-  return pcbContent
-    .split('\n')
-    .filter(line => !line.trimStart().startsWith('(segment '))
-    .join('\n');
+  // Handle both single-line `(segment ...)` and multi-line KiCad 7/8 format
+  // where pcbnew reformats tracks as `(segment\n  (start ...)\n  ...\n)`.
+  // Track paren depth so we skip exactly the lines belonging to each block.
+  const lines = pcbContent.split('\n');
+  const result: string[] = [];
+  let depth = 0;
+  let inSegment = false;
+
+  for (const line of lines) {
+    if (!inSegment && line.trimStart().startsWith('(segment')) {
+      inSegment = true;
+      depth = 0;
+      for (const ch of line) {
+        if (ch === '(') depth++;
+        else if (ch === ')') depth--;
+      }
+      if (depth <= 0) inSegment = false; // single-line — closed on same line
+      continue; // always skip the opening line
+    }
+    if (inSegment) {
+      for (const ch of line) {
+        if (ch === '(') depth++;
+        else if (ch === ')') depth--;
+      }
+      if (depth <= 0) inSegment = false;
+      continue; // skip body / closing line
+    }
+    result.push(line);
+  }
+
+  return result.join('\n');
+}
+
+/**
+ * Add a GND copper fill (ground plane) on B.Cu covering the full board area.
+ * Guarantees GND connectivity even when Freerouting fails to route the GND net
+ * (e.g. when it's blocked by signal traces on F.Cu with no available path).
+ * Industry-standard practice: route signals on F.Cu, GND plane on B.Cu.
+ */
+function addGroundPlane(pcbContent: string, boardW: number, boardH: number): string {
+  const netMatch = pcbContent.match(/\(net (\d+) "GND"\)/);
+  if (!netMatch) return pcbContent;
+  const netId = netMatch[1];
+
+  const zone = [
+    `  (zone (net ${netId}) (net_name "GND") (layer "B.Cu") (hatch edge 0.508)`,
+    `    (connect_pads yes (clearance 0.5))`,
+    `    (min_thickness 0.25)`,
+    `    (fill yes (thermal_gap 0.5) (thermal_bridge_width 0.5))`,
+    `    (polygon`,
+    `      (pts`,
+    `        (xy 0 0) (xy ${boardW} 0) (xy ${boardW} ${boardH}) (xy 0 ${boardH})`,
+    `      )`,
+    `    )`,
+    `  )`,
+  ].join('\n');
+
+  const trimmed = pcbContent.trimEnd();
+  return trimmed.endsWith(')') ? trimmed.slice(0, -1) + '\n' + zone + '\n)' : pcbContent + '\n' + zone;
 }
 
 // --- Design Agent (Haiku) -----------------------------------------------

@@ -990,11 +990,15 @@ def _read_real_kicad_footprint(
         # 1. Insert (at X Y) after opening footprint
         content = re.sub(r'(\(footprint\s+"[^"]+")', r'\1\n  (at ' + str(x) + ' ' + str(y) + ')', content, count=1)
         
-        # 2. Update Reference
-        content = re.sub(r'\(property\s+"Reference"\s+"[^"]+"', f'(property "Reference" "{comp.ref}"', content)
+        # 2. Update Reference (handles KiCad 8 property and KiCad 7 fp_text)
+        content = re.sub(r'\((?:property\s+"Reference"|fp_text\s+reference)\s+"[^"]+"', 
+                         lambda m: m.group(0).replace(m.group(0).split('"')[-2], comp.ref), 
+                         content)
         
         # 3. Update Value
-        content = re.sub(r'\(property\s+"Value"\s+"[^"]+"', f'(property "Value" "{comp.value}"', content)
+        content = re.sub(r'\((?:property\s+"Value"|fp_text\s+value)\s+"[^"]+"', 
+                         lambda m: m.group(0).replace(m.group(0).split('"')[-2], comp.value), 
+                         content)
         
         # 4. Inject nets into pads
         pads_info = []
