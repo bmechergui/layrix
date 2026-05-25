@@ -56,16 +56,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-# circuit-synth officiel GitHub (sans [fast_generation] → zéro google-adk)
-# Installé séparément car version dynamique incompatible avec tarball pip
-RUN pip3 install --no-cache-dir \
-    "git+https://github.com/circuit-synth/circuit-synth.git" \
-    || echo "circuit-synth install failed — fallback schematic_gen.py actif"
 
-# Freerouting JAR
+# Freerouting JAR v2.2.4
 RUN mkdir -p /opt/freerouting && \
     for i in 1 2 3; do \
-        curl -fL https://github.com/freerouting/freerouting/releases/latest/download/freerouting.jar \
+        curl -fL https://github.com/freerouting/freerouting/releases/download/v2.2.4/freerouting-2.2.4.jar \
             -o /opt/freerouting/freerouting.jar && break || sleep 15; \
     done
 
