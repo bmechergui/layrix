@@ -226,7 +226,7 @@ _SMD_CAPACITOR: dict[str, str] = {
     "1206": "Capacitor_SMD:C_1206_3216Metric",
 }
 
-_SMD_SIZE_RE = re.compile(r"\b(0402|0603|0805|1206)\b")
+_SMD_SIZE_RE = re.compile(r"(?<!\d)(0402|0603|0805|1206)(?!\d)")
 
 
 def _expand_footprint(comp: SchemaComponent) -> str:
@@ -1186,7 +1186,7 @@ def _generate_pcb_sexpr(
     board_h: float,
 ) -> str:
     lines: list[str] = []
-    lines.append('(kicad_pcb (version 20221018) (generator "layrix-circuit-synth")')
+    lines.append('(kicad_pcb (version 20240108) (generator "layrix-circuit-synth")')
     lines.append('  (general (thickness 1.6))')
     lines.append('  (paper "A4")')
     lines.append('  (layers')
@@ -1210,11 +1210,8 @@ def _generate_pcb_sexpr(
         net_idx_map[net.name] = i
         net_name_map[i] = net.name
 
-    # Net classes (Power 0.5mm for GND/VCC, Default 0.2mm signal)
-    power_nets = [n.name for n in connections if any(
-        p in n.name.upper() for p in ("GND", "VCC", "VDD", "VBUS", "+5V", "+3V3", "PWR", "AVCC", "AGND")
-    )]
-    lines.append(_net_classes_sexpr(power_nets))
+    # Net classes omitted — (net_settings ...) is KiCad 7 syntax, rejected by pcbnew 8.
+    # Trace widths are handled by Freerouting design rules instead.
 
     # Board outline
     bw, bh = board_w, board_h

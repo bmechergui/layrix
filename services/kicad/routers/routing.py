@@ -104,7 +104,7 @@ def _specctra_roundtrip(pcb_bytes: bytes, ses_path: Path) -> bytes:
         out_pcb = Path(tmp) / "out.kicad_pcb"
         in_pcb.write_bytes(pcb_bytes)
         board = pcbnew.LoadBoard(str(in_pcb))
-        pcbnew.ImportSpecctraSession(board, str(ses_path))
+        pcbnew.ImportSpecctraSES(board, str(ses_path))
         for zone in board.Zones():
             zone.SetFilled(True)
         filler = pcbnew.ZONE_FILLER(board)

@@ -133,6 +133,10 @@ def run_erc(req: ERCRequest) -> ERCResponse:
             total_fixed = 0
             current_content = sch_bytes.decode("utf-8", errors="replace")
 
+            # Create a dummy .kicad_pro file to satisfy KiCad 8 requirements
+            pro_path = Path(tmp) / "schematic.kicad_pro"
+            pro_path.write_text("{}", encoding="utf-8")
+
             for iteration in range(_MAX_ITERATIONS):
                 sch_path.write_text(current_content, encoding="utf-8")
                 report_json = _run_kicad_erc(cli_path, sch_path)
