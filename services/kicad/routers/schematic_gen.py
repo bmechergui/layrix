@@ -362,15 +362,7 @@ def _map_symbol(comp: SchemaComponent) -> str:
 # ============================================================
 
 def _circuit_synth_available() -> bool:
-    """Return True if circuit_synth + KICAD_SYMBOL_DIR are usable.
-
-    NOTE: circuit_synth 0.12.1 placement algorithm enters an infinite loop on
-    Windows (bbox loop never converges).  Until a fixed version is released or
-    the service runs in a Linux container, force the fallback on Windows.
-    The fallback (compact stub+label schematic) renders correctly in KiCanvas.
-    """
-    if os.name == "nt":
-        return False
+    """Return True if circuit_synth + KICAD_SYMBOL_DIR are usable."""
     if not os.environ.get("KICAD_SYMBOL_DIR"):
         return False
     try:
