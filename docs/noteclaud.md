@@ -1,7 +1,7 @@
 # Layrix — Pipeline Validation (step by step)
 
 > Ce document est mis à jour après chaque step validé ensemble.
-> Dernière mise à jour : 2026-04-17
+> Dernière mise à jour : 2026-05-26
 
 ---
 
@@ -27,7 +27,7 @@ packages/agents/src/
 ├── prompts.ts           ← ORCHESTRATOR_SYSTEM_PROMPT
 ├── types.ts             ← Interfaces TypeScript
 └── engines/
-    ├── circuit-synth-engine.ts   ← Engine Circuit-Synth (POST /circuit-synth/generate)
+    ├── schematic-engine.ts       ← Engine KiCad (POST /circuit-synth/generate)
     └── engine-router.ts          ← Router vers pcbnew / Freerouting
 ```
 
@@ -172,29 +172,29 @@ User Prompt
 [STEP 1]  call_agent_design     → design.json              ✅ Validé
     ↓
 [STEP 2]  call_agent_schema     → schematic.json           ✅ Validé
-              ↓ Engine: Circuit-Synth (Python)
+              ↓ Engine: kicad_gen.py (circuit_synth pip → .kicad_sch + Python S-expr → .kicad_pcb)
           .kicad_sch + .kicad_pcb initial                  ✅ Validé
               ↓ KiCanvas viewer (tab Schematic)
     ↓
-[STEP 3]  call_agent_footprint  → footprints.json          ⚠️ Stub
+[STEP 3]  call_agent_footprint  → footprints.json          ⚠️ Partiel (pgvector cache + cascade 4 étapes)
     ↓
 [STEP 4]  call_agent_placement  → .kicad_pcb placé         ✅ Validé
               ↓ Engine: pcbnew /place/auto
               ↓ KiCanvas viewer (tab PCB)
     ↓
-[STEP 5]  call_agent_routing    → .kicad_pcb routé         🔲 À faire
+[STEP 5]  call_agent_routing    → .kicad_pcb routé         ✅ Validé
               ↓ Engine: Freerouting /route/auto
               ↓ KiCanvas viewer (tab Routing)
     ↓
-[STEP 6]  call_agent_drc        → violations / DRC_CLEAN   ⚠️ Stub
-              ↓ Engine: pcbnew DRC /drc
+[STEP 6]  call_agent_drc        → violations / DRC_CLEAN   ✅ Validé
+              ↓ Engine: kicad-cli DRC natif, boucle auto-fix max 3×
     ↓
-[STEP 7]  call_agent_export     → Gerbers + BOM + STEP     ⚠️ Stub
-              ↓ Engine: pcbnew plotter /export
+[STEP 7]  call_agent_export     → Gerbers + BOM + CPL      ✅ Validé
+              ↓ Engine: kicad-cli /export/all, zip base64
     ↓
 User "OUI JE CONFIRME"
     ↓
-JLCPCB Order                                               🔲 Phase 4
+JLCPCB Order (POST /api/jlcpcb/order)                      ✅ Validé (Phase 4.3)
 ```
 
 ---
@@ -515,10 +515,10 @@ Appel   : generateSchemaWithHaiku(description)  ✅ Implémenté
 ### Engine
 
 ```
-Nom     : Circuit-Synth
-Techno  : Python (SKiDL-based)
+Nom     : kicad_gen (circuit_synth pip + Python S-expr)
+Techno  : Python (circuit_synth lib installée dans Docker)
 Endpoint: POST /circuit-synth/generate  ✅ Implémenté
-Fichier : services/kicad/routers/circuit_synth.py
+Fichier : services/kicad/routers/kicad_gen.py
 
 Input engine :
 {
@@ -817,7 +817,7 @@ SCHEMA_DONE  →  PLACEMENT_DONE
 
 ## STEP 5 — Routing Agent
 
-**Statut : 🔲 À implémenter**
+**Statut : ✅ Validé (Phase 3)**
 
 ### Orchestrateur
 
@@ -955,7 +955,7 @@ services/kicad/main.py                 (mount /route)
 
 ## STEP 6 — DRC Agent
 
-**Statut : ⚠️ Stub — toujours DRC_CLEAN**
+**Statut : ✅ Validé (Phase 3)**
 
 ### Orchestrateur
 
@@ -1051,7 +1051,7 @@ ROUTING_DONE  →  ROUTING_DONE (si violations → loop back STEP 5)
 
 ## STEP 7 — Export
 
-**Statut : ⚠️ Stub — Gerbers non générés**
+**Statut : ✅ Validé (Phase 4.3)**
 
 ### Orchestrateur
 
@@ -1150,43 +1150,54 @@ DRC_CLEAN  →  PCB_LIVRÉ  (après "OUI JE CONFIRME")
 |------|-----------|--------|----------|--------|
 | **Orchestrateur** | `claude-sonnet-4-6` | — | — | ✅ |
 | `call_agent_design` | `claude-haiku-4-5-20251001` | — (LLM only) | — | ✅ |
-| `call_agent_schema` | `claude-haiku-4-5-20251001` | Circuit-Synth | `POST /circuit-synth/generate` | ✅ |
-| `call_agent_footprint` | `claude-haiku-4-5-20251001` | LCSC cascade | `POST /footprint` | ⚠️ |
+| `call_agent_schema` | `claude-haiku-4-5-20251001` | kicad_gen.py (circuit_synth) | `POST /circuit-synth/generate` | ✅ |
+| `call_agent_footprint` | `claude-haiku-4-5-20251001` | pgvector + cascade 4 étapes | `POST /footprint` | ⚠️ Partiel |
 | `call_agent_placement` | `claude-haiku-4-5-20251001` | pcbnew | `POST /place/auto` | ✅ |
-| `call_agent_routing` | `claude-haiku-4-5-20251001` | Freerouting | `POST /route/auto` | 🔲 |
-| `call_agent_drc` | `claude-haiku-4-5-20251001` | pcbnew DRC | `POST /drc` | ⚠️ |
-| `call_agent_export` | **AUCUN** (déterministe) | pcbnew Plotter | `POST /export` | ⚠️ |
+| `call_agent_routing` | `claude-haiku-4-5-20251001` | Freerouting | `POST /route/auto` | ✅ |
+| `call_agent_drc` | `claude-haiku-4-5-20251001` | kicad-cli DRC natif | `POST /drc/auto` | ✅ |
+| `call_agent_export` | **AUCUN** (déterministe) | kicad-cli plotter | `POST /export/all` | ✅ |
+| `call_agent_simulation` | `claude-haiku-4-5-20251001` | ngspice batch | `POST /simulate/auto` | ✅ |
 | `ask_user` | `claude-sonnet-4-6` (répond) | — | — | ✅ |
 
 ### Budget estimé par PCB
 
+> ⚡ **Optimisation tokens 2026-05-26** : blobs KiCad (`kicad_sch_content`, `kicad_pcb_content`, `gerber_zip_b64`) strippés des `tool_result` Sonnet → économie ~70% tokens input orchestrateur.
+
 | Agent | Modèle | Tokens (~) | Coût (~) |
 |-------|--------|-----------|---------|
-| Orchestrateur (7 iter) | Sonnet 4.6 | 15 000 | ~0.075€ |
+| Orchestrateur (7 iter) | Sonnet 4.6 | 5 000 *(était 15 000 avant opt.)* | ~0.025€ |
 | Design Agent | Haiku 4.5 | 1 000 | ~0.004€ |
-| Schematic Agent | Haiku 4.5 | 1 500 | ~0.006€ |
+| Schematic Agent | Haiku 4.5 | 1 700 | ~0.001€ |
 | Footprint Agent (5×) | Haiku 4.5 | 750 | ~0.015€ |
 | Placement Agent | Haiku 4.5 | 500 | ~0.004€ |
 | Routing Agent | Haiku 4.5 | 500 | ~0.004€ |
 | DRC Agent | Haiku 4.5 | 500 | ~0.003€ |
+| Simulation Agent | Haiku 4.5 | 600 | ~0.004€ |
 | Export | AUCUN | 0 | 0€ |
-| **TOTAL** | | **~19 750** | **~0.111€** |
+| **TOTAL** | | **~10 550** | **~0.060€** |
 
-✅ Budget 0.12€/PCB respecté.
+✅ Budget 0.12€/PCB largement respecté.
 
 ---
 
-## Prochaine étape à valider
+## État final — Phase 4 (2026-05-26)
 
-**→ STEP 5 — Routing Agent (`call_agent_routing`) + Engine Freerouting**
+**Pipeline complet validé :** Design ✅ → Schema ✅ → Footprint ⚠️ → Placement ✅ → Routing ✅ → DRC ✅ → Export ✅ → JLCPCB ✅
 
-STEP 1 (Design) ✅ et STEP 2 (Schematic) ✅ validés.
-STEP 3 (Footprint) reste en stub (cascade 8 étapes — chantier conséquent).
-STEP 4 (Placement) ✅ validé.
+**Phases terminées :** 0 ✓ 1 ✓ 2 ✓ 3 ✓ 4.1 ✓ 4.2 ✓ 4.3 ✓ 4.x ✓
 
-Le prochain chantier prioritaire est le routage Freerouting :
-- `services/kicad/routers/routing.py` (FastAPI POST /route/auto)
-- `services/kicad/tools/routing.py` (pipeline DSN → SES)
-- `services/kicad/tests/test_routing.py` (3 tests minimum)
+### Changements session 2026-05-26
 
-Confirme pour que je démarre.
+| Changement | Détail |
+|---|---|
+| `circuit-synth-engine.ts` → `schematic-engine.ts` | évite confusion pip package |
+| `schematic_gen.py` → `kicad_gen.py` | gère sch + pcb, pas que le schéma |
+| circuit_synth pip installé Docker | `pip install ./circuit_synth`, PYTHONPATH fix |
+| Strip blobs Sonnet context | kicad_sch/pcb_content hors tool_result → -70% tokens |
+
+### Prochaine étape
+
+**→ Phase 4.4 — Paiement Lemon Squeezy**
+- `apps/web/src/app/api/webhooks/lemon-squeezy/route.ts` — HMAC + idempotence
+- `apps/web/src/app/(dashboard)/dashboard/billing/page.tsx` — plans + top-ups
+- Supabase : créditer après `subscription_created` / `order_created`
