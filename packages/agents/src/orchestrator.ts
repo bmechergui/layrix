@@ -158,12 +158,11 @@ export async function* runOrchestrator(
       }
 
       const result = await executeToolStub(tool.name, toolInput, options.projectId);
-      const resultStr = JSON.stringify(result);
 
       yield {
         type: 'tool_result',
         tool: tool.name,
-        summary: String(result['note'] ?? resultStr.slice(0, 100)),
+        summary: String(result['note'] ?? JSON.stringify(result).slice(0, 100)),
       };
 
       // Emit pcb_state so the frontend viewer can update in real-time
@@ -184,10 +183,27 @@ export async function* runOrchestrator(
         };
       }
 
+      // Strip large KiCad file blobs before adding to Sonnet context.
+      // The actual content is cached server-side (_pcbStateCache) and sent
+      // to the frontend via pcb_state above — Sonnet only needs the metadata.
+      const LARGE_FIELDS = [
+        'kicad_sch_content',
+        'kicad_pcb_content',
+        'gerber_zip_b64',
+        'bom_csv',
+        'simulation_output_raw',
+      ] as const;
+      const slimResult: Record<string, unknown> = { ...result };
+      for (const field of LARGE_FIELDS) {
+        if (field in slimResult) {
+          slimResult[field] = '[truncated — stored server-side]';
+        }
+      }
+
       toolResults.push({
         type: 'tool_result',
         tool_use_id: tool.id,
-        content: resultStr,
+        content: JSON.stringify(slimResult),
       });
     }
 
