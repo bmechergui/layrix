@@ -1078,6 +1078,12 @@ _PROJECT_PATH is already defined — use it directly.
 CRITICAL: ref= is REQUIRED in every Component(). Without ref, the component is NOT added to the circuit.
 Use ref PREFIX (no number): ref="R" → auto-becomes R1, R2... | ref="C" → C1, C2... | ref="U_ARD" → U_ARD1
 
+STRICT RULES — NEVER BREAK THESE:
+  NEVER use MCU_Microchip_ATmega, MCU_Module, RF_Module, Sensor:*, Sensor_Pressure:* symbols
+  NEVER use Arduino_Nano_v3.x, ATmega328P-A, ESP32-WROOM-32, BME280, DHT11 as symbols
+  ALWAYS use Connector_Generic:Conn_XxYY for any Arduino, ESP32, sensor module, or IC with >4 pins
+  ALWAYS provide ref= in every Component() — without it the component is invisible in the schematic
+
 CONNECTOR STRATEGY — use generic connectors for complex ICs (better schematics, no missing pins):
 
   Arduino Nano (30-pin dual-row) → Component("Connector_Generic:Conn_02x15_Odd_Even", value="Arduino_Nano")
