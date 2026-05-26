@@ -35,7 +35,7 @@ layrix/
 | Frontend | Next.js 15 App Router + Tailwind + shadcn/ui + Zustand |
 | Backend MVP | Next.js API Routes (apps/api) |
 | Microservice KiCad | Python FastAPI + pcbnew — Docker headless (DigitalOcean) |
-| Agents | Claude SDK — Orchestrateur Sonnet 4.6 + 5 agents Haiku 4.5 |
+| Agents | Claude SDK — Orchestrateur Sonnet 4.6 + 8 agents Haiku 4.5 |
 | DB | PostgreSQL + Supabase + pgvector (uuid-ossp, pgvector) |
 | Queue | Redis + BullMQ (10 PCBs simultanés) |
 | Stockage | Supabase Storage (`/storage/{userId}/{projectId}/`) |
@@ -51,16 +51,25 @@ layrix/
 ## Agents IA
 
 - **Orchestrateur** : Claude Sonnet 4.6 — 15 itérations max, SSE streaming, compression contexte après 10 tours
-- **5 sous-agents** Haiku 4.5 : Schéma, Placement, Routage, DRC, Footprint
+- **8 sous-agents** Haiku 4.5 : Schéma, ERC, Footprint, Layout KiCad, Placement, Routage, DRC, Export
 - Coût cible : ~0.12€ par PCB complet
 
 ---
 
 ## Stratégie moteur PCB
 
-- **Circuit-Synth** (Python) → Claude génère du code Python → KiCad Docker → `.kicad_sch` + `.kicad_pcb` natifs
-- Sinon fallback → **KiCad + Freerouting + pcbnew** pour les PCB multi-couches Pro
-- Résultat : fichiers `.kicad_sch` + `.kicad_pcb` standard + Gerbers
+Pipeline 8 agents (ordre strict) :
+① `call_agent_schema` → Ingénieur Schéma — génère `.kicad_sch` + `unresolved_footprints`
+② `call_agent_erc` → Ingénieur ERC — valide connexions électriques, auto-fix
+③ `call_agent_footprint` → Ingénieur Composants — 1 appel par ref dans `unresolved_footprints`
+④ `call_agent_kicad` → Ingénieur Layout — génère `.kicad_pcb` depuis schéma + footprints validés
+⑤ `call_agent_placement` → Ingénieur Placement — pcbnew `SetPosition()` blocs fonctionnels
+⑥ `call_agent_routing` → Ingénieur Routage — Freerouting `.dsn → .ses → .kicad_pcb`
+⑦ `call_agent_drc` → Ingénieur Qualité — kicad-cli DRC, boucle auto-fix max 3×
+⑧ `call_agent_export` → Ingénieur Fabrication — Gerbers RS-274X + BOM JLCPCB + CPL
+
+- **Circuit-Synth** (Python pip) → génère `.kicad_sch` ; `.kicad_pcb` généré séparément par `call_agent_kicad`
+- Fallback TypeScript : `schematic-engine.ts` si Docker absent
 - Viewer : **KiCanvas** charge les fichiers natifs depuis Supabase Storage
 
 ---

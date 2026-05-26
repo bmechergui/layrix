@@ -40,29 +40,28 @@ const MAX_ITERATIONS     = 15                    // max 15 appels Claude
 const MAX_TOKENS         = 4096                  // par réponse
 ```
 
-### System Prompt (résumé)
+### System Prompt (résumé — mis à jour 2026-05-26)
 
 ```
-Tu es l'Orchestrateur PCB de Layrix.ai.
-Tu transformes une description en PCB DRC-clean prêt pour JLCPCB.
+Tu es le Chef de Projet PCB Senior de Layrix.ai. 15 ans d'expérience.
 
-PIPELINE (max 15 itérations) :
-  INITIAL → call_agent_schema → SCHEMA_DONE
-          → call_agent_placement → PLACEMENT_DONE
-          → call_agent_routing → ROUTING_DONE
-          → call_agent_drc → DRC_CLEAN
-          → call_agent_export → PCB_LIVRÉ
+PIPELINE (ordre strict, max 15 itérations) :
+  ① call_agent_schema     → .kicad_sch + unresolved_footprints
+  ② call_agent_erc        → validation électrique, auto-fix
+  ③ call_agent_footprint  → 1 appel par ref dans unresolved_footprints
+  ④ call_agent_kicad      → .kicad_pcb depuis schéma + footprints validés
+  ⑤ call_agent_placement  → positions X/Y/rotation via pcbnew
+  ⑥ call_agent_routing    → Freerouting + ground planes
+  ⑦ call_agent_drc        → DRC kicad-cli, boucle auto-fix max 3×
+  ⑧ call_agent_export     → Gerbers + BOM + CPL + devis JLCPCB
 
 RÈGLES ABSOLUES :
+  - NE JAMAIS prescrire de composants à call_agent_schema — l'Agent Schéma décide seul
+  - NE JAMAIS skipper call_agent_erc
+  - call_agent_footprint OBLIGATOIRE pour chaque ref dans unresolved_footprints AVANT call_agent_kicad
+  - call_agent_drc OBLIGATOIRE avant call_agent_export
   - JAMAIS commander JLCPCB sans "OUI JE CONFIRME" explicite
-  - DRC obligatoire avant export
-  - Footprint manquant → call_agent_footprint immédiatement
   - Réponds dans la langue de l'utilisateur
-
-COHÉRENCE TEXTE ↔ SCHÉMA :
-  Sonnet DÉCIDE lui-même les composants dans sa réponse texte,
-  puis les passe dans schema_json à call_agent_schema.
-  → Haiku ne "devine" jamais les composants à l'aveugle.
 ```
 
 ### Signature de la fonction
@@ -171,25 +170,31 @@ User Prompt
     ↓
 [STEP 1]  call_agent_design     → design.json              ✅ Validé
     ↓
-[STEP 2]  call_agent_schema     → schematic.json           ✅ Validé
-              ↓ Engine: kicad_gen.py (circuit_synth pip → .kicad_sch + Python S-expr → .kicad_pcb)
-          .kicad_sch + .kicad_pcb initial                  ✅ Validé
+[STEP 2]  call_agent_schema     → .kicad_sch + unresolved_footprints  ✅ Validé
+              ↓ Engine: kicad_gen.py (circuit_synth pip → .kicad_sch SEULEMENT)
               ↓ KiCanvas viewer (tab Schematic)
     ↓
-[STEP 3]  call_agent_footprint  → footprints.json          ⚠️ Partiel (pgvector cache + cascade 4 étapes)
+[STEP 3]  call_agent_erc        → validation ERC           ✅ Validé
+              ↓ Engine: kicad-cli sch erc, auto-fix loop
     ↓
-[STEP 4]  call_agent_placement  → .kicad_pcb placé         ✅ Validé
+[STEP 4]  call_agent_footprint  → footprints.json          ⚠️ Partiel (1 appel par ref unresolved)
+              ↓ Met à jour _pcbStateCache[projectId].schema.components
+    ↓
+[STEP 5]  call_agent_kicad      → .kicad_pcb initial       ✅ Validé (NOUVEAU)
+              ↓ Engine: kicad_gen.py _generate_pcb_sexpr() depuis cache schéma + footprints
+    ↓
+[STEP 6]  call_agent_placement  → .kicad_pcb placé         ✅ Validé
               ↓ Engine: pcbnew /place/auto
               ↓ KiCanvas viewer (tab PCB)
     ↓
-[STEP 5]  call_agent_routing    → .kicad_pcb routé         ✅ Validé
+[STEP 7]  call_agent_routing    → .kicad_pcb routé         ✅ Validé
               ↓ Engine: Freerouting /route/auto
               ↓ KiCanvas viewer (tab Routing)
     ↓
-[STEP 6]  call_agent_drc        → violations / DRC_CLEAN   ✅ Validé
+[STEP 8]  call_agent_drc        → violations / DRC_CLEAN   ✅ Validé
               ↓ Engine: kicad-cli DRC natif, boucle auto-fix max 3×
     ↓
-[STEP 7]  call_agent_export     → Gerbers + BOM + CPL      ✅ Validé
+[STEP 9]  call_agent_export     → Gerbers + BOM + CPL      ✅ Validé
               ↓ Engine: kicad-cli /export/all, zip base64
     ↓
 User "OUI JE CONFIRME"
@@ -1150,8 +1155,10 @@ DRC_CLEAN  →  PCB_LIVRÉ  (après "OUI JE CONFIRME")
 |------|-----------|--------|----------|--------|
 | **Orchestrateur** | `claude-sonnet-4-6` | — | — | ✅ |
 | `call_agent_design` | `claude-haiku-4-5-20251001` | — (LLM only) | — | ✅ |
-| `call_agent_schema` | `claude-haiku-4-5-20251001` | kicad_gen.py (circuit_synth) | `POST /circuit-synth/generate` | ✅ |
+| `call_agent_schema` | `claude-haiku-4-5-20251001` | kicad_gen.py (circuit_synth) → `.kicad_sch` seulement | `POST /circuit-synth/generate` | ✅ |
+| `call_agent_erc` | `claude-haiku-4-5-20251001` | kicad-cli sch erc, auto-fix | `POST /erc` | ✅ |
 | `call_agent_footprint` | `claude-haiku-4-5-20251001` | pgvector + cascade 4 étapes | `POST /footprint` | ⚠️ Partiel |
+| `call_agent_kicad` | `claude-haiku-4-5-20251001` | kicad_gen.py → `.kicad_pcb` depuis cache | `POST /circuit-synth/generate` | ✅ |
 | `call_agent_placement` | `claude-haiku-4-5-20251001` | pcbnew | `POST /place/auto` | ✅ |
 | `call_agent_routing` | `claude-haiku-4-5-20251001` | Freerouting | `POST /route/auto` | ✅ |
 | `call_agent_drc` | `claude-haiku-4-5-20251001` | kicad-cli DRC natif | `POST /drc/auto` | ✅ |
@@ -1182,11 +1189,11 @@ DRC_CLEAN  →  PCB_LIVRÉ  (après "OUI JE CONFIRME")
 
 ## État final — Phase 4 (2026-05-26)
 
-**Pipeline complet validé :** Design ✅ → Schema ✅ → Footprint ⚠️ → Placement ✅ → Routing ✅ → DRC ✅ → Export ✅ → JLCPCB ✅
+**Pipeline complet validé :** Design ✅ → Schema ✅ → ERC ✅ → Footprint ⚠️ → KiCad ✅ → Placement ✅ → Routing ✅ → DRC ✅ → Export ✅ → JLCPCB ✅
 
 **Phases terminées :** 0 ✓ 1 ✓ 2 ✓ 3 ✓ 4.1 ✓ 4.2 ✓ 4.3 ✓ 4.x ✓
 
-### Changements session 2026-05-26
+### Changements session 2026-05-26 — Sprint 1 : Nommage + Tokens
 
 | Changement | Détail |
 |---|---|
@@ -1194,6 +1201,21 @@ DRC_CLEAN  →  PCB_LIVRÉ  (après "OUI JE CONFIRME")
 | `schematic_gen.py` → `kicad_gen.py` | gère sch + pcb, pas que le schéma |
 | circuit_synth pip installé Docker | `pip install ./circuit_synth`, PYTHONPATH fix |
 | Strip blobs Sonnet context | kicad_sch/pcb_content hors tool_result → -70% tokens |
+
+### Changements session 2026-05-26 — Sprint 2 : Pipeline 8 agents experts
+
+| Changement | Détail |
+|---|---|
+| `call_agent_kicad` créé (NOUVEAU) | Sépare génération `.kicad_pcb` de la génération `.kicad_sch` |
+| `call_agent_erc` obligatoire | Intégré entre schéma et footprint dans le pipeline |
+| `call_agent_footprint` mis à jour | Met à jour `_pcbStateCache` avec footprint résolu par composant |
+| `prompts.ts` réécrit intégralement | Orchestrateur = "Chef de Projet PCB Senior 15 ans d'expérience", règles absolues, pipeline ① à ⑧ |
+| `tools.ts` refactorisé | 8 descriptions expertes par agent (Ingénieur Schéma / ERC / Composants / Layout / Placement / Routage / Qualité / Fabrication) |
+| `orchestrator.ts` mis à jour | `stepMap` : `call_agent_kicad → 'KICAD'`, `pcbStateTools` étendu |
+| Bug `_resolve_pin` Python 3 corrigé | `UnboundLocalError` : variable `first_err` hors scope après `except` — capturée dans `_first_err` |
+| Stratégie connecteurs Path B | ESP32-WROOM → `Conn_02x19_Odd_Even`, Arduino → `Conn_02x15_Odd_Even`, BME280 → `Conn_01x06` |
+| Validation Python Path A | Rejet si `circuit_synth_code` ne contient pas `cs_circuit` / `circuit_synth` imports |
+| Orchestrateur : règle clé | `NE JAMAIS prescrire de composants à call_agent_schema` — l'Agent Schéma décide seul |
 
 ### Prochaine étape
 
