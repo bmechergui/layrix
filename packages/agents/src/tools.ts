@@ -1053,8 +1053,8 @@ async function generateSchematicCodeWithHaiku(description: string): Promise<Sche
 
   try {
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 4000,
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 3000,
       system: `You are a circuit schematic code generator using the circuit_synth Python library.
 Generate Python code using the @circuit decorator pattern.
 
@@ -1079,8 +1079,9 @@ CRITICAL: ref= is REQUIRED in every Component(). Without ref, the component is N
 Use ref PREFIX (no number): ref="R" → auto-becomes R1, R2... | ref="C" → C1, C2... | ref="U_ARD" → U_ARD1
 
 STRICT RULES — NEVER BREAK THESE:
-  NEVER use MCU_Microchip_ATmega, MCU_Module, RF_Module, Sensor:*, Sensor_Pressure:* symbols
-  NEVER use Arduino_Nano_v3.x, ATmega328P-A, ESP32-WROOM-32, BME280, DHT11 as symbols
+  NEVER use MCU_Microchip_ATmega, MCU_Module, RF_Module:*, Sensor:*, Sensor_Pressure:* symbols
+  NEVER use Arduino_Nano_v3.x, ATmega328P-A, ESP32-WROOM-32, BME280, DHT11, DHT22 as symbols
+  NEVER use any symbol with more than 4 pins that is not Device:R/C/LED/D
   ALWAYS use Connector_Generic:Conn_XxYY for any Arduino, ESP32, sensor module, or IC with >4 pins
   ALWAYS provide ref= in every Component() — without it the component is invisible in the schematic
 
@@ -1105,10 +1106,18 @@ CONNECTOR STRATEGY — use generic connectors for complex ICs (better schematics
     footprint: "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical"
     Pins: 1=GND, 2=VCC, 3=SCL, 4=SDA
 
-  HC-05 Bluetooth (6)  → Component("Connector_Generic:Conn_01x06", value="HC-05")
+  ESP32-WROOM-32 (38-pin dual-row) → Component("Connector_Generic:Conn_02x19_Odd_Even", ref="U_ESP", value="ESP32-WROOM-32")
+    footprint: "Connector_PinHeader_2.54mm:PinHeader_2x19_P2.54mm_Vertical"
+    Pins: 1=GND, 2=3V3, 3=EN, 4=VP/ADC0, 5=VN/ADC3, 6=IO34, 7=IO35, 8=IO32, 9=IO33,
+          10=IO25, 11=IO26, 12=IO27, 13=IO14, 14=IO12, 15=GND2, 16=IO13, 17=SD2, 18=SD3,
+          19=CMD, 20=5V, 21=CLK, 22=SD0, 23=SD1, 24=IO15, 25=IO2, 26=IO0, 27=IO4,
+          28=IO16, 29=IO17, 30=IO5, 31=IO18, 32=IO19, 33=IO21, 34=RXD0, 35=TXD0,
+          36=IO22, 37=IO23, 38=GND3
+
+  HC-05 Bluetooth (6)  → Component("Connector_Generic:Conn_01x06", ref="U_BT", value="HC-05")
     Pins: 1=STATE, 2=RXD, 3=TXD, 4=GND, 5=VCC, 6=EN
 
-  Any other module N   → Component("Connector_Generic:Conn_01xNN", value="Module_Name")
+  Any other module N   → Component("Connector_Generic:Conn_01xNN", ref="U_MOD", value="Module_Name")
 
 REAL SYMBOLS for passive/simple components:
   "Device:R"                      pins: 1, 2
