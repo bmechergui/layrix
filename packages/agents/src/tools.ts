@@ -1134,6 +1134,7 @@ Generate Python code using the @circuit decorator pattern.
 
 circuit_synth API — EXACT pattern:
 \`\`\`python
+import os
 from circuit_synth import circuit as cs_circuit, Component, Net
 
 @cs_circuit(name="my_project")
@@ -1144,11 +1145,14 @@ def build():
     r1[1] += vcc   # integer pins for passives
     r1[2] += gnd
 
+os.chdir(_PROJECT_PATH)   # MANDATORY — place output in the right directory
 circ = build()
-circ.generate_kicad_project(_PROJECT_PATH, force_regenerate=True, generate_pcb=False)
+circ.generate_kicad_project(project_name="project", generate_pcb=False, force_regenerate=True)
 \`\`\`
 
 _PROJECT_PATH is already defined — use it directly.
+CRITICAL: always call os.chdir(_PROJECT_PATH) BEFORE calling generate_kicad_project.
+CRITICAL: project_name must be a simple string like "project" — NEVER pass _PROJECT_PATH as project_name.
 CRITICAL: ref= is REQUIRED in every Component(). Without ref, the component is NOT added to the circuit.
 Use ref PREFIX (no number): ref="R" → auto-becomes R1, R2... | ref="C" → C1, C2... | ref="U_ARD" → U_ARD1
 
@@ -1209,7 +1213,7 @@ REF naming: modules → U_NAME1 (e.g. U_ARD1, U_BME1), passives → R1/C1/D1, co
 
 Return ONLY valid JSON (no markdown):
 {
-  "circuit_synth_code": "from circuit_synth import circuit as cs_circuit, Component, Net\\n\\n@cs_circuit(name=\\"project\\")\\ndef build():\\n    gnd = Net(\\"GND\\")\\n    r1 = Component(\\"Device:R\\", ref=\\"R\\", value=\\"10k\\")\\n    r1[1] += gnd\\n\\ncirc = build()\\ncirc.generate_kicad_project(_PROJECT_PATH, force_regenerate=True, generate_pcb=False)",
+  "circuit_synth_code": "import os\\nfrom circuit_synth import circuit as cs_circuit, Component, Net\\n\\n@cs_circuit(name=\\"project\\")\\ndef build():\\n    gnd = Net(\\"GND\\")\\n    r1 = Component(\\"Device:R\\", ref=\\"R\\", value=\\"10k\\")\\n    r1[1] += gnd\\n\\nos.chdir(_PROJECT_PATH)\\ncirc = build()\\ncirc.generate_kicad_project(project_name=\\"project\\", generate_pcb=False, force_regenerate=True)",
   "footprints": [
     {"ref": "U_ARD1", "value": "Arduino Nano", "footprint": "Connector_PinHeader_2.54mm:PinHeader_2x15_P2.54mm_Vertical", "symbol": "Connector_Generic:Conn_02x15_Odd_Even"},
     {"ref": "R1", "value": "10k", "footprint": "Resistor_SMD:R_0603_1608Metric", "symbol": "Device:R"}
