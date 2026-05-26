@@ -121,10 +121,10 @@ export async function* runOrchestrator(
 
       // Emit step event for PCB pipeline steps
       const stepMap: Record<string, string> = {
-        call_agent_spec: 'SPEC',
         call_agent_schema: 'SCHEMA',
-        call_agent_footprint: 'FOOTPRINT',
         call_agent_erc: 'ERC',
+        call_agent_footprint: 'FOOTPRINT',
+        call_agent_kicad: 'KICAD',
         call_agent_placement: 'PLACEMENT',
         call_agent_routing: 'ROUTING',
         call_agent_drc: 'DRC',
@@ -169,6 +169,7 @@ export async function* runOrchestrator(
       const pcbStateTools = new Set([
         'call_agent_schema',
         'call_agent_erc',
+        'call_agent_kicad',
         'call_agent_placement',
         'call_agent_routing',
         'call_agent_drc',

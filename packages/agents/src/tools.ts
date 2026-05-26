@@ -39,34 +39,25 @@ const MAX_DESC_LENGTH = 2000;
 // Définitions des tools pour l'API Anthropic
 export const PCB_TOOLS: Tool[] = [
   {
-    name: 'call_agent_spec',
-    description:
-      "Parse la description utilisateur pour produire le contexte technique du PCB : type de circuit (power_supply, iot_sensor, motor_driver…), nombre de couches, design rules (trace width, clearance), contraintes (tension, courant). Doit être appelé EN PREMIER, avant call_agent_schema, pour donner aux agents suivants un contexte structuré.",
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        user_description: {
-          type: 'string',
-          description: 'Description complète du circuit PCB à concevoir',
-        },
-      },
-      required: ['user_description'],
-    },
-  },
-  {
     name: 'call_agent_schema',
-    description: 'Génère le schéma électronique (netlist JSON) depuis la description utilisateur. Retourne composants, nets, et footprints requis.',
+    description:
+      'Ingénieur Schéma — Expert circuit_synth et KiCad. ' +
+      'Génère un script Python circuit_synth adapté à la description, l\'exécute via Docker, ' +
+      'et produit un .kicad_sch natif + netlist + JSON composants. ' +
+      'Décide seul les composants optimaux (MCU, capteurs, passifs, connecteurs) — NE PAS passer schema_json. ' +
+      'Utilise la stratégie connecteur générique pour tous les modules complexes (ESP32, Arduino, capteurs). ' +
+      'Retourne : kicad_sch_content, composants avec footprints, unresolved_footprints à résoudre.',
     input_schema: {
       type: 'object' as const,
       properties: {
         user_description: {
           type: 'string',
-          description: 'Description complète du circuit PCB à concevoir',
+          description: 'Description complète du circuit à concevoir — tous les détails fonctionnels',
         },
         complexity: {
           type: 'string',
           enum: ['simple', 'medium', 'complex'],
-          description: 'Estimation de la complexité du circuit',
+          description: 'Complexité estimée : simple (<5 composants), medium (5-15), complex (>15)',
         },
       },
       required: ['user_description'],
@@ -75,9 +66,11 @@ export const PCB_TOOLS: Tool[] = [
   {
     name: 'call_agent_erc',
     description:
-      "Vérifie les Electrical Rules sur le .kicad_sch produit par call_agent_schema. " +
-      "Auto-corrige les violations 'pin_not_connected' en ajoutant des markers no_connect. " +
-      "NE modifie JAMAIS la connectivité. DOIT être appelé après call_agent_schema, avant call_agent_placement.",
+      'Ingénieur ERC — Expert validation électrique KiCad. ' +
+      'Vérifie toutes les règles électriques du .kicad_sch : alimentations, connexions manquantes, pins flottants. ' +
+      'Auto-corrige pin_not_connected avec no_connect markers. ' +
+      'N\'accepte aucune erreur d\'alimentation. Rejette tout schéma avec erreur de court-circuit. ' +
+      'OBLIGATOIRE après call_agent_schema, avant call_agent_kicad.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -92,110 +85,120 @@ export const PCB_TOOLS: Tool[] = [
   {
     name: 'call_agent_footprint',
     description:
-      'Résout le footprint KiCad pour un composant via cascade 4 étapes : ' +
-      '(1) librairies KiCad officielles (instant), ' +
-      '(2) SnapMagic API (si clé dispo), ' +
-      '(3) LCSC/EasyEDA API, ' +
-      '(4) génération .kicad_mod par Claude Haiku (fallback IA — 3 crédits). ' +
-      'Retourne footprint_name (ex: "Package_TO_SOT_SMD:SOT-23"), source, et kicad_mod si généré par IA.',
+      'Ingénieur Composants — Expert librairies KiCad, LCSC et SnapMagic. ' +
+      'Résout le footprint KiCad pour UN composant via cascade 4 étapes : ' +
+      '(1) librairies KiCad officielles (instant, 0 crédit), ' +
+      '(2) pgvector community cache (instant), ' +
+      '(3) LCSC/EasyEDA API (référence LCSC), ' +
+      '(4) génération .kicad_mod par Haiku (fallback IA, 3 crédits). ' +
+      'Mettre component_ref pour que l\'agent mette à jour le cache avant call_agent_kicad. ' +
+      'Appeler UNE FOIS par ref listée dans unresolved_footprints.',
     input_schema: {
       type: 'object' as const,
       properties: {
         part_number: {
           type: 'string',
-          description: 'Numéro de pièce exact (ex: NE555P, LM7805, C14877) ou description (ex: "résistance 10k 0402")',
+          description: 'Valeur du composant (ex: NE555P, LM7805, 10k 0402, ESP32-WROOM-32)',
+        },
+        component_ref: {
+          type: 'string',
+          description: 'Référence du composant dans le schéma (ex: U1, R1, C3) — obligatoire pour mise à jour cache',
         },
         package: {
           type: 'string',
-          description: 'Hint de package pour affiner la recherche (ex: SOT-23, TSSOP-16, 0402, DIP-8)',
+          description: 'Package hint pour affiner la recherche (ex: SOT-23, 0402, DIP-8, TSSOP-16)',
         },
       },
-      required: ['part_number'],
+      required: ['part_number', 'component_ref'],
+    },
+  },
+  {
+    name: 'call_agent_kicad',
+    description:
+      'Ingénieur Layout — Expert génération PCB KiCad. ' +
+      'Prend le .kicad_sch validé par ERC + les footprints résolus par call_agent_footprint, ' +
+      'et génère un .kicad_pcb avec les dimensions optimales et les règles DRC adaptées au type de circuit. ' +
+      'Aucun paramètre requis — lit tout depuis le cache interne. ' +
+      'OBLIGATOIRE après call_agent_erc + call_agent_footprint, avant call_agent_placement.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
     },
   },
   {
     name: 'call_agent_placement',
-    description: 'Calcule les positions X/Y/rotation optimales pour chaque composant sur le PCB.',
+    description:
+      'Ingénieur Placement — Expert pcbnew et stratégies de layout. ' +
+      'Positionne chaque composant via pcbnew SetPosition()/SetOrientationDegrees(). ' +
+      'Applique les règles : composants critiques proches du connecteur, ' +
+      'bypass caps à <2 mm des ICs, regroupement fonctionnel (MCU, power, analog séparés). ' +
+      'Aucun paramètre requis — lit .kicad_pcb et netlist depuis le cache. ' +
+      'Décide les dimensions du board selon le nombre et la densité des composants.',
     input_schema: {
       type: 'object' as const,
-      properties: {
-        schema_json: {
-          type: 'string',
-          description: 'Schéma JSON généré par call_agent_schema',
-        },
-        board_width_mm: {
-          type: 'number',
-          description: 'Largeur du PCB en mm (défaut: 50)',
-        },
-        board_height_mm: {
-          type: 'number',
-          description: 'Hauteur du PCB en mm (défaut: 50)',
-        },
-      },
-      required: ['schema_json'],
+      properties: {},
+      required: [],
     },
   },
   {
     name: 'call_agent_routing',
     description:
-      "Lance le routage automatique (Freerouting) et ajoute les ground planes. " +
-      "Le nombre de couches (2/4/8) est décidé par l'agent selon la densité et les contraintes, " +
-      "borné par le plan utilisateur (Free=2 max · Pro=4 max · Pro Max=8 max · Enterprise=illimité). " +
-      "Ce n'est PAS un paramètre d'entrée.",
+      'Ingénieur Routage — Expert Freerouting et intégrité du signal. ' +
+      'Lance Freerouting sur le .kicad_pcb placé, ajoute les ground planes B.Cu. ' +
+      'Décide seul le nombre de couches (2/4/8) selon densité nette, fréquences et plan utilisateur ' +
+      '(Free=2 max · Pro=4 max · Pro Max=8 max · Enterprise=illimité). ' +
+      'Optimise clearance et trace width pour le type de signal (power, signal, HF). ' +
+      'Aucun paramètre requis — lit depuis le cache.',
     input_schema: {
       type: 'object' as const,
-      properties: {
-        placement_json: {
-          type: 'string',
-          description: 'Placement JSON généré par call_agent_placement',
-        },
-        schema_json: {
-          type: 'string',
-          description: 'Schéma JSON original',
-        },
-      },
-      required: ['placement_json', 'schema_json'],
+      properties: {},
+      required: [],
     },
   },
   {
     name: 'call_agent_drc',
-    description: 'Exécute le DRC (Design Rule Check) et corrige automatiquement les violations si possible.',
+    description:
+      'Ingénieur Qualité PCB — Expert DRC kicad-cli. ' +
+      'Exécute le Design Rule Check sur le .kicad_pcb routé : clearance, court-circuits, ' +
+      'annular rings, silk overlap, via drill. ' +
+      'Auto-corrige les violations automatisables, boucle max 3×. ' +
+      'N\'accepte aucune violation critique (erreur = bloquant). ' +
+      'OBLIGATOIRE avant call_agent_export.',
     input_schema: {
       type: 'object' as const,
       properties: {
-        pcb_state: {
-          type: 'string',
-          description: 'État PCB JSON après routage',
-        },
         auto_fix: {
           type: 'boolean',
-          description: 'Tenter de corriger automatiquement les violations (défaut: true)',
+          description: 'Corriger automatiquement les violations réparables (défaut: true)',
         },
       },
-      required: ['pcb_state'],
+      required: [],
     },
   },
   {
     name: 'call_agent_export',
-    description: 'Génère les fichiers Gerber, BOM CSV et CPL pour JLCPCB, et obtient un devis.',
+    description:
+      'Ingénieur Fabrication — Expert JLCPCB et formats Gerber. ' +
+      'Génère les fichiers de fabrication : Gerbers RS-274X, drill Excellon, BOM JLCPCB, CPL centroïde. ' +
+      'Calcule le devis JLCPCB (prix, délai). ' +
+      'JAMAIS déclencher la commande sans "OUI JE CONFIRME" explicite de l\'utilisateur. ' +
+      'Aucun paramètre requis — lit .kicad_pcb DRC-clean depuis le cache.',
     input_schema: {
       type: 'object' as const,
-      properties: {
-        pcb_state: {
-          type: 'string',
-          description: 'État PCB JSON DRC-clean',
-        },
-      },
-      required: ['pcb_state'],
+      properties: {},
+      required: [],
     },
   },
   {
     name: 'call_agent_simulation',
     description:
-      'Lance une simulation SPICE ngspice sur le schéma KiCad. ' +
-      'Retourne des vecteurs temporels tension/courant pour les noeuds principaux. ' +
+      'Ingénieur Simulation — Expert SPICE et analyse de circuit. ' +
+      'Lance une simulation ngspice sur le schéma KiCad exporté en SPICE. ' +
+      'Retourne vecteurs temporels tension/courant pour les nœuds principaux. ' +
+      'Analyse transient (comportement temporel), DC (point de repos) ou AC (réponse fréquentielle). ' +
       'Requiert plan Pro ou supérieur. Coût : 3 crédits. ' +
-      'Doit être appelé après call_agent_schema (le schéma doit exister en cache).',
+      'Appeler après call_agent_schema uniquement.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -210,17 +213,20 @@ export const PCB_TOOLS: Tool[] = [
   },
   {
     name: 'ask_user',
-    description: 'Pose une question claire à l\'utilisateur pour obtenir une information manquante ou une confirmation.',
+    description:
+      'Pose une question à l\'utilisateur pour obtenir une information critique manquante. ' +
+      'Utiliser UNIQUEMENT si la donnée est bloquante (tension d\'alimentation, courant max, contrainte mécanique). ' +
+      'NE PAS utiliser pour des choix de composants — décider soi-même en ingénieur senior.',
     input_schema: {
       type: 'object' as const,
       properties: {
         question: {
           type: 'string',
-          description: 'Question à poser à l\'utilisateur',
+          description: 'Question précise et technique',
         },
         context: {
           type: 'string',
-          description: 'Contexte expliquant pourquoi cette information est nécessaire',
+          description: 'Pourquoi cette info est bloquante pour continuer le pipeline',
         },
       },
       required: ['question'],
@@ -228,11 +234,7 @@ export const PCB_TOOLS: Tool[] = [
   },
 ];
 
-// TEST MODE: only schema generation — stops after schematic is shown
-const _SCHEMA_ONLY_MODE = true;
-export const ACTIVE_PCB_TOOLS = _SCHEMA_ONLY_MODE
-  ? PCB_TOOLS.filter((t) => ['call_agent_schema', 'ask_user'].includes(t.name))
-  : PCB_TOOLS;
+export const ACTIVE_PCB_TOOLS = PCB_TOOLS;
 
 // Persistent PCB state across tool calls within one orchestrator run
 // Keyed by projectId — populated by call_agent_schema and used by placement
@@ -266,9 +268,10 @@ export async function executeToolStub(
       const complexity = String(input['complexity'] ?? 'simple');
       const serviceUrl = process.env.KICAD_SERVICE_URL;
 
-      // ── Path A: circuit_synth code execution (best quality) ──────────────
-      // Haiku generates Python code with exact KiCad symbol paths + pin names.
-      // Docker executes it → proper multi-pin symbols, real hierarchical labels.
+      // ── Path A: circuit_synth Python code → Docker /schematic/execute ────
+      // Haiku génère Python avec symboles KiCad natifs + stratégie connecteur.
+      // Docker exécute → .kicad_sch natif multi-pins (62KB+ pour ESP32).
+      // Sortie : .kicad_sch UNIQUEMENT — le PCB est généré par call_agent_kicad.
       if (serviceUrl && desc) {
         try {
           const codeResult = await generateSchematicCodeWithHaiku(desc);
@@ -297,23 +300,27 @@ export async function executeToolStub(
                 error?: string;
               };
 
-              if (execData.success && execData.kicad_sch_content && execData.kicad_pcb_content) {
-                const schema: SchemaJson = {
-                  components: codeResult.footprints,
-                  nets: codeResult.footprints.map((_, i) => `NET_${i}`),
-                  connections: [],
-                };
-                const enrichedComponents = schema.components.map((c) => ({
+              if (execData.success && execData.kicad_sch_content) {
+                const enrichedComponents = codeResult.footprints.map((c) => ({
                   ...c,
                   footprint: quickLookup(c.ref, c.footprint) ?? c.footprint,
                 }));
+                const unresolvedFootprints = enrichedComponents
+                  .filter((c) => !c.footprint.includes(':'))
+                  .map((c) => ({ ref: c.ref, value: c.value, footprint: c.footprint }));
+
+                const schema: SchemaJson = {
+                  components: enrichedComponents,
+                  nets: codeResult.footprints.map((_, i) => `NET_${i}`),
+                  connections: [],
+                };
 
                 _pcbStateCache.set(projectId, {
-                  schema: { ...schema, components: enrichedComponents },
+                  schema,
                   boardW,
                   boardH,
                   kicad_sch_content: execData.kicad_sch_content,
-                  kicad_pcb_content: execData.kicad_pcb_content,
+                  // kicad_pcb_content intentionnellement absent — call_agent_kicad le génère
                 });
 
                 return {
@@ -322,11 +329,10 @@ export async function executeToolStub(
                   components: enrichedComponents,
                   nets: schema.nets,
                   connections: [],
-                  engine: 'circuit-synth-code',
+                  engine: 'circuit-synth-execute',
                   kicad_sch_content: execData.kicad_sch_content,
-                  kicad_pcb_content: execData.kicad_pcb_content,
-                  unresolved_footprints: [],
-                  note: `Schéma généré via code circuit_synth — ${enrichedComponents.length} composants, symboles KiCad natifs.`,
+                  unresolved_footprints: unresolvedFootprints,
+                  note: `Schéma circuit_synth — ${enrichedComponents.length} composants, symboles KiCad natifs.${unresolvedFootprints.length > 0 ? ` ${unresolvedFootprints.length} footprint(s) à résoudre via call_agent_footprint.` : ''}`,
                 };
               }
             }
@@ -336,45 +342,27 @@ export async function executeToolStub(
         }
       }
 
-      // ── Path B: JSON schema (fallback) ────────────────────────────────────
-      // 1. Try to parse schema_json if orchestrator passes one directly
+      // ── Path B: JSON schema via Haiku (fallback) ──────────────────────────
+      // Haiku génère JSON schema avec stratégie connecteur pour MCUs complexes.
       let schema: SchemaJson | null = null;
-      const schemaJsonRaw = input['schema_json'];
-      if (schemaJsonRaw) {
-        try {
-          const parsed = JSON.parse(String(schemaJsonRaw)) as SchemaJson;
-          if (Array.isArray(parsed.components) && parsed.components.length > 0) {
-            schema = parsed;
-          }
-        } catch { /* fall through */ }
-      }
 
-      // 2. Call Claude Haiku 4.5 to generate JSON schema
-      if (!schema && desc) {
+      if (desc) {
         schema = await generateSchemaWithHaiku(desc);
       }
 
-      // 3. Fallback to hardcoded defaults based on complexity
       if (!schema) {
         schema = parseSchemaFromDescription(desc, complexity);
       }
 
-      // 4. Validate + auto-correct symbols against local KiCad libraries (pre-flight)
       schema = await validateAndCorrectSchema(schema);
 
-      // Board size adaptive to component count — keeps components visible in viewer.
       const n = schema.components.length;
       const boardW = n <= 5 ? 30 : n <= 12 ? 40 : 50;
       const boardH = n <= 5 ? 25 : n <= 12 ? 35 : 40;
 
-      // Circuit-Synth always generates native KiCad files
+      // Path B génère le .kicad_sch via /schematic/generate (Docker) ou TS inline
       const csResult = await runCircuitSynthEngine(schema, boardW, boardH, projectId);
 
-      // Auto-resolve footprints via KiCad library lookup (Step 1 — instant, no network).
-      // Replaces short names ("0402", "SOT-23") with official lib paths
-      // ("Resistor_SMD:R_0402_1005Metric"). Unknowns keep their original value
-      // and are reported in unresolved_footprints so the orchestrator can call
-      // call_agent_footprint for the full 4-step cascade.
       const enrichedComponents = schema.components.map((c) => ({
         ...c,
         footprint: quickLookup(c.ref, c.footprint) ?? c.footprint,
@@ -390,7 +378,7 @@ export async function executeToolStub(
         boardW,
         boardH,
         kicad_sch_content: csResult.kicad_sch_content,
-        kicad_pcb_content: csResult.kicad_pcb_content,
+        // kicad_pcb_content intentionnellement absent — call_agent_kicad le génère
       });
 
       return {
@@ -399,11 +387,10 @@ export async function executeToolStub(
         components: enrichedComponents,
         nets: schema.nets,
         connections: schema.connections ?? [],
-        engine: 'circuit-synth',
+        engine: 'circuit-synth-json',
         kicad_sch_content: csResult.kicad_sch_content,
-        kicad_pcb_content: csResult.kicad_pcb_content,
         unresolved_footprints: unresolvedFootprints,
-        note: `Schéma généré — ${schema.components.length} composants, ${schema.nets.length} nets, moteur: Circuit-Synth.${unresolvedFootprints.length > 0 ? ` ${unresolvedFootprints.length} footprint(s) à résoudre.` : ' Tous les footprints résolus.'}`,
+        note: `Schéma JSON — ${schema.components.length} composants, ${schema.nets.length} nets.${unresolvedFootprints.length > 0 ? ` ${unresolvedFootprints.length} footprint(s) à résoudre via call_agent_footprint.` : ' Tous les footprints résolus.'}`,
       };
     }
 
@@ -481,14 +468,31 @@ export async function executeToolStub(
 
     case 'call_agent_footprint': {
       const pn = String(input['part_number'] ?? '').trim();
+      const ref = String(input['component_ref'] ?? '').trim();
       const pkg = input['package'] ? String(input['package']).trim() : undefined;
       if (!pn) {
         return { status: 'error', note: 'part_number requis.' };
       }
       try {
         const result = await findFootprint(pn, pkg);
+
+        // Met à jour le cache avec le footprint résolu — call_agent_kicad l'utilisera
+        if (ref) {
+          const cached = _pcbStateCache.get(projectId);
+          if (cached?.schema.components) {
+            const updatedComponents = cached.schema.components.map((c) =>
+              c.ref === ref ? { ...c, footprint: result.footprint_name } : c
+            );
+            _pcbStateCache.set(projectId, {
+              ...cached,
+              schema: { ...cached.schema, components: updatedComponents },
+            });
+          }
+        }
+
         return {
           status: 'success',
+          component_ref: ref || null,
           part_number: pn,
           footprint_name: result.footprint_name,
           source: result.source,
@@ -502,6 +506,68 @@ export async function executeToolStub(
         log.error({ err, pn }, 'call_agent_footprint error');
         return { status: 'error', part_number: pn, note: msg };
       }
+    }
+
+    case 'call_agent_kicad': {
+      // Ingénieur Layout — génère .kicad_pcb depuis le cache (schema + footprints enrichis)
+      const cached = _pcbStateCache.get(projectId);
+      if (!cached?.schema || cached.schema.components.length === 0) {
+        return {
+          status: 'error',
+          note: 'Aucun schéma en cache — appeler call_agent_schema d\'abord.',
+        };
+      }
+
+      const { schema, boardW, boardH } = cached;
+
+      // Essaie d'abord le service Python pour un PCB de meilleure qualité
+      const serviceUrl = process.env.KICAD_SERVICE_URL;
+      let kicadPcbContent: string | null = null;
+
+      if (serviceUrl) {
+        try {
+          const res = await fetch(`${serviceUrl}/schematic/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              components: schema.components,
+              nets: schema.nets,
+              connections: schema.connections ?? [],
+              board_width_mm: boardW,
+              board_height_mm: boardH,
+              project_id: projectId,
+            }),
+            signal: AbortSignal.timeout(60_000),
+          });
+          if (res.ok) {
+            const data = await res.json() as { success: boolean; kicad_pcb_content?: string | null };
+            if (data.success && data.kicad_pcb_content) {
+              kicadPcbContent = data.kicad_pcb_content;
+            }
+          }
+        } catch {
+          log.warn('call_agent_kicad: Python service unavailable — using TS generator');
+        }
+      }
+
+      // Fallback TS inline via runCircuitSynthEngine (sans service URL = TS pur)
+      if (!kicadPcbContent) {
+        const tsResult = await runCircuitSynthEngine(schema, boardW, boardH, projectId);
+        kicadPcbContent = tsResult.kicad_pcb_content;
+      }
+
+      const finalPcb = kicadPcbContent ?? '';
+      _pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: finalPcb });
+
+      return {
+        status: 'success',
+        pcb_status: 'ERC_CLEAN',
+        kicad_pcb_content: finalPcb,
+        board_width_mm: boardW,
+        board_height_mm: boardH,
+        component_count: schema.components.length,
+        note: `PCB généré — ${schema.components.length} composants, board ${boardW}×${boardH} mm. Prêt pour placement.`,
+      };
     }
 
     case 'call_agent_placement': {
