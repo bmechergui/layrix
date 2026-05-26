@@ -939,9 +939,23 @@ KiCad symbol table — use EXACTLY these values for "symbol":
   LM1117-3.3         → "Regulator_Linear:LM1117T-3.3"
   LM1117-5.0         → "Regulator_Linear:LM1117T-5.0"
   Op-amp (generic)   → "Amplifier_Operational:LM358"
-  2-pin connector    → "Connector_Generic:Conn_01x02"
-  3-pin connector    → "Connector_Generic:Conn_01x03"
-  4-pin connector    → "Connector_Generic:Conn_01x04"
+  2-pin connector    → "Connector_Generic:Conn_01x02"    pins: 1, 2
+  3-pin connector    → "Connector_Generic:Conn_01x03"    pins: 1, 2, 3
+  4-pin connector    → "Connector_Generic:Conn_01x04"    pins: 1, 2, 3, 4
+  6-pin connector    → "Connector_Generic:Conn_01x06"    pins: 1..6
+  8-pin connector    → "Connector_Generic:Conn_01x08"    pins: 1..8
+  COMPLEX ICs — MANDATORY connector strategy (NEVER use real MCU symbols):
+    Arduino Nano/UNO (30-pin) → "Connector_Generic:Conn_02x15_Odd_Even"  footprint: "Connector_PinHeader_2.54mm:PinHeader_2x15_P2.54mm_Vertical"
+    Arduino Mega (44-pin)     → "Connector_Generic:Conn_02x22_Odd_Even"  footprint: "Connector_PinHeader_2.54mm:PinHeader_2x22_P2.54mm_Vertical"
+    ESP32-WROOM / ESP32-S3    → "Connector_Generic:Conn_02x19_Odd_Even"  footprint: "Connector_PinHeader_2.54mm:PinHeader_2x19_P2.54mm_Vertical"
+    Raspberry Pi Pico (40-pin)→ "Connector_Generic:Conn_02x20_Odd_Even"  footprint: "Connector_PinHeader_2.54mm:PinHeader_2x20_P2.54mm_Vertical"
+    BME280/BMP280 module      → "Connector_Generic:Conn_01x06"           footprint: "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical"
+    DHT22 / DHT11             → "Connector_Generic:Conn_01x04"           footprint: "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical"
+    OLED SSD1306 I2C          → "Connector_Generic:Conn_01x04"           footprint: "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical"
+    HC-05 Bluetooth module    → "Connector_Generic:Conn_01x06"
+    STM32 bluepill (40-pin)   → "Connector_Generic:Conn_02x20_Odd_Even"
+    Any other module (N pins) → "Connector_Generic:Conn_01xNN" where NN = pin count
+  ALL connectors use INTEGER pin numbers (1, 2, 3, ...) in connections.
   If no symbol fits   → "Device:R" (fallback)
 
 Footprint keys:
@@ -967,7 +981,8 @@ KiCad pin NAMES for ICs — use these exact strings in "pin":
   Q_PMOS_GSD (Device:Q_PMOS_GSD):
     "G"=1 (gate), "S"=2 (source), "D"=3 (drain)
 
-Reference designators: R=resistor, C=capacitor, U=IC, D=diode/LED, J=connector, Q=transistor.
+Reference designators: R=resistor, C=capacitor, U=module/IC (use U_ESP, U_ARD, U_BME…), D=diode/LED, J=connector, Q=transistor.
+IMPORTANT: For MCU/sensor modules, use ref prefix U_ followed by short name (U_ESP1, U_ARD1, U_BME1).
 Keep it to ≤ 20 components.
 
 Example — "LED with 330R on 3.3V" (passives use numbers, connectors use numbers):
@@ -1144,7 +1159,13 @@ Return ONLY valid JSON (no markdown):
     const parsed = JSON.parse(cleaned) as { circuit_synth_code: string; footprints: SchemaComponent[] };
     if (!parsed.circuit_synth_code || !Array.isArray(parsed.footprints)) return null;
 
-    return { code: parsed.circuit_synth_code, footprints: parsed.footprints };
+    const code = parsed.circuit_synth_code;
+    if (!code.includes('cs_circuit') && !code.includes('from circuit_synth') && !code.includes('import circuit')) {
+      log.warn('Haiku returned non-Python content in circuit_synth_code — discarding');
+      return null;
+    }
+
+    return { code, footprints: parsed.footprints };
   } catch (err) {
     log.warn({ err }, 'circuit_synth code generator: Haiku call failed');
     return null;

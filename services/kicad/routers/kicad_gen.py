@@ -391,15 +391,16 @@ def _resolve_pin(comp_obj: object, pin_name: object, comp_ref: str, net: object)
     Returns True if connection succeeded.
     """
     # 1. Exact
+    _first_err: Exception | None = None
     try:
         comp_obj[pin_name] += net  # type: ignore[index]
         return True
-    except Exception as first_err:
-        pass
+    except Exception as e:
+        _first_err = e
 
     # Parse available pins from ComponentError message
     available: list[str] = []
-    err_str = str(first_err)
+    err_str = str(_first_err) if _first_err else ""
     import re as _re
     m = _re.search(r"Available:\s*(.+)$", err_str)
     if m:
@@ -567,6 +568,7 @@ def _execute_cs_code(code: str, project_id: str, board_w: float, board_h: float)
     import shutil
 
     proj_dir = tempfile.mkdtemp(prefix=f"cs_{project_id or 'exec'}_")
+    logger.info("=== CIRCUIT_SYNTH SCRIPT ===\n%s\n=== END SCRIPT ===", code)
     try:
         wrapper = f"""import sys, os
 sys.path.insert(0, '/app/circuit_synth/src')
@@ -587,7 +589,7 @@ _PROJECT_PATH = {repr(proj_dir)}
             capture_output=True, text=True, timeout=30, env=env,
         )
         if result.returncode != 0:
-            raise RuntimeError(f"circuit_synth code execution failed:\n{result.stderr[:800]}")
+            raise RuntimeError(f"circuit_synth code execution failed:\n{result.stderr[:3000]}")
 
         sch_files = list(Path(proj_dir).rglob("*.kicad_sch"))
         if not sch_files:
