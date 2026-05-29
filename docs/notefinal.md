@@ -562,6 +562,21 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 → **Mode CPU** (défaut) : scale avec les cœurs CPU, zéro contention entre jobs
 → **Mode GPU** (optionnel CUDA/Metal) : GPU partagé entre jobs → file GPU nécessaire si activé — rester en CPU pour démarrer
 
+**Pourquoi 1 process/job par utilisateur ?**
+→ Pas une contrainte de `kicad-tools` — c'est notre architecture BullMQ existante.
+→ Chaque PCB = 1 job BullMQ = 1 worker Node.js qui appelle le service FastAPI.
+→ Le service FastAPI reçoit le `.kicad_pcb` en base64, le traite, retourne le résultat — aucune mémoire partagée entre requêtes.
+→ Résultat : user A et user B lancent leur PCB en même temps → 2 workers indépendants → 2 appels FastAPI parallèles → zéro collision.
+→ Si 10 users en même temps → BullMQ concurrency=10 → 10 workers → 10 appels parallèles, chacun isolé.
+
+**C'est quoi le mode GPU ?**
+→ Le placement force-directed calcule des forces entre tous les composants (O(n²) paires).
+→ Pour un PCB de 5 composants → ~10 paires → CPU largement suffisant, calcul en ms.
+→ Pour un PCB de 100 composants → ~5000 paires → CPU commence à ralentir (quelques secondes).
+→ **Mode GPU** : `kicad-tools` envoie ces calculs de forces sur la carte graphique (NVIDIA CUDA ou Apple Metal) qui les fait tous en parallèle → 10-50× plus rapide sur grands PCBs.
+→ `pip install kicad-tools[cuda]` (NVIDIA) ou `kicad-tools[metal]` (Mac Apple Silicon).
+→ **Pour Layrix** : nos PCBs = 5-30 composants en moyenne → CPU suffit largement. GPU = optimisation future si on supporte des PCBs >100 composants.
+
 
 → https://github.com/rjwalters/kicad-tools — MIT, PyPI `kicad-tools` v0.13.0, Python 3.10+, actif (push 2026-05-29)
 → Tagline : *"Tools for AI agents to work with KiCad projects"* — conçu exactement pour notre cas d'usage.
