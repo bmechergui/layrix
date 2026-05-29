@@ -527,6 +527,26 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 **Alternative gratuite envisagée :** RL_PCB (Reinforcement Learning)
 → https://github.com/LukeVassallo/RL_PCB
 → Combinaison recommandée : LLM (Claude) suggère la stratégie → RL_PCB optimise → pcbnew valide
+**Alternative force_directed — Analyse 2026-05-29**
+
+**Option A — `circuit_synth.component_placement.ForceDirectedLayout` (❌ Écarté)**
+→ Importable et instanciable, mais `fdl.layout(circuit)` plante sur un vrai circuit.
+→ **Erreur de catégorie** : c'est un placeur de *symboles sur schéma* (lisibilité du diagramme), pas de *footprints sur PCB*. Domaine incompatible avec `placement_layout.py`.
+→ Entrée attendue : objet `Circuit` complet (`.components`, `.get_nets()`) — inexistant dans le pipeline PCB à cette étape.
+→ Sortie non bornée au board — composants peuvent sortir du PCB.
+→ Code vendoré non maintenu (`PlacementNode.connected_components` non initialisé).
+
+**Option B — `kicad-tools` (rjwalters) — `kct optimize-placement` (✅ Candidat sérieux)**
+→ https://github.com/rjwalters/kicad-tools — MIT, PyPI `kicad-tools` v0.13.0, Python 3.10+, actif (push 2026-05-29)
+→ Tagline : *"Tools for AI agents to work with KiCad projects"* — conçu exactement pour notre cas d'usage.
+→ **Force-directed board-aware** : repulsion edge-to-edge sur outlines, borné au board, `slide_off`, poids configurables.
+→ Contrat parfait : `.kicad_pcb` en entrée → `.kicad_pcb` en sortie — identique au flux `/place/auto` de Layrix.
+→ **Sans KiCad ni kicad-cli** pour le placement/routage — pur Python (numpy). Seuls DRC/Gerber utilisent kicad-cli (déjà présent).
+→ **Multi-utilisateurs natif** : aucun état global, aucun daemon — 1 process/job, parallélisable comme BullMQ (10 PCBs simultanés).
+→ Accélération GPU optionnelle (CUDA/Metal) — CPU pur suffit pour démarrer.
+→ Couvre aussi : routeur natif C++, DRC avec règles fabricant JLCPCB intégrées, analyse congestion/thermique/SI, serveur MCP.
+→ **Risque** : Beta, 1 mainteneur, 30 ⭐ → vendorer + pinner la version comme circuit_synth.
+→ **Prochaine étape décidée** : spike isolé — tester `kct optimize-placement` sur un `.kicad_pcb` Layrix réel avant intégration.
 
 **Fichiers concernés :**
 - `packages/agents/src/tools.ts` — `call_agent_placement`
