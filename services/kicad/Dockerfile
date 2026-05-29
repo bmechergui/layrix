@@ -49,9 +49,10 @@ ENV KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints
 ENV PYTHONUNBUFFERED=1
 ENV DISPLAY=:99
 
-# Add KiCad system Python path so pcbnew is importable by pip-installed uvicorn
 # /app/circuit_synth/src — real circuit_synth package (src layout)
-ENV PYTHONPATH=/app/circuit_synth/src:/usr/lib/python3/dist-packages:${PYTHONPATH}
+# NOTE: do NOT add /usr/lib/python3/dist-packages here — it would put numpy 1.21.5 before
+# pip-installed numpy 2.x, breaking kicad-tools type annotations. pcbnew is found via default sys.path.
+ENV PYTHONPATH=/app/circuit_synth/src:${PYTHONPATH}
 
 WORKDIR /app
 COPY requirements.txt .
@@ -71,8 +72,11 @@ COPY . .
 RUN pip3 install --no-cache-dir ./circuit_synth
 
 # Install kicad-tools from local source (services/kicad/kicad_tools/)
+# Move source out of /app/ first — avoids Python namespace-package shadowing (/app in sys.path would
+# shadow the installed package if the source directory remains at /app/kicad_tools/)
 # extras: placement=CMA-ES, drc=rtree spatial index, geometry=shapely
-RUN pip3 install --no-cache-dir "./kicad_tools[placement,drc,geometry]"
+RUN mv /app/kicad_tools /tmp/kicad_tools && \
+    pip3 install --no-cache-dir "/tmp/kicad_tools[placement,drc,geometry]"
 
 RUN mkdir -p /tmp/kicad-jobs
 

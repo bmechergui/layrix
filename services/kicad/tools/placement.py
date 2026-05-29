@@ -1,14 +1,15 @@
 """
-Layrix — Placement pcbnew
+Layrix — Placement
 Deux modes :
   1. place_components(pcb_path, components, output_path) — positions explicites fournies par l'agent
-  2. auto_place(pcb_b64, board_w, board_h) → dict  — CMA-ES via kicad-tools, I/O base64
+  2. auto_place(pcb_b64, board_w, board_h) → dict  — kicad-tools CMA-ES, pur Python, I/O base64
 """
 
 from __future__ import annotations
 
 import base64
 import logging
+import re
 import tempfile
 from pathlib import Path
 
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Helpers pcbnew
+# Helpers pcbnew (mode 1 — placement explicite)
 # ---------------------------------------------------------------------------
 
 def _load_pcbnew():
@@ -71,7 +72,7 @@ def place_components(pcb_path: str, components: list[dict], output_path: str) ->
 
 
 # ---------------------------------------------------------------------------
-# Mode 2 : auto-placement (kicad-tools CMA-ES → fallback grille)
+# Mode 2 : auto-placement — kicad-tools CMA-ES (pur Python, version-agnostic)
 # ---------------------------------------------------------------------------
 
 def auto_place(
@@ -80,52 +81,80 @@ def auto_place(
     board_height_mm: float,
 ) -> dict:
     """
-    Auto-placement via kicad-tools CMA-ES.
-    Fallback sur placement grille (placement_layout.py) si kicad-tools absent.
-    I/O base64 — aucun filesystem partagé requis.
+    Auto-placement via kicad-tools CMA-ES place_unplaced.
+    Pur Python — ne dépend PAS de pcbnew, compatible toutes versions KiCad.
+    Fallback : placement grille déterministe si kicad-tools échoue.
+    I/O base64.
     """
-    pcbnew = _load_pcbnew()
     pcb_bytes = base64.b64decode(kicad_pcb_b64)
+    pcb_text = pcb_bytes.decode("utf-8", errors="replace")
+
+    # Injecter le contour Edge.Cuts (manipulation texte S-expression)
+    pcb_text = _inject_board_outline(pcb_text, board_width_mm, board_height_mm)
 
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "input.kicad_pcb"
-        resized = Path(tmp) / "resized.kicad_pcb"
         dst = Path(tmp) / "output.kicad_pcb"
-        src.write_bytes(pcb_bytes)
-
-        # Étape 1 : redimensionner le contour PCB via pcbnew
-        board = pcbnew.LoadBoard(str(src))
-        _resize_board(board, board_width_mm, board_height_mm, pcbnew)
-        pcbnew.SaveBoard(str(resized), board)
+        src.write_text(pcb_text, encoding="utf-8")
 
         placed_refs: list[str] = []
 
-        # Étape 2 : placement CMA-ES via kicad-tools
+        # Étape 1 : kicad-tools place_unplaced (CMA-ES, pur Python)
         try:
             from kicad_tools.placement.place_unplaced import place_unplaced
             result = place_unplaced(
-                str(resized),
-                output=str(dst),
+                str(src),
+                output_path=str(dst),
                 margin=1.5,
                 spacing=1.5,
                 cluster=True,
             )
             placed_refs = result.placed_refs
             logger.info(
-                "kicad-tools place_unplaced: %d placed, %d overflow",
+                "kicad-tools CMA-ES: %d placed, %d overflow",
                 result.placed_count,
                 result.overflow_count,
             )
         except Exception as exc:
             logger.warning("kicad-tools placement failed (%s) — fallback grille", exc)
-            placed_refs = _fallback_grid_place(resized, dst, board_width_mm, board_height_mm, pcbnew)
+            placed_refs = _fallback_grid_place(src, dst, board_width_mm, board_height_mm)
 
-        positions = [{"ref": r} for r in placed_refs]
+        output_bytes = dst.read_bytes() if dst.exists() else src.read_bytes()
         return {
-            "kicad_pcb_b64": base64.b64encode(dst.read_bytes()).decode(),
+            "kicad_pcb_b64": base64.b64encode(output_bytes).decode(),
             "placed_count": len(placed_refs),
-            "positions": positions,
+            "positions": [{"ref": r} for r in placed_refs],
         }
+
+
+def _inject_board_outline(pcb_text: str, width_mm: float, height_mm: float) -> str:
+    """
+    Supprime les gr_line sur Edge.Cuts existantes et injecte un rectangle propre.
+    Manipulation pure texte S-expression — compatible toutes versions KiCad.
+    """
+    # Supprimer les gr_line Edge.Cuts existantes
+    pcb_text = re.sub(
+        r'\(gr_line[^)]*\([^)]*\)[^)]*"Edge\.Cuts"[^)]*\)',
+        "",
+        pcb_text,
+        flags=re.DOTALL,
+    )
+
+    w = width_mm
+    h = height_mm
+    outline = (
+        f'\n  (gr_line (start 0 0) (end {w} 0) (layer "Edge.Cuts") (width 0.05))'
+        f'\n  (gr_line (start {w} 0) (end {w} {h}) (layer "Edge.Cuts") (width 0.05))'
+        f'\n  (gr_line (start {w} {h}) (end 0 {h}) (layer "Edge.Cuts") (width 0.05))'
+        f'\n  (gr_line (start 0 {h}) (end 0 0) (layer "Edge.Cuts") (width 0.05))'
+        f'\n'
+    )
+
+    # Insérer avant la dernière parenthèse fermante du fichier
+    last_paren = pcb_text.rfind(")")
+    if last_paren == -1:
+        return pcb_text + outline
+    return pcb_text[:last_paren] + outline + pcb_text[last_paren:]
 
 
 def _fallback_grid_place(
@@ -133,13 +162,26 @@ def _fallback_grid_place(
     dst: Path,
     board_width_mm: float,
     board_height_mm: float,
-    pcbnew,
 ) -> list[str]:
-    """Placement grille déterministe — fallback si kicad-tools absent."""
-    board = pcbnew.LoadBoard(str(src))
+    """Fallback grille déterministe via pcbnew. Retourne [] si pcbnew indisponible."""
+    try:
+        import pcbnew  # type: ignore
+    except ImportError:
+        logger.warning("pcbnew indisponible — placement ignoré")
+        import shutil
+        shutil.copy2(src, dst)
+        return []
+
+    try:
+        board = pcbnew.LoadBoard(str(src))
+    except OSError as exc:
+        logger.warning("pcbnew ne peut pas lire le fichier (%s) — copie brute", exc)
+        import shutil
+        shutil.copy2(src, dst)
+        return []
+
     footprints = list(board.GetFootprints())
     refs = [fp.GetReference() for fp in footprints]
-
     if not refs:
         pcbnew.SaveBoard(str(dst), board)
         return []
@@ -159,31 +201,3 @@ def _fallback_grid_place(
 
     pcbnew.SaveBoard(str(dst), board)
     return placed
-
-
-def _resize_board(board, width_mm: float, height_mm: float, pcbnew) -> None:
-    """Redimensionne le contour du PCB (Edge.Cuts) aux dimensions demandées."""
-    edge_layer = pcbnew.Edge_Cuts
-
-    to_remove = [item for item in board.GetDrawings() if item.GetLayer() == edge_layer]
-    for item in to_remove:
-        board.Remove(item)
-
-    w_nm = pcbnew.FromMM(width_mm)
-    h_nm = pcbnew.FromMM(height_mm)
-
-    corners = [
-        (0, 0, w_nm, 0),
-        (w_nm, 0, w_nm, h_nm),
-        (w_nm, h_nm, 0, h_nm),
-        (0, h_nm, 0, 0),
-    ]
-
-    for x1, y1, x2, y2 in corners:
-        seg = pcbnew.PCB_SHAPE(board)
-        seg.SetShape(pcbnew.SHAPE_T_SEGMENT)
-        seg.SetLayer(edge_layer)
-        seg.SetStart(pcbnew.VECTOR2I(x1, y1))
-        seg.SetEnd(pcbnew.VECTOR2I(x2, y2))
-        seg.SetWidth(pcbnew.FromMM(0.05))
-        board.Add(seg)
