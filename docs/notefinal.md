@@ -548,6 +548,21 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 → **Risque** : Beta, 1 mainteneur, 30 ⭐ → vendorer + pinner la version comme circuit_synth.
 → **Prochaine étape décidée** : spike isolé — tester `kct optimize-placement` sur un `.kicad_pcb` Layrix réel avant intégration.
 
+**Option C — Développer notre propre force-directed PCB (🔲 À faire)**
+→ Écrire un algorithme force-directed **dans le bon domaine** : coordonnées PCB mm, borné au board, alimenté par les `connections` déjà en cache (`_pcbStateCache`).
+→ Intégré directement dans `placement_layout.py` — passe optionnelle après l'algo déterministe actuel.
+→ **Principe** : chaque net = force attractive entre les composants connectés ; chaque paire de composants = force répulsive ; itérations jusqu'à convergence.
+→ **Avantages** :
+  - Zéro dépendance externe — pur Python (numpy), même env Docker actuel
+  - Contrôle total : paramètres Layrix-specific (bypass caps restent à <2mm des ICs, connecteurs ancrés aux bords)
+  - Pas de vendoring à maintenir
+  - Peut être GPU-accéléré (numpy → cupy) si besoin plus tard
+→ **Entrée** : `refs: list[str]`, `connections: list[{name, pins}]`, `board_w_mm`, `board_h_mm`
+→ **Sortie** : `dict[ref → (x_mm, y_mm, rotation_deg)]` — identique à `compute_layout()` actuel → zéro changement d'interface
+→ **Effort estimé** : 1 session (~150 lignes Python + tests) — algorithme bien documenté, pas de magie noire
+→ **Risque** : faible — fallback immédiat sur l'algo déterministe si convergence lente ou résultat dégradé
+→ **Statut** : décision non prise — à comparer avec Option B (`kct optimize-placement`) après le spike
+
 **Option B bis — `kicad-tools` — routeur natif C++ (✅ Alternative à Freerouting)**
 → Même repo `rjwalters/kicad-tools` — module `kicad_tools.router.Autorouter`
 → API Python pure : `router.add_component()` + `router.route_all()` → retourne pistes routées
