@@ -548,11 +548,22 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 → **Risque** : Beta, 1 mainteneur, 30 ⭐ → vendorer + pinner la version comme circuit_synth.
 → **Prochaine étape décidée** : spike isolé — tester `kct optimize-placement` sur un `.kicad_pcb` Layrix réel avant intégration.
 
+**Option B bis — `kicad-tools` — routeur natif C++ (✅ Alternative à Freerouting)**
+→ Même repo `rjwalters/kicad-tools` — module `kicad_tools.router.Autorouter`
+→ API Python pure : `router.add_component()` + `router.route_all()` → retourne pistes routées
+→ Kernel C++ natif (optionnel `pip install kicad-tools[native]`) — pas de Java, pas de JVM, pas de JAR Freerouting
+→ Contrat identique au flux actuel : `.kicad_pcb` en entrée → `.kicad_pcb` routé en sortie
+→ **Avantage vs Freerouting** : pas de dépendance Java/openjdk-17, démarrage instantané (pas de JVM warmup), même parallélisation multi-users
+→ **Risque** : qualité du routage C++ vs Freerouting (30 ans d'algorithme industriel) — à valider sur circuits réels avec % routé + DRC clean
+→ **Statut** : non testé sur Layrix — à inclure dans le spike `kicad-tools`
+
 **Fichiers concernés :**
-- `packages/agents/src/tools.ts` — `call_agent_placement`
-- `packages/agents/src/engines/placement-fallback.ts` — algo TS
-- `services/kicad/tools/placement_layout.py` — algo Python
+- `packages/agents/src/tools.ts` — `call_agent_placement` + `call_agent_routing`
+- `packages/agents/src/engines/placement-fallback.ts` — algo TS placement
+- `packages/agents/src/engines/routing-service.ts` — client Freerouting actuel
+- `services/kicad/tools/placement_layout.py` — algo Python placement
 - `services/kicad/tools/placement.py` — appel pcbnew
+- `services/kicad/routers/routing.py` — endpoint Freerouting actuel
 
 ---
 
