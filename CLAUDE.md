@@ -188,13 +188,17 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      kicad_gen.py : _generate_pcb_sexpr() → .kicad_pcb depuis cache schéma + footprints
      fallback : runCircuitSynthEngine() TypeScript
   ⑤ call_agent_placement  → Ingénieur Placement
-     runRealPlacement() → POST /place/auto (pcbnew SetPosition/SetOrientationDegrees, base64 I/O)
-     fallback : placement-fallback.ts (algo pur TS si KICAD_SERVICE_URL absent)
+     runRealPlacement() → POST /place/auto (kicad-tools CMA-ES place_unplaced + pcbnew resize, base64 I/O)
+     fallback : placement_layout.py grille déterministe → placement-fallback.ts (algo pur TS)
   ⑥ call_agent_routing    → Ingénieur Routage
-     runRealRouting() → POST /route/auto (Freerouting .dsn → .ses → .kicad_pcb, base64 I/O)
+     runRealRouting() → POST /route/auto
+       Path 1 : Freerouting Java .dsn → .ses → .kicad_pcb (tous les circuits)
+       Path 2 : kicad-tools Python A* négocié (fallback Java absent, ≤10 nets, 60s)
      fallback : routing-fallback.ts (MST pur TS)
   ⑦ call_agent_drc        → Ingénieur Qualité (boucle max 3×)
-     runRealDRC() → POST /drc/auto (kicad-cli pcb drc, auto-fix, base64 I/O)
+     runRealDRC() → POST /drc/auto
+       Path 1 : kicad-cli pcb drc (officiel, auto-fix, base64 I/O)
+       Path 2 : kicad-tools Python DRC 27 règles JLCPCB (fallback kicad-cli absent)
   ⑧ call_agent_export     → Ingénieur Fabrication
      runRealExport() → POST /export/all (Gerbers + drill + CPL, zip base64)
      ↓ Upload Supabase Storage → signed URLs KiCanvas
@@ -206,7 +210,7 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
   - Docker absent → fallback inline S-expression TypeScript (`schematic-engine.ts` — `generateSchematic()`)
 - **Orchestrateur optimisé :** blobs KiCad (`kicad_sch_content`, `kicad_pcb_content`, `gerber_zip_b64`) strippés des `tool_result` Sonnet → économie ~70% tokens input
 
-**Placement actuel :** `placement_layout.py` — algorithme déterministe pur Python (ICs centre, passifs cluster, connecteurs bords)
+**Placement actuel :** kicad-tools `place_unplaced` CMA-ES (cluster-by-net, margin 1.5mm) → fallback `placement_layout.py` grille déterministe
 **Placement futur (Phase 6+) : RL_PCB** — hybride LLM + Reinforcement Learning :
   - Sonnet analyse le schéma et suggère une stratégie (groupes fonctionnels, zones sensibles)
   - RL_PCB optimise mathématiquement les positions X/Y

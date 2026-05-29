@@ -7,3 +7,4 @@ kicad_libs/
 *.log
 freerouting/
 circuit_synth/
+kicad_tools/

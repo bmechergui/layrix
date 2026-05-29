@@ -41,8 +41,8 @@ INITIAL
   → call_agent_schema      → SCHEMA_DONE + .kicad_sch + .kicad_pcb
   → call_agent_footprint   → résolution cascade 4 étapes (KiCad → SnapMagic → LCSC → AI)
   → call_agent_erc         → ERC_CLEAN (kicad-cli sch erc, auto-fix no_connect)
-  → call_agent_placement   → PLACEMENT_DONE (pcbnew /place/auto ou fallback TS)
-  → call_agent_routing     → ROUTING_DONE (Freerouting /route/auto ou fallback TS)
+  → call_agent_placement   → PLACEMENT_DONE (kicad-tools CMA-ES /place/auto → fallback grille → fallback TS)
+  → call_agent_routing     → ROUTING_DONE (Freerouting /route/auto → kicad-tools Python A* ≤10 nets → fallback TS)
   → call_agent_drc         → DRC_CLEAN (kicad-cli pcb drc, boucle auto-fix max 3×)
   → call_agent_export      → PCB_LIVRÉ → JLCPCB (après "OUI JE CONFIRME")
   → call_agent_simulation  → vecteurs SPICE (ngspice, optionnel, 3 crédits)
@@ -58,9 +58,9 @@ INITIAL
 | Schematic | `call_agent_schema` | Haiku 4.5 | Génère le schéma électronique + netlist | `SchemaJson` + `.kicad_sch` + `.kicad_pcb` |
 | Footprint | `call_agent_footprint` | Haiku 4.5 | Cascade 4 étapes KiCad→SnapMagic→LCSC→IA | `footprint_name` + `kicad_mod` |
 | ERC | `call_agent_erc` | — | kicad-cli sch erc, auto-fix no_connect markers | rapport violations ERC |
-| Placement | `call_agent_placement` | — | pcbnew /place/auto + fallback TS planner | `.kicad_pcb` placé |
-| Routing | `call_agent_routing` | — | Freerouting /route/auto + fallback TS | `.kicad_pcb` routé |
-| DRC | `call_agent_drc` | — | kicad-cli pcb drc, boucle auto-fix max 3× | rapport violations + `.kicad_pcb` corrigé |
+| Placement | `call_agent_placement` | — | kicad-tools CMA-ES place_unplaced → fallback grille → fallback TS | `.kicad_pcb` placé |
+| Routing | `call_agent_routing` | — | Freerouting Java → kicad-tools Python A* (≤10 nets) → fallback TS | `.kicad_pcb` routé |
+| DRC | `call_agent_drc` | — | kicad-cli pcb drc auto-fix max 3× → kicad-tools 27 règles JLCPCB (fallback) | rapport violations + `.kicad_pcb` corrigé |
 | Export | `call_agent_export` | — | Gerbers + BOM CSV + CPL + devis JLCPCB | `.zip` b64 + `bom_csv` + `quote_usd` |
 | Simulation | `call_agent_simulation` | — | kicad-cli SPICE + ngspice batch, fallback démo | `SimulationData` (vecteurs V/A) |
 | Ask | `ask_user` | — | Pose une question à l'utilisateur | — |
@@ -578,7 +578,8 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 → **Pour Layrix** : nos PCBs = 5-30 composants en moyenne → CPU suffit largement. GPU = optimisation future si on supporte des PCBs >100 composants.
 
 
-→ https://github.com/rjwalters/kicad-tools — MIT, PyPI `kicad-tools` v0.13.0, Python 3.10+, actif (push 2026-05-29)
+→ 
+ — MIT, PyPI `kicad-tools` v0.13.0, Python 3.10+, actif (push 2026-05-29)
 → Tagline : *"Tools for AI agents to work with KiCad projects"* — conçu exactement pour notre cas d'usage.
 → **Force-directed board-aware** : repulsion edge-to-edge sur outlines, borné au board, `slide_off`, poids configurables.
 → Contrat parfait : `.kicad_pcb` en entrée → `.kicad_pcb` en sortie — identique au flux `/place/auto` de Layrix.

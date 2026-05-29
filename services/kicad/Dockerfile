@@ -70,6 +70,10 @@ COPY . .
 # Install circuit_synth from local source (services/kicad/circuit_synth/)
 RUN pip3 install --no-cache-dir ./circuit_synth
 
+# Install kicad-tools from local source (services/kicad/kicad_tools/)
+# extras: placement=CMA-ES, drc=rtree spatial index, geometry=shapely
+RUN pip3 install --no-cache-dir "./kicad_tools[placement,drc,geometry]"
+
 RUN mkdir -p /tmp/kicad-jobs
 
 EXPOSE 8766

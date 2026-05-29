@@ -29,7 +29,8 @@ jusqu'à DRC propre + Gerbers exportés + commande JLCPCB ✅
 
 - Concept : SaaS web 100% cloud de conception PCB via langage naturel
 - Moteur PCB : Circuit-Synth (Python, génère .kicad_sch + .kicad_pcb natifs) + KiCad (pro multi-couches)
-- Routage auto : Freerouting (Java, dockerisé)
+- Placement auto : kicad-tools CMA-ES (optimisation mathématique cluster-by-net, pur Python)
+- Routage auto : Freerouting (Java, dockerisé) → fallback kicad-tools Python A* (circuits simples ≤10 nets)
 - Couches : 2 à 8 couches selon le plan
 - Exports : .kicad_pcb + .kicad_sch + Gerber + BOM + PDF + STEP 3D
 - Viewer Schéma + PCB : KiCanvas (rendu natif KiCad dans le navigateur)
@@ -44,7 +45,10 @@ L'utilisateur ne sait jamais quel moteur tourne derrière.
 Le pipeline génère des fichiers KiCad natifs :
 
 - **Circuit-Synth** → Claude génère du code Python → KiCad Docker exécute → `.kicad_sch` + `.kicad_pcb` réels
-- Routage différentiel, 4+ couches, plan Pro → **KiCad + Freerouting + pcbnew** natif
+- **Placement** → kicad-tools CMA-ES optimise les positions X/Y/rotation (cluster-by-net, pur Python, 0 dépendance KiCad)
+- Routage simple → **kicad-tools Python A*** négocié (≤10 nets, fallback Java absent)
+- Routage complexe, 4+ couches, plan Pro → **KiCad + Freerouting + pcbnew** natif
+- **DRC** → kicad-cli officiel + fallback kicad-tools 27 règles JLCPCB (pur Python)
 - **Viewer** : KiCanvas charge les fichiers `.kicad_sch` / `.kicad_pcb` depuis Supabase Storage
 
 Résultat : fichiers KiCad natifs + Gerbers standard ✅

@@ -2,7 +2,7 @@
 Layrix — Placement pcbnew
 Deux modes :
   1. place_components(pcb_path, components, output_path) — positions explicites fournies par l'agent
-  2. auto_place(pcb_b64, board_w, board_h) → dict  — algorithme grille automatique, I/O base64
+  2. auto_place(pcb_b64, board_w, board_h) → dict  — CMA-ES via kicad-tools, I/O base64
 """
 
 from __future__ import annotations
@@ -16,12 +16,12 @@ from tools.placement_layout import compute_layout
 
 logger = logging.getLogger(__name__)
 
+
 # ---------------------------------------------------------------------------
 # Helpers pcbnew
 # ---------------------------------------------------------------------------
 
 def _load_pcbnew():
-    """Import pcbnew — lève ImportError avec message clair si absent."""
     try:
         import pcbnew  # type: ignore
         return pcbnew
@@ -36,17 +36,6 @@ def _load_pcbnew():
 # ---------------------------------------------------------------------------
 
 def place_components(pcb_path: str, components: list[dict], output_path: str) -> dict:
-    """
-    Place les footprints aux coordonnées explicites fournies.
-
-    Args:
-        pcb_path: Chemin absolu du .kicad_pcb source
-        components: Liste de {ref, x_mm, y_mm, rotation, side}
-        output_path: Chemin de sortie du .kicad_pcb modifié
-
-    Returns:
-        {status, path, placed, errors}
-    """
     pcbnew = _load_pcbnew()
     board = pcbnew.LoadBoard(pcb_path)
 
@@ -63,13 +52,13 @@ def place_components(pcb_path: str, components: list[dict], output_path: str) ->
         y_iu = pcbnew.FromMM(float(comp["y_mm"]))
         if hasattr(pcbnew, "VECTOR2I"):
             fp.SetPosition(pcbnew.VECTOR2I(x_iu, y_iu))
-        else:  # KiCad 5/6 fallback
+        else:
             fp.SetPosition(pcbnew.wxPoint(x_iu, y_iu))
 
         rotation = float(comp.get("rotation", 0.0))
         if hasattr(fp, "SetOrientationDegrees"):
             fp.SetOrientationDegrees(rotation)
-        else:  # KiCad 5/6 expects deci-degrees
+        else:
             fp.SetOrientation(rotation * 10)
 
         if comp.get("side") == "back":
@@ -78,17 +67,11 @@ def place_components(pcb_path: str, components: list[dict], output_path: str) ->
         placed.append(comp["ref"])
 
     pcbnew.SaveBoard(output_path, board)
-
-    return {
-        "status": "ok",
-        "path": output_path,
-        "placed": len(placed),
-        "errors": errors,
-    }
+    return {"status": "ok", "path": output_path, "placed": len(placed), "errors": errors}
 
 
 # ---------------------------------------------------------------------------
-# Mode 2 : auto-placement (planner guidé — IC centre, passifs cluster, conn bord)
+# Mode 2 : auto-placement (kicad-tools CMA-ES → fallback grille)
 # ---------------------------------------------------------------------------
 
 def auto_place(
@@ -97,86 +80,95 @@ def auto_place(
     board_height_mm: float,
 ) -> dict:
     """
-    Auto-placement guidé depuis un .kicad_pcb encodé en base64.
-
-    Délègue le calcul des positions à ``tools.placement_layout.compute_layout``
-    pour garantir la parité avec le fallback TypeScript.
-
-    Args:
-        kicad_pcb_b64: Contenu du .kicad_pcb encodé base64
-        board_width_mm: Largeur du PCB en mm
-        board_height_mm: Hauteur du PCB en mm
-
-    Returns:
-        {kicad_pcb_b64: str, placed_count: int, positions: list[{ref, x_mm, y_mm}]}
+    Auto-placement via kicad-tools CMA-ES.
+    Fallback sur placement grille (placement_layout.py) si kicad-tools absent.
+    I/O base64 — aucun filesystem partagé requis.
     """
     pcbnew = _load_pcbnew()
-
     pcb_bytes = base64.b64decode(kicad_pcb_b64)
 
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "input.kicad_pcb"
+        resized = Path(tmp) / "resized.kicad_pcb"
         dst = Path(tmp) / "output.kicad_pcb"
         src.write_bytes(pcb_bytes)
 
+        # Étape 1 : redimensionner le contour PCB via pcbnew
         board = pcbnew.LoadBoard(str(src))
-
-        # Recadrer le PCB aux dimensions demandées
         _resize_board(board, board_width_mm, board_height_mm, pcbnew)
+        pcbnew.SaveBoard(str(resized), board)
 
-        footprints = list(board.GetFootprints())
-        refs = [fp.GetReference() for fp in footprints]
+        placed_refs: list[str] = []
 
-        if not refs:
-            pcbnew.SaveBoard(str(dst), board)
-            return {
-                "kicad_pcb_b64": base64.b64encode(dst.read_bytes()).decode(),
-                "placed_count": 0,
-                "positions": [],
-            }
+        # Étape 2 : placement CMA-ES via kicad-tools
+        try:
+            from kicad_tools.placement.place_unplaced import place_unplaced
+            result = place_unplaced(
+                str(resized),
+                output=str(dst),
+                margin=1.5,
+                spacing=1.5,
+                cluster=True,
+            )
+            placed_refs = result.placed_refs
+            logger.info(
+                "kicad-tools place_unplaced: %d placed, %d overflow",
+                result.placed_count,
+                result.overflow_count,
+            )
+        except Exception as exc:
+            logger.warning("kicad-tools placement failed (%s) — fallback grille", exc)
+            placed_refs = _fallback_grid_place(resized, dst, board_width_mm, board_height_mm, pcbnew)
 
-        layout = compute_layout(refs, board_width_mm, board_height_mm)
-
-        placement_log: list[dict] = []
-        for fp in footprints:
-            ref = fp.GetReference()
-            if ref not in layout:
-                continue
-            x_mm, y_mm, rotation = layout[ref]
-            fp.SetPosition(pcbnew.VECTOR2I(
-                pcbnew.FromMM(x_mm),
-                pcbnew.FromMM(y_mm),
-            ))
-            if hasattr(fp, "SetOrientationDegrees"):
-                fp.SetOrientationDegrees(rotation)
-            placement_log.append({
-                "ref": ref,
-                "x_mm": round(x_mm, 3),
-                "y_mm": round(y_mm, 3),
-            })
-
-        pcbnew.SaveBoard(str(dst), board)
-
+        positions = [{"ref": r} for r in placed_refs]
         return {
             "kicad_pcb_b64": base64.b64encode(dst.read_bytes()).decode(),
-            "placed_count": len(placement_log),
-            "positions": placement_log,
+            "placed_count": len(placed_refs),
+            "positions": positions,
         }
 
 
+def _fallback_grid_place(
+    src: Path,
+    dst: Path,
+    board_width_mm: float,
+    board_height_mm: float,
+    pcbnew,
+) -> list[str]:
+    """Placement grille déterministe — fallback si kicad-tools absent."""
+    board = pcbnew.LoadBoard(str(src))
+    footprints = list(board.GetFootprints())
+    refs = [fp.GetReference() for fp in footprints]
+
+    if not refs:
+        pcbnew.SaveBoard(str(dst), board)
+        return []
+
+    layout = compute_layout(refs, board_width_mm, board_height_mm)
+    placed: list[str] = []
+
+    for fp in footprints:
+        ref = fp.GetReference()
+        if ref not in layout:
+            continue
+        x_mm, y_mm, rotation = layout[ref]
+        fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(x_mm), pcbnew.FromMM(y_mm)))
+        if hasattr(fp, "SetOrientationDegrees"):
+            fp.SetOrientationDegrees(rotation)
+        placed.append(ref)
+
+    pcbnew.SaveBoard(str(dst), board)
+    return placed
+
+
 def _resize_board(board, width_mm: float, height_mm: float, pcbnew) -> None:
-    """
-    Redimensionne le contour du PCB (Edge.Cuts) aux dimensions demandées.
-    Supprime l'ancien contour et crée un rectangle propre.
-    """
+    """Redimensionne le contour du PCB (Edge.Cuts) aux dimensions demandées."""
     edge_layer = pcbnew.Edge_Cuts
 
-    # Supprimer anciens segments Edge.Cuts
     to_remove = [item for item in board.GetDrawings() if item.GetLayer() == edge_layer]
     for item in to_remove:
         board.Remove(item)
 
-    # Créer rectangle : (0,0) → (width, height) en nm
     w_nm = pcbnew.FromMM(width_mm)
     h_nm = pcbnew.FromMM(height_mm)
 
