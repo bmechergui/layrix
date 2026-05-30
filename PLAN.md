@@ -62,13 +62,13 @@ Pipeline 8 agents (ordre strict) :
 ① `call_agent_schema` → Ingénieur Schéma — génère `.kicad_sch` + `unresolved_footprints`
 ② `call_agent_erc` → Ingénieur ERC — valide connexions électriques, auto-fix
 ③ `call_agent_footprint` → Ingénieur Composants — 1 appel par ref dans `unresolved_footprints`
-④ `call_agent_kicad` → Ingénieur Layout — génère `.kicad_pcb` depuis schéma + footprints validés
+④ `call_agent_gen_pcb` → Ingénieur Layout — génère `.kicad_pcb` depuis schéma + footprints validés
 ⑤ `call_agent_placement` → Ingénieur Placement — kicad-tools CMA-ES `place_unplaced` (cluster-by-net) → fallback grille
 ⑥ `call_agent_routing` → Ingénieur Routage — Freerouting Java (priorité) → kicad-tools Python A* (fallback ≤10 nets)
 ⑦ `call_agent_drc` → Ingénieur Qualité — kicad-cli DRC auto-fix max 3× → kicad-tools Python DRC 27 règles (fallback)
 ⑧ `call_agent_export` → Ingénieur Fabrication — Gerbers RS-274X + BOM JLCPCB + CPL
 
-- **Circuit-Synth** (Python pip) → génère `.kicad_sch` ; `.kicad_pcb` généré séparément par `call_agent_kicad`
+- **Circuit-Synth** (Python pip) → génère `.kicad_sch` ; `.kicad_pcb` généré séparément par `call_agent_gen_pcb`
 - Fallback TypeScript : `schematic-engine.ts` si Docker absent
 - Viewer : **KiCanvas** charge les fichiers natifs depuis Supabase Storage
 

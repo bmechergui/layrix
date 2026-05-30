@@ -39,19 +39,41 @@ jusqu'à DRC propre + Gerbers exportés + commande JLCPCB ✅
 
 ---
 
-## STRATÉGIE CIRCUIT-SYNTH + KICAD — 100% INVISIBLE
+## PIPELINE 8 AGENTS — 100% INVISIBLE (mis à jour 2026-05-30)
 
 L'utilisateur ne sait jamais quel moteur tourne derrière.
-Le pipeline génère des fichiers KiCad natifs :
+Orchestrateur Sonnet 4.6 · 8 agents Haiku 4.5 · max 15 itérations · SSE streaming
 
-- **Circuit-Synth** → Claude génère du code Python → KiCad Docker exécute → `.kicad_sch` + `.kicad_pcb` réels
-- **Placement** → kicad-tools CMA-ES optimise les positions X/Y/rotation (cluster-by-net, pur Python, 0 dépendance KiCad)
-- Routage simple → **kicad-tools Python A*** négocié (≤10 nets, fallback Java absent)
-- Routage complexe, 4+ couches, plan Pro → **KiCad + Freerouting + pcbnew** natif
-- **DRC** → kicad-cli officiel + fallback kicad-tools 27 règles JLCPCB (pur Python)
-- **Viewer** : KiCanvas charge les fichiers `.kicad_sch` / `.kicad_pcb` depuis Supabase Storage
+```
+① call_agent_schema    → .kicad_sch (schéma électrique uniquement)
+     Path A : Haiku → Python circuit_synth → Docker /schematic/execute
+     Path B : Haiku → JSON → kicad_gen.py S-expr Python
+     Erreur  : status:'error' si les deux échouent (jamais de faux schéma)
 
-Résultat : fichiers KiCad natifs + Gerbers standard ✅
+② call_agent_erc       → validation électrique (kicad-cli sch erc, auto-fix)
+
+③ call_agent_footprint → 1 appel par composant non résolu
+     Cascade : KiCad libs → pgvector cache → LCSC → Haiku IA
+
+④ call_agent_gen_pcb   → .kicad_pcb (généré après footprints résolus)
+     Primaire : Docker kicad_gen.py → .kicad_pcb
+     Fallback : runCircuitSynthEngine() TypeScript inline
+
+⑤ call_agent_placement → positions X/Y/rotation (footprint-aware)
+     Primaire : kicad-tools CMA-ES /place/auto
+     Fallback : placement_layout.py Python (dans le service Docker)
+
+⑥ call_agent_routing   → traces + plans de masse
+     Path 1 : Freerouting Java .dsn → .ses → .kicad_pcb
+     Path 2 : kicad-tools Python A* (≤10 nets, 60s)
+
+⑦ call_agent_drc       → DRC_CLEAN (boucle max 3×)
+     kicad-cli pcb drc → kicad-tools 27 règles JLCPCB (fallback)
+
+⑧ call_agent_export    → Gerbers + BOM JLCPCB + CPL → Supabase Storage
+```
+
+Résultat : fichiers KiCad natifs + Gerbers RS-274X + JLCPCB-ready ✅
 
 ---
 

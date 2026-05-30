@@ -22,7 +22,7 @@
 
 ---
 
-### Pipeline complet
+### Pipeline complet (mis à jour 2026-05-30)
 
 ```
 Utilisateur (texte naturel)
@@ -33,19 +33,44 @@ Utilisateur (texte naturel)
 │  Fichier : packages/agents/src/orchestrator.ts      │
 │  Max 15 itérations · SSE streaming · MAX_TOKENS 4096│
 └─────────────────────────────────────────────────────┘
-        │
         │  tool_use (Anthropic SDK)
         ▼
-INITIAL
-  → call_agent_spec        → [contexte DesignJson]
-  → call_agent_schema      → SCHEMA_DONE + .kicad_sch + .kicad_pcb
-  → call_agent_footprint   → résolution cascade 4 étapes (KiCad → SnapMagic → LCSC → AI)
-  → call_agent_erc         → ERC_CLEAN (kicad-cli sch erc, auto-fix no_connect)
-  → call_agent_placement   → PLACEMENT_DONE (kicad-tools CMA-ES /place/auto → fallback grille → fallback TS)
-  → call_agent_routing     → ROUTING_DONE (Freerouting /route/auto → kicad-tools Python A* ≤10 nets → fallback TS)
-  → call_agent_drc         → DRC_CLEAN (kicad-cli pcb drc, boucle auto-fix max 3×)
-  → call_agent_export      → PCB_LIVRÉ → JLCPCB (après "OUI JE CONFIRME")
-  → call_agent_simulation  → vecteurs SPICE (ngspice, optionnel, 3 crédits)
+① call_agent_schema    → SCHEMA_DONE
+     Path A : Haiku → Python circuit_synth → Docker /schematic/execute → .kicad_sch
+     Path B : Haiku → JSON → kicad_gen.py → .kicad_sch
+     Erreur  : status:'error' si les deux chemins échouent (jamais de faux schéma hardcodé)
+
+② call_agent_erc       → ERC_CLEAN
+     Primaire : POST /erc (kicad-cli sch erc, auto-fix no_connect)
+     Fallback : runErcFallback() TS (vérification connectivité basique)
+
+③ call_agent_footprint → (1 appel par ref dans unresolved_footprints)
+     Cascade : KiCad libs → pgvector cache → LCSC/EasyEDA → Haiku IA (3 crédits)
+
+④ call_agent_gen_pcb   → .kicad_pcb généré avec footprints résolus
+     Primaire : POST /schematic/generate (Docker kicad_gen.py) → .kicad_pcb
+     Fallback : runCircuitSynthEngine() TS inline
+
+⑤ call_agent_placement → PLACEMENT_DONE
+     Primaire : POST /place/auto → kicad-tools CMA-ES (cluster-by-net, footprint-aware)
+     Fallback : placement_layout.py (Python pur — dans le service Docker)
+     Erreur   : status:'error' si service Docker down (fail fast)
+
+⑥ call_agent_routing   → ROUTING_DONE
+     Path 1 : Freerouting Java .dsn → .ses → .kicad_pcb
+     Path 2 : kicad-tools Python A* (fallback, ≤10 nets, 60s)
+     Fallback : GND plane B.Cu sur PCB propre (pas de routage simulé MST)
+
+⑦ call_agent_drc       → DRC_CLEAN (boucle max 3×)
+     Primaire : POST /drc/auto (kicad-cli pcb drc, auto-fix)
+     Fallback : kicad-tools Python 27 règles JLCPCB
+
+⑧ call_agent_export    → PCB_LIVRÉ
+     POST /export/all → Gerbers RS-274X + drill Excellon + BOM JLCPCB + CPL
+     Upload Supabase Storage → signed URLs KiCanvas
+
+   call_agent_simulation → (optionnel, 3 crédits, Pro+)
+     POST /simulate/auto → kicad-cli SPICE export → ngspice batch → vecteurs V/A
 ```
 
 ---
@@ -54,19 +79,19 @@ INITIAL
 
 | Agent | Tool name | Modèle | Rôle | Output |
 |-------|-----------|--------|------|--------|
-| Spec Parser | `call_agent_spec` | Haiku 4.5 | Parse la description → contexte structuré | `DesignJson` |
-| Schematic | `call_agent_schema` | Haiku 4.5 | Génère le schéma électronique + netlist | `SchemaJson` + `.kicad_sch` + `.kicad_pcb` |
-| Footprint | `call_agent_footprint` | Haiku 4.5 | Cascade 4 étapes KiCad→SnapMagic→LCSC→IA | `footprint_name` + `kicad_mod` |
+| Schematic | `call_agent_schema` | Haiku 4.5 | Génère schéma électrique — .kicad_sch uniquement | `.kicad_sch` + `unresolved_footprints` |
 | ERC | `call_agent_erc` | — | kicad-cli sch erc, auto-fix no_connect markers | rapport violations ERC |
-| Placement | `call_agent_placement` | — | kicad-tools CMA-ES place_unplaced → fallback grille → fallback TS | `.kicad_pcb` placé |
-| Routing | `call_agent_routing` | — | Freerouting Java → kicad-tools Python A* (≤10 nets) → fallback TS | `.kicad_pcb` routé |
-| DRC | `call_agent_drc` | — | kicad-cli pcb drc auto-fix max 3× → kicad-tools 27 règles JLCPCB (fallback) | rapport violations + `.kicad_pcb` corrigé |
+| Footprint | `call_agent_footprint` | Haiku 4.5 | Cascade 4 étapes KiCad→pgvector→LCSC→IA | `footprint_name` + `kicad_mod` |
+| PCB Layout | `call_agent_gen_pcb` | — | Génère .kicad_pcb depuis schéma + footprints résolus | `.kicad_pcb` |
+| Placement | `call_agent_placement` | — | kicad-tools CMA-ES (footprint-aware) → fallback Python grille | `.kicad_pcb` placé |
+| Routing | `call_agent_routing` | — | Freerouting Java → kicad-tools A* (≤10 nets) → GND plane | `.kicad_pcb` routé |
+| DRC | `call_agent_drc` | — | kicad-cli pcb drc auto-fix max 3× → kicad-tools 27 règles (fallback) | `.kicad_pcb` corrigé |
 | Export | `call_agent_export` | — | Gerbers + BOM CSV + CPL + devis JLCPCB | `.zip` b64 + `bom_csv` + `quote_usd` |
-| Simulation | `call_agent_simulation` | — | kicad-cli SPICE + ngspice batch, fallback démo | `SimulationData` (vecteurs V/A) |
-| Ask | `ask_user` | — | Pose une question à l'utilisateur | — |
+| Simulation | `call_agent_simulation` | — | kicad-cli SPICE + ngspice batch → fallback démo synthétique | `SimulationData` (vecteurs V/A) |
+| Ask | `ask_user` | — | Pose une question bloquante à l'utilisateur | — |
 
 **Orchestrateur :** Claude Sonnet 4.6 — coordonne, décide l'ordre, écrit les réponses chat.
-**Agents spécialisés :** Claude Haiku 4.5 — exécutent les tâches lourdes (génération JSON).
+**Agents spécialisés :** Claude Haiku 4.5 — génération schéma + footprints IA.
 
 ---
 

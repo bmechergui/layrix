@@ -69,7 +69,7 @@ export const PCB_TOOLS: Tool[] = [
       'Vérifie toutes les règles électriques du .kicad_sch : alimentations, connexions manquantes, pins flottants. ' +
       'Auto-corrige pin_not_connected avec no_connect markers. ' +
       'N\'accepte aucune erreur d\'alimentation. Rejette tout schéma avec erreur de court-circuit. ' +
-      'OBLIGATOIRE après call_agent_schema, avant call_agent_kicad.',
+      'OBLIGATOIRE après call_agent_schema, avant call_agent_gen_pcb.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -90,7 +90,7 @@ export const PCB_TOOLS: Tool[] = [
       '(2) pgvector community cache (instant), ' +
       '(3) LCSC/EasyEDA API (référence LCSC), ' +
       '(4) génération .kicad_mod par Haiku (fallback IA, 3 crédits). ' +
-      'Mettre component_ref pour que l\'agent mette à jour le cache avant call_agent_kicad. ' +
+      'Mettre component_ref pour que l\'agent mette à jour le cache avant call_agent_gen_pcb. ' +
       'Appeler UNE FOIS par ref listée dans unresolved_footprints.',
     input_schema: {
       type: 'object' as const,
@@ -112,7 +112,7 @@ export const PCB_TOOLS: Tool[] = [
     },
   },
   {
-    name: 'call_agent_kicad',
+    name: 'call_agent_gen_pcb',
     description:
       'Ingénieur Layout — Expert génération PCB KiCad. ' +
       'Prend le .kicad_sch validé par ERC + les footprints résolus par call_agent_footprint, ' +
@@ -270,7 +270,7 @@ export async function executeToolStub(
       // ── Path A: circuit_synth Python code → Docker /schematic/execute ────
       // Haiku génère Python avec symboles KiCad natifs + stratégie connecteur.
       // Docker exécute → .kicad_sch natif multi-pins (62KB+ pour ESP32).
-      // Sortie : .kicad_sch UNIQUEMENT — le PCB est généré par call_agent_kicad.
+      // Sortie : .kicad_sch UNIQUEMENT — le PCB est généré par call_agent_gen_pcb.
       if (serviceUrl && desc) {
         try {
           const codeResult = await generateSchematicCodeWithHaiku(desc);
@@ -323,7 +323,7 @@ export async function executeToolStub(
                   boardW,
                   boardH,
                   kicad_sch_content: execData.kicad_sch_content,
-                  // kicad_pcb_content intentionnellement absent — call_agent_kicad le génère
+                  // kicad_pcb_content intentionnellement absent — call_agent_gen_pcb le génère
                 });
 
                 return {
@@ -400,7 +400,7 @@ export async function executeToolStub(
         boardW,
         boardH,
         kicad_sch_content: csResult.kicad_sch_content,
-        // kicad_pcb_content intentionnellement absent — call_agent_kicad le génère
+        // kicad_pcb_content intentionnellement absent — call_agent_gen_pcb le génère
       });
 
       return {
@@ -498,7 +498,7 @@ export async function executeToolStub(
       try {
         const result = await findFootprint(pn, pkg);
 
-        // Met à jour le cache avec le footprint résolu — call_agent_kicad l'utilisera
+        // Met à jour le cache avec le footprint résolu — call_agent_gen_pcb l'utilisera
         if (ref) {
           const cached = _pcbStateCache.get(projectId);
           if (cached?.schema.components) {
@@ -530,7 +530,7 @@ export async function executeToolStub(
       }
     }
 
-    case 'call_agent_kicad': {
+    case 'call_agent_gen_pcb': {
       // Ingénieur Layout — génère .kicad_pcb depuis le cache (schema + footprints enrichis)
       const cached = _pcbStateCache.get(projectId);
       if (!cached?.schema || cached.schema.components.length === 0) {
@@ -568,7 +568,7 @@ export async function executeToolStub(
             }
           }
         } catch {
-          log.warn('call_agent_kicad: Python service unavailable — using TS generator');
+          log.warn('call_agent_gen_pcb: Python service unavailable — using TS generator');
         }
       }
 
