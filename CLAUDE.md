@@ -182,6 +182,9 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
        ① circuit_synth pip · ② kicad-tools Schematic · ③ TypeScript S-expr
      Stocke : kicad_sch_content dans _pcbStateCache
   ② call_agent_erc        → Ingénieur ERC
+     ① kicad-tools Schematic.validate() — pur Python, toujours dispo
+     ② kicad-cli sch erc — ERC officiel (si dispo), auto-fix no_connect max 3×
+     ③ skipped=true → TypeScript runErcFallback()
      POST /erc → kicad-cli sch erc, auto-fix loop
   ③ call_agent_footprint  → Ingénieur Composants (1 appel par ref dans unresolved_footprints)
      Cascade : KiCad libs → pgvector → LCSC → SnapMagic → AI Haiku

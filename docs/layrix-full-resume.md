@@ -51,7 +51,8 @@ Orchestrateur Sonnet 4.6 · 8 agents Haiku 4.5 · max 15 itérations · SSE stre
        ① circuit_synth pip · ② kicad-tools Schematic · ③ TypeScript S-expr
      Erreur  : status:'error' si les deux échouent (jamais de faux schéma)
 
-② call_agent_erc       → validation électrique (kicad-cli sch erc, auto-fix)
+② call_agent_erc       → validation électrique
+     ① kicad-tools validate (pur Python) · ② kicad-cli sch erc · ③ TS fallback
 
 ③ call_agent_footprint → 1 appel par composant non résolu
      Cascade : KiCad libs → pgvector cache → LCSC → Haiku IA

@@ -64,6 +64,7 @@ Pipeline 8 agents (ordre strict) :
    Path B : Haiku → JSON → POST /schematic/generate :
      ① circuit_synth pip · ② kicad-tools Schematic · ③ TypeScript S-expr inline
 ② `call_agent_erc` → Ingénieur ERC — valide connexions électriques, auto-fix
+   ① kicad-tools Schematic.validate() — pur Python · ② kicad-cli sch erc · ③ TS fallback
 ③ `call_agent_footprint` → Ingénieur Composants — 1 appel par ref dans `unresolved_footprints`
 ④ `call_agent_gen_pcb` → Ingénieur Layout — génère `.kicad_pcb` depuis schéma + footprints validés
 ⑤ `call_agent_placement` → Ingénieur Placement — kicad-tools CMA-ES `place_unplaced` (cluster-by-net) → fallback grille

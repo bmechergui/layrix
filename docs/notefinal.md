@@ -44,8 +44,11 @@ Utilisateur (texte naturel)
      Erreur  : status:'error' si les deux chemins échouent (jamais de faux schéma hardcodé)
 
 ② call_agent_erc       → ERC_CLEAN
-     Primaire : POST /erc (kicad-cli sch erc, auto-fix no_connect)
-     Fallback : runErcFallback() TS (vérification connectivité basique)
+     ① kicad-tools Schematic.validate()  — pur Python, toujours dispo
+        auto-fix : off-grid, duplicate refs, labels déconnectés
+     ② kicad-cli sch erc                 — ERC officiel KiCad (si dispo)
+        auto-fix no_connect max 3×
+     ③ skipped=true                      → TypeScript runErcFallback()
 
 ③ call_agent_footprint → (1 appel par ref dans unresolved_footprints)
      Cascade : KiCad libs → pgvector cache → LCSC/EasyEDA → Haiku IA (3 crédits)
@@ -83,7 +86,7 @@ Utilisateur (texte naturel)
 | Agent | Tool name | Modèle | Rôle | Output |
 |-------|-----------|--------|------|--------|
 | Schematic | `call_agent_schema` | Haiku 4.5 | circuit_synth Docker → kicad-tools Schematic → TS S-expr | `.kicad_sch` + `unresolved_footprints` |
-| ERC | `call_agent_erc` | — | kicad-cli sch erc, auto-fix no_connect markers | rapport violations ERC |
+| ERC | `call_agent_erc` | — | kicad-tools validate → kicad-cli sch erc → TS fallback | rapport violations ERC |
 | Footprint | `call_agent_footprint` | Haiku 4.5 | Cascade 4 étapes KiCad→pgvector→LCSC→IA | `footprint_name` + `kicad_mod` |
 | PCB Layout | `call_agent_gen_pcb` | — | Génère .kicad_pcb depuis schéma + footprints résolus | `.kicad_pcb` |
 | Placement | `call_agent_placement` | — | kicad-tools CMA-ES (footprint-aware) → fallback Python grille | `.kicad_pcb` placé |
