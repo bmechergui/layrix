@@ -39,7 +39,8 @@ _DEFAULT_TIMEOUT_S: int = 300
 # Pydantic models
 # ----------------------------------------------------------------------------
 
-_PYTHON_ROUTER_MAX_NETS: int = 10
+_KICAD_TOOLS_MAX_NETS: int = 30
+_KICAD_TOOLS_MAX_COMPS: int = 30
 _PYTHON_ROUTER_TIMEOUT_S: int = 60
 
 
@@ -136,6 +137,12 @@ def _count_signal_nets(pcb_bytes: bytes) -> int:
     return len([n for n in nets if n])
 
 
+def _count_footprints(pcb_bytes: bytes) -> int:
+    """Count footprint blocks in a .kicad_pcb S-expression."""
+    text = pcb_bytes.decode("utf-8", errors="replace")
+    return len(re.findall(r'\(footprint\s+"', text))
+
+
 def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
     """
     Route via kicad-tools pure Python A* router.
@@ -206,16 +213,39 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     Auto-route a board.
 
     Priority:
-      1. Freerouting (Java) — preferred for all board complexities.
-      2. kicad-tools Python router — fallback when Java absent, ≤ 10 nets.
-      3. skipped=True — when no router is available or board is too complex.
+      1. kicad-tools A* (negotiated) — ≤30 composants ET ≤30 nets, timeout 60s.
+      2. Freerouting (Java)          — circuits complexes ou si kicad-tools échoue.
+      3. skipped=True                — aucun routeur disponible → GND plane seulement.
     """
     try:
         pcb_bytes = base64.b64decode(req.kicad_pcb_b64)
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=f"invalid base64: {exc}") from exc
 
-    # --- Path 1: Freerouting ---
+    net_count = _count_signal_nets(pcb_bytes)
+    comp_count = _count_footprints(pcb_bytes)
+    is_simple = net_count <= _KICAD_TOOLS_MAX_NETS and comp_count <= _KICAD_TOOLS_MAX_COMPS
+
+    logger.info(
+        "route_auto: %d nets, %d composants — simple=%s",
+        net_count, comp_count, is_simple,
+    )
+
+    # --- Niveau 1 : kicad-tools A* (circuits simples) ---
+    if is_simple:
+        try:
+            new_pcb, routed_pct = _route_with_kicad_tools(pcb_bytes)
+            logger.info("kicad-tools A*: %d%% routé", routed_pct)
+            return RouteAutoResponse(
+                kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
+                routed_percent=routed_pct,
+                layers=req.layers,
+                skipped=False,
+            )
+        except Exception as exc:
+            logger.warning("kicad-tools A* échoué (%s) — Freerouting", exc)
+
+    # --- Niveau 2 : Freerouting Java ---
     paths = _find_freerouting()
     if paths is not None:
         try:
@@ -225,6 +255,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 _export_specctra(pcb_bytes, dsn)
                 _run_freerouting(paths, dsn, ses, req.timeout_s)
                 new_pcb = _specctra_roundtrip(pcb_bytes, ses)
+            logger.info("Freerouting: 100%% routé")
             return RouteAutoResponse(
                 kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
                 routed_percent=100,
@@ -234,40 +265,20 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         except HTTPException:
             raise
         except Exception as exc:
-            logger.exception("Freerouting failed: %s", exc)
+            logger.exception("Freerouting échoué: %s", exc)
             raise HTTPException(status_code=500, detail="routing failed") from exc
 
-    # --- Path 2: kicad-tools Python router (fallback, simple boards only) ---
-    net_count = _count_signal_nets(pcb_bytes)
-    logger.info("Freerouting absent — signal nets: %d (limit: %d)", net_count, _PYTHON_ROUTER_MAX_NETS)
-
-    if net_count <= _PYTHON_ROUTER_MAX_NETS:
-        try:
-            new_pcb, routed_pct = _route_with_kicad_tools(pcb_bytes)
-            logger.info("kicad-tools router: %d%% routed", routed_pct)
-            return RouteAutoResponse(
-                kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
-                routed_percent=routed_pct,
-                layers=req.layers,
-                skipped=False,
-                warning="Routed via kicad-tools Python router (Freerouting unavailable)",
-            )
-        except Exception as exc:
-            logger.warning("kicad-tools router failed: %s", exc)
-            return RouteAutoResponse(
-                kicad_pcb_b64=None,
-                routed_percent=0,
-                layers=req.layers,
-                skipped=True,
-                warning=f"kicad-tools router failed: {exc}",
-            )
-
-    # --- Path 3: too complex for Python router ---
-    logger.info("Board too complex for Python router (%d nets > %d) — skipping", net_count, _PYTHON_ROUTER_MAX_NETS)
+    # --- Niveau 3 : skipped → GND plane seulement (TypeScript addGroundPlane) ---
+    reason = (
+        f"kicad-tools A* indisponible et Freerouting (Java) introuvable"
+        if is_simple
+        else f"Circuit complexe ({net_count} nets, {comp_count} composants) — Freerouting (Java) introuvable"
+    )
+    logger.info("Routage ignoré — %s", reason)
     return RouteAutoResponse(
         kicad_pcb_b64=None,
         routed_percent=0,
         layers=req.layers,
         skipped=True,
-        warning=f"Freerouting required for boards with {net_count} nets (Java not available)",
+        warning=reason,
     )

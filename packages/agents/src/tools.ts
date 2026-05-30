@@ -688,10 +688,10 @@ export async function executeToolStub(
       const boardW = cached?.boardW ?? 50;
       const boardH = cached?.boardH ?? 50;
 
-      // Agent decides layer count based on density (heuristic — Phase 3.4+
-      // will refine using real routing feedback from Freerouting).
+      // Layer count heuristic: kicad-tools A* handles ≤30 comps/nets on 2 layers.
+      // Freerouting handles complex boards — 4 layers beyond that threshold.
       const decidedLayers: 2 | 4 | 8 =
-        schema.components.length <= 12 && schema.nets.length <= 8 ? 2 : 4;
+        schema.components.length <= 30 && schema.nets.length <= 30 ? 2 : 4;
 
       // Use the placed .kicad_pcb from cache when call_agent_placement ran first.
       // Regenerate from Circuit-Synth only on a cold cache (e.g. routing called standalone).
