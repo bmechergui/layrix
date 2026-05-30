@@ -60,6 +60,9 @@ layrix/
 
 Pipeline 8 agents (ordre strict) :
 ① `call_agent_schema` → Ingénieur Schéma — génère `.kicad_sch` + `unresolved_footprints`
+   Path A : Haiku → Python circuit_synth → Docker /schematic/execute → .kicad_sch
+   Path B : Haiku → JSON → POST /schematic/generate :
+     ① circuit_synth pip · ② kicad-tools Schematic · ③ TypeScript S-expr inline
 ② `call_agent_erc` → Ingénieur ERC — valide connexions électriques, auto-fix
 ③ `call_agent_footprint` → Ingénieur Composants — 1 appel par ref dans `unresolved_footprints`
 ④ `call_agent_gen_pcb` → Ingénieur Layout — génère `.kicad_pcb` depuis schéma + footprints validés
@@ -704,7 +707,8 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 2. `validateAndCorrectSchema()` → POST `/circuit-synth/validate-symbols` → corrections auto
 3. `_safe_symbol()` dans FastAPI — 2ème filet de sécurité
 4. Dual-mode génération :
-   - Docker actif → `kicad_gen.py` : `_generate_with_cs_lib()` (circuit_synth pip local) → `.kicad_sch` + `_generate_pcb_sexpr()` → `.kicad_pcb`
+   - `routers/schematic.py` + `tools/schematic.py` : circuit_synth pip → kicad-tools Schematic → TypeScript S-expr
+   - `routers/pcb.py` + `tools/pcb.py` : `_generate_pcb_sexpr()` → `.kicad_pcb`
    - Docker absent → fallback TS inline (`schematic-engine.ts`)
 5. Upload Supabase Storage → `pcb_state.kicad_sch_url` / `kicad_pcb_url` → KiCanvas
 6. Fallback S-expression inline TS si service indisponible

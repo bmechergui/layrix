@@ -37,7 +37,10 @@ Utilisateur (texte naturel)
         ▼
 ① call_agent_schema    → SCHEMA_DONE
      Path A : Haiku → Python circuit_synth → Docker /schematic/execute → .kicad_sch
-     Path B : Haiku → JSON → kicad_gen.py → .kicad_sch
+     Path B : Haiku → JSON → POST /schematic/generate :
+       ① circuit_synth pip            → .kicad_sch
+       ② kicad-tools Schematic class  → .kicad_sch
+       ③ TypeScript S-expr inline     → .kicad_sch (si service down)
      Erreur  : status:'error' si les deux chemins échouent (jamais de faux schéma hardcodé)
 
 ② call_agent_erc       → ERC_CLEAN
@@ -48,7 +51,7 @@ Utilisateur (texte naturel)
      Cascade : KiCad libs → pgvector cache → LCSC/EasyEDA → Haiku IA (3 crédits)
 
 ④ call_agent_gen_pcb   → .kicad_pcb généré avec footprints résolus
-     Primaire : POST /schematic/generate (Docker kicad_gen.py) → .kicad_pcb
+     Primaire : POST /pcb/generate (Docker tools/pcb.py) → .kicad_pcb
      Fallback : runCircuitSynthEngine() TS inline
 
 ⑤ call_agent_placement → PLACEMENT_DONE
@@ -79,7 +82,7 @@ Utilisateur (texte naturel)
 
 | Agent | Tool name | Modèle | Rôle | Output |
 |-------|-----------|--------|------|--------|
-| Schematic | `call_agent_schema` | Haiku 4.5 | Génère schéma électrique — .kicad_sch uniquement | `.kicad_sch` + `unresolved_footprints` |
+| Schematic | `call_agent_schema` | Haiku 4.5 | circuit_synth Docker → kicad-tools Schematic → TS S-expr | `.kicad_sch` + `unresolved_footprints` |
 | ERC | `call_agent_erc` | — | kicad-cli sch erc, auto-fix no_connect markers | rapport violations ERC |
 | Footprint | `call_agent_footprint` | Haiku 4.5 | Cascade 4 étapes KiCad→pgvector→LCSC→IA | `footprint_name` + `kicad_mod` |
 | PCB Layout | `call_agent_gen_pcb` | — | Génère .kicad_pcb depuis schéma + footprints résolus | `.kicad_pcb` |

@@ -46,8 +46,9 @@ Orchestrateur Sonnet 4.6 · 8 agents Haiku 4.5 · max 15 itérations · SSE stre
 
 ```
 ① call_agent_schema    → .kicad_sch (schéma électrique uniquement)
-     Path A : Haiku → Python circuit_synth → Docker /schematic/execute
-     Path B : Haiku → JSON → kicad_gen.py S-expr Python
+     Path A : Haiku → Python circuit_synth → Docker /schematic/execute → .kicad_sch
+     Path B : Haiku → JSON → POST /schematic/generate :
+       ① circuit_synth pip · ② kicad-tools Schematic · ③ TypeScript S-expr
      Erreur  : status:'error' si les deux échouent (jamais de faux schéma)
 
 ② call_agent_erc       → validation électrique (kicad-cli sch erc, auto-fix)
