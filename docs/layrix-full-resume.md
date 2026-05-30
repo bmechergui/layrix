@@ -61,7 +61,7 @@ Orchestrateur Sonnet 4.6 · 8 agents Haiku 4.5 · max 15 itérations · SSE stre
 
 ⑤ call_agent_placement → positions X/Y/rotation (footprint-aware)
      Primaire : kicad-tools CMA-ES /place/auto
-     Fallback : placement_layout.py Python (dans le service Docker)
+     Fallback : pcbnew grille (fallback) Python (dans le service Docker)
 
 ⑥ call_agent_routing   → traces + plans de masse
      Path 1 : Freerouting Java .dsn → .ses → .kicad_pcb

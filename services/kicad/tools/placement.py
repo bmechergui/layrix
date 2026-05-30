@@ -2,7 +2,9 @@
 Layrix — Placement
 Deux modes :
   1. place_components(pcb_path, components, output_path) — positions explicites fournies par l'agent
-  2. auto_place(pcb_b64, board_w, board_h) → dict  — kicad-tools CMA-ES, pur Python, I/O base64
+  2. auto_place(pcb_b64, board_w, board_h) → dict
+       Primaire : kicad-tools CMA-ES place_unplaced (cluster=True)
+       Fallback  : pcbnew grille simple
 """
 
 from __future__ import annotations
@@ -10,36 +12,24 @@ from __future__ import annotations
 import base64
 import logging
 import re
+import shutil
 import tempfile
 from pathlib import Path
-
-from tools.placement_layout import compute_layout
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Helpers pcbnew (mode 1 — placement explicite)
-# ---------------------------------------------------------------------------
-
-def _load_pcbnew():
-    try:
-        import pcbnew  # type: ignore
-        return pcbnew
-    except ImportError as exc:
-        raise ImportError(
-            "pcbnew non disponible — KiCad doit être installé dans l'environnement Python"
-        ) from exc
-
-
-# ---------------------------------------------------------------------------
-# Mode 1 : placement explicite (coordonnées fournies)
+# Mode 1 : placement explicite (coordonnées fournies par l'agent)
 # ---------------------------------------------------------------------------
 
 def place_components(pcb_path: str, components: list[dict], output_path: str) -> dict:
-    pcbnew = _load_pcbnew()
-    board = pcbnew.LoadBoard(pcb_path)
+    try:
+        import pcbnew  # type: ignore
+    except ImportError as exc:
+        raise ImportError("pcbnew non disponible — KiCad doit être installé") from exc
 
+    board = pcbnew.LoadBoard(pcb_path)
     placed: list[str] = []
     errors: list[str] = []
 
@@ -72,7 +62,7 @@ def place_components(pcb_path: str, components: list[dict], output_path: str) ->
 
 
 # ---------------------------------------------------------------------------
-# Mode 2 : auto-placement — kicad-tools CMA-ES (pur Python, version-agnostic)
+# Mode 2 : auto-placement (I/O base64)
 # ---------------------------------------------------------------------------
 
 def auto_place(
@@ -80,163 +70,101 @@ def auto_place(
     board_width_mm: float,
     board_height_mm: float,
 ) -> dict:
-    """
-    Auto-placement via compute_layout (cluster-by-function, pure-Python regex).
-    Algorithm: IC at center, passives clustered around IC, connectors on edges.
-    Falls back to kicad-tools text-flow place_unplaced if compute_layout fails.
-    I/O base64.
-    """
-    pcb_bytes = base64.b64decode(kicad_pcb_b64)
-    pcb_text = pcb_bytes.decode("utf-8", errors="replace")
-
+    pcb_text = base64.b64decode(kicad_pcb_b64).decode("utf-8", errors="replace")
     pcb_text = _inject_board_outline(pcb_text, board_width_mm, board_height_mm)
 
-    # Primary path: cluster-by-function layout via compute_layout (regex apply)
-    refs, footprints = _extract_footprint_info(pcb_text)
-    if refs:
-        layout = compute_layout(refs, board_width_mm, board_height_mm, footprints)
-        new_text, placed_refs, positions = _apply_layout_positions(pcb_text, layout)
-        logger.info(
-            "compute_layout placement: %d/%d refs placed", len(placed_refs), len(refs)
-        )
-        return {
-            "kicad_pcb_b64": base64.b64encode(new_text.encode("utf-8")).decode(),
-            "placed_count": len(placed_refs),
-            "positions": positions,
-        }
-
-    # Fallback: kicad-tools text-flow (when refs can't be parsed)
-    pcb_text = _reset_footprint_positions(pcb_text)
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "input.kicad_pcb"
         dst = Path(tmp) / "output.kicad_pcb"
         src.write_text(pcb_text, encoding="utf-8")
-        placed_refs: list[str] = []
+
+        # Primaire : kicad-tools CMA-ES
         try:
             from kicad_tools.placement.place_unplaced import place_unplaced
             result = place_unplaced(
                 str(src), output_path=str(dst),
-                margin=1.0, spacing=1.0, cluster=True,
+                margin=1.5, spacing=1.0, cluster=True,
             )
-            placed_refs = result.placed_refs
+            output_bytes = dst.read_bytes() if dst.exists() else src.read_bytes()
+            logger.info("kicad-tools placement: %d composants placés", len(result.placed_refs))
+            return {
+                "kicad_pcb_b64": base64.b64encode(output_bytes).decode(),
+                "placed_count": len(result.placed_refs),
+                "positions": [{"ref": r} for r in result.placed_refs],
+            }
         except Exception as exc:
-            logger.warning("kicad-tools placement failed (%s)", exc)
+            logger.warning("kicad-tools placement échoué (%s) — fallback pcbnew grille", exc)
+
+        # Fallback : pcbnew grille simple
+        placed = _pcbnew_grid_place(str(src), str(dst), board_width_mm, board_height_mm)
         output_bytes = dst.read_bytes() if dst.exists() else src.read_bytes()
+        logger.info("pcbnew grille fallback: %d composants placés", len(placed))
         return {
             "kicad_pcb_b64": base64.b64encode(output_bytes).decode(),
-            "placed_count": len(placed_refs),
-            "positions": [{"ref": r} for r in placed_refs],
+            "placed_count": len(placed),
+            "positions": [{"ref": r} for r in placed],
         }
 
 
-def _extract_footprint_info(pcb_text: str) -> tuple[list[str], dict[str, str]]:
-    """Extract (refs_in_order, {ref: footprint_id}) from each footprint block.
-    Supports both modern (property "Reference") and inline (fp_text reference) formats.
-    """
-    refs: list[str] = []
-    footprints: dict[str, str] = {}
-    for block in pcb_text.split('(footprint ')[1:]:
-        # Footprint id is the first quoted string right after "(footprint "
-        fp_m = re.match(r'"([^"]+)"', block)
-        fp_id = fp_m.group(1) if fp_m else ""
-        head = block[:2000]
-        ref_m = re.search(r'\(property\s+"Reference"\s+"([^"]+)"', head) \
-            or re.search(r'\(fp_text\s+reference\s+"([^"]+)"', head)
-        if ref_m:
-            ref = ref_m.group(1)
-            refs.append(ref)
-            footprints[ref] = fp_id
-    return refs, footprints
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
+def _pcbnew_grid_place(
+    src: str, dst: str, board_width_mm: float, board_height_mm: float
+) -> list[str]:
+    """Grille déterministe via pcbnew. Retourne [] si pcbnew indisponible."""
+    try:
+        import pcbnew  # type: ignore
+    except ImportError:
+        logger.warning("pcbnew indisponible — copie brute")
+        shutil.copy2(src, dst)
+        return []
 
-def _apply_layout_positions(
-    pcb_text: str,
-    layout: dict[str, tuple[float, float, float]],
-) -> tuple[str, list[str], list[dict]]:
-    """Replace each footprint's primary (at ...) with its computed position.
-    Returns (new_pcb_text, placed_refs, positions).
-    """
+    try:
+        board = pcbnew.LoadBoard(src)
+    except Exception as exc:
+        logger.warning("pcbnew LoadBoard échoué (%s) — copie brute", exc)
+        shutil.copy2(src, dst)
+        return []
+
+    footprints = list(board.GetFootprints())
+    if not footprints:
+        pcbnew.SaveBoard(dst, board)
+        return []
+
+    margin = 5.0
+    cols = max(1, int((board_width_mm - 2 * margin) / 15))
+    step_x = (board_width_mm - 2 * margin) / max(1, cols)
+    step_y = 15.0
     placed: list[str] = []
-    positions: list[dict] = []
 
-    parts = pcb_text.split('(footprint ')
-    out_parts = [parts[0]]
+    for i, fp in enumerate(footprints):
+        x = margin + (i % cols) * step_x + step_x / 2
+        y = margin + (i // cols) * step_y
+        fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(x), pcbnew.FromMM(y)))
+        placed.append(fp.GetReference())
 
-    for part in parts[1:]:
-        head = part[:2000]
-        m = re.search(r'\(property\s+"Reference"\s+"([^"]+)"', head) \
-            or re.search(r'\(fp_text\s+reference\s+"([^"]+)"', head)
-
-        if m and m.group(1) in layout:
-            ref = m.group(1)
-            x, y, rot = layout[ref]
-            # Replace ONLY the first (at ...) — the footprint's own position
-            new_part = re.sub(
-                r'\(at\s+[\d\.\-]+\s+[\d\.\-]+(?:\s+[\d\.\-]+)?\)',
-                f'(at {x:.3f} {y:.3f} {rot:.1f})',
-                part,
-                count=1,
-            )
-            placed.append(ref)
-            positions.append({"ref": ref, "x_mm": round(x, 3), "y_mm": round(y, 3)})
-        else:
-            new_part = part
-
-        out_parts.append('(footprint ' + new_part)
-
-    return ''.join(out_parts), placed, positions
-
-
-def _reset_footprint_positions(pcb_text: str) -> str:
-    """
-    Moves all footprints to (-10, -10) — outside any board boundary —
-    so kicad-tools detects them as "unplaced" and runs CMA-ES on all of them.
-    Handles two S-expression variants:
-      • multiline: (footprint "Ref"\n   (at X Y [rot]))
-      • inline:    (footprint "Ref" ... (at X Y [rot]) ...)
-    """
-    # Multiline variant: (at ...) is the first token on the next line
-    pcb_text = re.sub(
-        r'(\(footprint\s+"[^"]*"\s*\n\s*)\(at\s+[\d\.\-]+\s+[\d\.\-]+(?:\s+[\d\.\-]+)?\)',
-        r'\1(at -10 -10)',
-        pcb_text,
-    )
-    # Inline variant: (at ...) appears later on the same line after other attributes
-    pcb_text = re.sub(
-        r'(\(footprint\s+"[^"]*"(?:\s+\([^()]+\))*\s+)\(at\s+[\d\.\-]+\s+[\d\.\-]+(?:\s+[\d\.\-]+)?\)',
-        r'\1(at -10 -10)',
-        pcb_text,
-    )
-    return pcb_text
+    pcbnew.SaveBoard(dst, board)
+    return placed
 
 
 def _inject_board_outline(pcb_text: str, width_mm: float, height_mm: float) -> str:
-    """
-    Supprime les gr_line sur Edge.Cuts existantes et injecte un rectangle propre.
-    Manipulation pure texte S-expression — compatible toutes versions KiCad.
-    """
-    # Supprimer les gr_line Edge.Cuts existantes
+    """Remplace les gr_line Edge.Cuts existantes par un rectangle propre."""
     pcb_text = re.sub(
         r'\(gr_line[^)]*\([^)]*\)[^)]*"Edge\.Cuts"[^)]*\)',
         "",
         pcb_text,
         flags=re.DOTALL,
     )
-
-    w = width_mm
-    h = height_mm
+    w, h = width_mm, height_mm
     outline = (
         f'\n  (gr_line (start 0 0) (end {w} 0) (layer "Edge.Cuts") (width 0.05))'
         f'\n  (gr_line (start {w} 0) (end {w} {h}) (layer "Edge.Cuts") (width 0.05))'
         f'\n  (gr_line (start {w} {h}) (end 0 {h}) (layer "Edge.Cuts") (width 0.05))'
-        f'\n  (gr_line (start 0 {h}) (end 0 0) (layer "Edge.Cuts") (width 0.05))'
-        f'\n'
+        f'\n  (gr_line (start 0 {h}) (end 0 0) (layer "Edge.Cuts") (width 0.05))\n'
     )
-
-    # Insérer avant la dernière parenthèse fermante du fichier
-    last_paren = pcb_text.rfind(")")
-    if last_paren == -1:
+    last = pcb_text.rfind(")")
+    if last == -1:
         return pcb_text + outline
-    return pcb_text[:last_paren] + outline + pcb_text[last_paren:]
-
-
+    return pcb_text[:last] + outline + pcb_text[last:]

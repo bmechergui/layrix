@@ -53,7 +53,7 @@ Utilisateur (texte naturel)
 
 ⑤ call_agent_placement → PLACEMENT_DONE
      Primaire : POST /place/auto → kicad-tools CMA-ES (cluster-by-net, footprint-aware)
-     Fallback : placement_layout.py (Python pur — dans le service Docker)
+     Fallback : pcbnew grille (fallback) (Python pur — dans le service Docker)
      Erreur   : status:'error' si service Docker down (fail fast)
 
 ⑥ call_agent_routing   → ROUTING_DONE
@@ -432,7 +432,7 @@ SKiDL produit un fichier `.net` (format KiCad XML ou SPICE). Circuit-Synth atten
 
 ---
 
-### 2026-05-24 — Placement professionnel dans placement_layout.py
+### 2026-05-24 — Placement professionnel dans pcbnew grille (fallback)
 
 **Décision :** Séparer caps (C*) et passifs signal dans `_place_cluster()` : caps à 4mm (tight decoupling) avec rotation 90°, passifs signal à rayon existant avec 0°. Connectors avec rotation 90° pour orientation bord.
 
@@ -440,7 +440,7 @@ SKiDL produit un fichier `.net` (format KiCad XML ou SPICE). Circuit-Synth atten
 
 **Écarté :** Utiliser des positions fixes hardcodées par type de composant — trop fragile selon le nombre de composants.
 
-**Fichiers :** `services/kicad/tools/placement_layout.py`
+**Fichiers :** `services/kicad/tools/pcbnew grille (fallback)`
 
 ---
 
@@ -517,7 +517,7 @@ call_agent_placement (tools.ts)
   ↓
 Priorité 1 — Backend Docker/WSL up :
   runRealPlacement() → POST /place/auto (FastAPI)
-    → placement_layout.py (algo Python)
+    → pcbnew grille (fallback) (algo Python)
     → pcbnew.SetPosition() (validation physique)
     → engine: 'pcbnew'
 
@@ -556,7 +556,7 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 
 **Option A — `circuit_synth.component_placement.ForceDirectedLayout` (❌ Écarté pour PCB)**
 → Importable et instanciable, mais `fdl.layout(circuit)` plante sur un vrai circuit.
-→ **Erreur de catégorie pour le PCB** : c'est un placeur de *symboles sur schéma* (lisibilité du diagramme), pas de *footprints sur PCB*. Domaine incompatible avec `placement_layout.py`.
+→ **Erreur de catégorie pour le PCB** : c'est un placeur de *symboles sur schéma* (lisibilité du diagramme), pas de *footprints sur PCB*. Domaine incompatible avec `pcbnew grille (fallback)`.
 → Entrée attendue : objet `Circuit` complet (`.components`, `.get_nets()`) — inexistant dans le pipeline PCB à cette étape.
 → Sortie non bornée au board — composants peuvent sortir du PCB.
 → Code vendoré non maintenu (`PlacementNode.connected_components` non initialisé).
@@ -640,7 +640,7 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 
 **Option C — Développer notre propre force-directed PCB (🔲 À faire)**
 → Écrire un algorithme force-directed **dans le bon domaine** : coordonnées PCB mm, borné au board, alimenté par les `connections` déjà en cache (`_pcbStateCache`).
-→ Intégré directement dans `placement_layout.py` — passe optionnelle après l'algo déterministe actuel.
+→ Intégré directement dans `pcbnew grille (fallback)` — passe optionnelle après l'algo déterministe actuel.
 → **Principe** : chaque net = force attractive entre les composants connectés ; chaque paire de composants = force répulsive ; itérations jusqu'à convergence.
 → **Avantages** :
   - Zéro dépendance externe — pur Python (numpy), même env Docker actuel
@@ -666,7 +666,7 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 - `packages/agents/src/tools.ts` — `call_agent_placement` + `call_agent_routing`
 - `packages/agents/src/engines/placement-fallback.ts` — algo TS placement
 - `packages/agents/src/engines/routing-service.ts` — client Freerouting actuel
-- `services/kicad/tools/placement_layout.py` — algo Python placement
+- `services/kicad/tools/pcbnew grille (fallback)` — algo Python placement
 - `services/kicad/tools/placement.py` — appel pcbnew
 - `services/kicad/routers/routing.py` — endpoint Freerouting actuel
 

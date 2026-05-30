@@ -827,7 +827,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 > - RL_PCB → prend les suggestions LLM et optimise mathématiquement les positions X/Y
 > - pcbnew → importe le résultat pour validation DRC
 > Pipeline : `call_agent_schema → LLM strategy → RL_PCB optimizer → pcbnew SetPosition → Freerouting`
-> Actuellement : `placement_layout.py` (algo déterministe pur Python) — RL_PCB serait l'upgrade Phase 6+.
+> Actuellement : kicad-tools CMA-ES → fallback pcbnew grille — RL_PCB serait l'upgrade Phase 6+.
 
 ### Étape 5.1 — Sécurité
 
