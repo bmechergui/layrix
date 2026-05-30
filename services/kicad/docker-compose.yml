@@ -15,6 +15,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - KICAD_SYMBOL_DIR=/usr/share/kicad/symbols
+      - KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints
     restart: unless-stopped
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:8766/health']
