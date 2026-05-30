@@ -548,6 +548,9 @@ export async function executeToolStub(
 
       if (serviceUrl) {
         try {
+          const schB64 = cached.kicad_sch_content
+            ? Buffer.from(cached.kicad_sch_content, 'utf-8').toString('base64')
+            : undefined;
           const res = await fetch(`${serviceUrl}/pcb/generate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -558,6 +561,7 @@ export async function executeToolStub(
               board_width_mm: boardW,
               board_height_mm: boardH,
               project_id: projectId,
+              ...(schB64 ? { kicad_sch_b64: schB64 } : {}),
             }),
             signal: AbortSignal.timeout(60_000),
           });

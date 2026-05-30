@@ -217,10 +217,72 @@ def _footprint_pads(fp: str) -> list[str]:
 
 
 # ============================================================
+# kicad-tools PCBFromSchematic (Primary)
+# ============================================================
+
+def _generate_with_kicad_tools(
+    kicad_sch_content: str,
+    board_w: float,
+    board_h: float,
+) -> Optional[str]:
+    """kicad-tools PCBFromSchematic → .kicad_pcb. Returns None on failure.
+
+    Reads the .kicad_sch, exports netlist (kicad-cli or pure Python fallback),
+    creates a blank PCB, adds footprints, assigns nets.
+    """
+    import tempfile as _tmp
+    from kicad_tools.workflow import PCBFromSchematic
+
+    with _tmp.TemporaryDirectory() as tmp:
+        sch_path = Path(tmp) / "schematic.kicad_sch"
+        pcb_path = Path(tmp) / "schematic.kicad_pcb"
+        sch_path.write_text(kicad_sch_content, encoding="utf-8")
+
+        workflow = PCBFromSchematic(sch_path)
+        workflow.create_pcb(width=board_w, height=board_h, layers=2, title="Layrix PCB")
+        workflow.place_all_components(spacing=15.0, margin=5.0)
+        workflow.assign_nets()
+        workflow.save(pcb_path)
+
+        if pcb_path.exists():
+            content = pcb_path.read_text(encoding="utf-8")
+            logger.info("kicad-tools PCBFromSchematic: %d footprints", len(workflow.get_components()))
+            return content
+        return None
+
+
+# ============================================================
 # Public API
 # ============================================================
 
 def generate_pcb(
+    components: list[SchemaComponent],
+    connections: list[SchemaNet],
+    board_w: float,
+    board_h: float,
+    kicad_sch_content: Optional[str] = None,
+) -> str:
+    """Generate .kicad_pcb — 3-level pipeline:
+    1. kicad-tools PCBFromSchematic   (si kicad_sch_content fourni)
+    2. S-expression Python natif      (footprints réels depuis KiCad install)
+    3. "" → router retourne success=False → TypeScript fallback
+    """
+    # Primary: kicad-tools PCBFromSchematic
+    if kicad_sch_content:
+        try:
+            content = _generate_with_kicad_tools(kicad_sch_content, board_w, board_h)
+            if content:
+                logger.info("generate_pcb: kicad-tools succeeded")
+                return content
+        except Exception as exc:
+            logger.warning("generate_pcb: kicad-tools failed (%s) — S-expr fallback", exc)
+
+    # Fallback: S-expression Python (footprints KiCad natifs si dispo)
+    logger.info("generate_pcb: using S-expression Python generator")
+    return _generate_pcb_sexpr(components, connections, board_w, board_h)
+
+
+def _generate_pcb_sexpr(
     components: list[SchemaComponent],
     connections: list[SchemaNet],
     board_w: float,
