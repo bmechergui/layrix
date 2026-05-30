@@ -1054,11 +1054,11 @@ def _generate_schematic_fallback(
         lines.append(f'    (uuid "{_uuid4()}")')
         lines.append(
             f'    (property "Reference" "{ref_e}" (at {x} {y - 7} 0) '
-            f'(effects (font (size 1.27 1.27)) (justify center)))'
+            f'(effects (font (size 1.27 1.27))))'
         )
         lines.append(
             f'    (property "Value" "{val_e}" (at {x} {y + 7} 0) '
-            f'(effects (font (size 1.27 1.27)) (justify center)))'
+            f'(effects (font (size 1.27 1.27))))'
         )
         lines.append(
             f'    (property "Footprint" "{fp_e}" (at {x} {y + 10} 0) '

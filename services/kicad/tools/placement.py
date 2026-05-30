@@ -92,9 +92,9 @@ def auto_place(
     pcb_text = _inject_board_outline(pcb_text, board_width_mm, board_height_mm)
 
     # Primary path: cluster-by-function layout via compute_layout (regex apply)
-    refs = _extract_footprint_refs(pcb_text)
+    refs, footprints = _extract_footprint_info(pcb_text)
     if refs:
-        layout = compute_layout(refs, board_width_mm, board_height_mm)
+        layout = compute_layout(refs, board_width_mm, board_height_mm, footprints)
         new_text, placed_refs, positions = _apply_layout_positions(pcb_text, layout)
         logger.info(
             "compute_layout placement: %d/%d refs placed", len(placed_refs), len(refs)
@@ -129,22 +129,24 @@ def auto_place(
         }
 
 
-def _extract_footprint_refs(pcb_text: str) -> list[str]:
-    """Extract refs from each footprint block, preserving file order.
+def _extract_footprint_info(pcb_text: str) -> tuple[list[str], dict[str, str]]:
+    """Extract (refs_in_order, {ref: footprint_id}) from each footprint block.
     Supports both modern (property "Reference") and inline (fp_text reference) formats.
     """
     refs: list[str] = []
-    # Walk each footprint block in order
+    footprints: dict[str, str] = {}
     for block in pcb_text.split('(footprint ')[1:]:
-        # Limit to current footprint scope — stop at next footprint or end
-        # (simple heuristic: the (property "Reference" appears near the top of each block)
+        # Footprint id is the first quoted string right after "(footprint "
+        fp_m = re.match(r'"([^"]+)"', block)
+        fp_id = fp_m.group(1) if fp_m else ""
         head = block[:2000]
-        m = re.search(r'\(property\s+"Reference"\s+"([^"]+)"', head)
-        if not m:
-            m = re.search(r'\(fp_text\s+reference\s+"([^"]+)"', head)
-        if m:
-            refs.append(m.group(1))
-    return refs
+        ref_m = re.search(r'\(property\s+"Reference"\s+"([^"]+)"', head) \
+            or re.search(r'\(fp_text\s+reference\s+"([^"]+)"', head)
+        if ref_m:
+            ref = ref_m.group(1)
+            refs.append(ref)
+            footprints[ref] = fp_id
+    return refs, footprints
 
 
 def _apply_layout_positions(

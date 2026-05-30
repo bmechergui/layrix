@@ -38,6 +38,23 @@ EDGE_OFFSET_MM: float = 2.0
 
 _REF_RE = re.compile(r"^([A-Za-z]+)")
 
+# Footprint name patterns that identify development modules (Arduino, ESP, etc.)
+# These should be placed at center (like ICs), not on the edge (like connectors).
+_MODULE_PATTERNS = re.compile(
+    r"^(Arduino|ESP\d*|ESP32|ESP8266|STM32|Raspberry|RPi|Teensy|"
+    r"NodeMCU|WeMos|Pyboard|Adafruit_Feather|MicroBit)",
+    re.IGNORECASE,
+)
+
+
+def _is_module_footprint(footprint_id: str) -> bool:
+    """Return True if the footprint id matches a known dev-module pattern."""
+    if not footprint_id:
+        return False
+    # Strip library prefix if present (e.g. "Module:Arduino_Nano" -> "Arduino_Nano")
+    name = footprint_id.split(":", 1)[-1]
+    return bool(_MODULE_PATTERNS.match(name))
+
 
 # ----------------------------------------------------------------------------
 # Kind classification
@@ -162,25 +179,42 @@ def _place_cluster(
 
 
 def _place_connectors(
-    conn_refs: list[str], board_w: float, board_h: float
+    conn_refs: list[str],
+    board_w: float,
+    board_h: float,
+    module_refs: list[str] | None = None,
 ) -> dict[str, tuple[float, float, float]]:
-    """Connectors alternate left/right edges; y is uniformly distributed."""
+    """Connectors on edges. If a dev-module is among them (Arduino, ESP),
+    the module owns the left edge as a vertical strip and small connectors
+    are pushed toward the right (closer to ICs/sensors that consume their
+    signals)."""
     out: dict[str, tuple[float, float, float]] = {}
     if not conn_refs:
         return out
-    left = conn_refs[::2]
-    right = conn_refs[1::2]
-    for refs, x in (
-        (left, MARGIN_MM + EDGE_OFFSET_MM),
-        (right, board_w - MARGIN_MM - EDGE_OFFSET_MM),
-    ):
-        if not refs:
-            continue
+
+    module_refs = module_refs or []
+    has_module = bool(module_refs)
+
+    # Modules: left edge, vertical (occupies a column)
+    for i, ref in enumerate(module_refs):
         usable_h = board_h - 2 * MARGIN_MM
-        step = usable_h / (len(refs) + 1)
-        for i, ref in enumerate(refs):
+        step = usable_h / (len(module_refs) + 1)
+        y = _clamp(MARGIN_MM + step * (i + 1), MARGIN_MM, board_h - MARGIN_MM)
+        out[ref] = (MARGIN_MM + EDGE_OFFSET_MM + 12.0, y, 90.0)
+
+    # Pure connectors (J2 pin headers, etc.): cluster on right side,
+    # but pulled in from the far edge if a module is also present so
+    # the I2C/serial traces don't have to cross the whole board.
+    pure_conns = [r for r in conn_refs if r not in module_refs]
+    if pure_conns:
+        right_x = board_w - MARGIN_MM - EDGE_OFFSET_MM
+        if has_module:
+            right_x = board_w * 0.70  # closer to the IC cluster at ~center
+        usable_h = board_h - 2 * MARGIN_MM
+        step = usable_h / (len(pure_conns) + 1)
+        for i, ref in enumerate(pure_conns):
             y = _clamp(MARGIN_MM + step * (i + 1), MARGIN_MM, board_h - MARGIN_MM)
-            out[ref] = (_clamp(x, MARGIN_MM, board_w - MARGIN_MM), y, 90.0)
+            out[ref] = (_clamp(right_x, MARGIN_MM, board_w - MARGIN_MM), y, 90.0)
     return out
 
 
@@ -204,21 +238,37 @@ def compute_layout(
     refs: list[str],
     board_w_mm: float,
     board_h_mm: float,
+    footprints: dict[str, str] | None = None,
 ) -> dict[str, tuple[float, float, float]]:
     """Return ``{ref: (x_mm, y_mm, rotation_deg)}`` for every ref.
 
     Pure function — does not mutate ``refs``. Margin is currently fixed at
     ``MARGIN_MM`` to keep parity with the TypeScript fallback.
+
+    ``footprints``: optional ``{ref: footprint_id}`` map. When provided,
+    refs whose footprint starts with ``Module:`` are reclassified as IC
+    (instead of CONN by ref-prefix). Lets J1=Arduino_Nano land at center
+    while pure connectors (J2 pin headers) still go to the edge.
     """
     if not refs:
         return {}
 
-    # Classify (preserves input order within each bucket)
+    footprints = footprints or {}
+
+    # Classify (preserves input order within each bucket).
+    # Modules (Arduino, ESP, STM32 dev boards) stay on the left edge as
+    # CONN since they're physically large and naturally belong on a board
+    # boundary — but we track them so connectors get placed near the IC
+    # cluster instead of on the far edge.
     buckets: dict[Kind, list[str]] = {
         "IC": [], "RES": [], "CAP": [], "DIODE": [], "CONN": [], "MISC": [],
     }
+    module_refs: list[str] = []
     for ref in refs:
-        buckets[classify_kind(ref)].append(ref)
+        kind = classify_kind(ref)
+        if kind == "CONN" and _is_module_footprint(footprints.get(ref, "")):
+            module_refs.append(ref)
+        buckets[kind].append(ref)
 
     out: dict[str, tuple[float, float, float]] = {}
     out.update(_place_ics(buckets["IC"], board_w_mm, board_h_mm))
@@ -229,7 +279,7 @@ def compute_layout(
     passives = buckets["RES"] + buckets["CAP"] + buckets["DIODE"]
     out.update(_place_cluster(passives, ic_positions, board_w_mm, board_h_mm))
 
-    out.update(_place_connectors(buckets["CONN"], board_w_mm, board_h_mm))
+    out.update(_place_connectors(buckets["CONN"], board_w_mm, board_h_mm, module_refs))
     out.update(_place_misc(buckets["MISC"], board_w_mm, board_h_mm))
 
     # Center the entire bounding box of components
