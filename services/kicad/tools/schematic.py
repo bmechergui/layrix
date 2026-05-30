@@ -851,6 +851,59 @@ def _generate_schematic_fallback(
 # Public API
 # ============================================================
 
+def _generate_with_kicad_tools(
+    components: list[SchemaComponent],
+    connections: list[SchemaNet],
+) -> Optional[str]:
+    """kicad-tools Schematic class → .kicad_sch. Returns None on failure."""
+    from kicad_tools.schematic.models.schematic import Schematic
+
+    sch = Schematic()
+
+    col_step = 55.0
+    row_step = 35.0
+    margin_x = 38.0
+    margin_y = 25.0
+    cols = max(1, math.ceil(math.sqrt(len(components))))
+
+    sym_positions: dict[str, tuple[float, float]] = {}
+
+    for i, comp in enumerate(components):
+        x = margin_x + (i % cols) * col_step
+        y = margin_y + (i // cols) * row_step
+        lib_id = _safe_symbol(_map_symbol(comp))
+        try:
+            sch.add_symbol(
+                lib_id=lib_id,
+                x=x, y=y,
+                ref=comp.ref,
+                value=comp.value,
+                footprint=_expand_footprint(comp),
+                snap=True,
+            )
+            sym_positions[comp.ref] = (x, y)
+        except Exception as exc:
+            logger.warning("kicad-tools add_symbol %s (%s): %s", comp.ref, lib_id, exc)
+
+    label_idx: dict[str, int] = {}
+    for conn in connections:
+        for pin in conn.pins:
+            pos = sym_positions.get(pin.ref)
+            if pos is None:
+                continue
+            n = label_idx.get(pin.ref, 0)
+            lx = pos[0] + 8.0
+            ly = pos[1] + n * 2.54
+            label_idx[pin.ref] = n + 1
+            try:
+                sch.add_label(conn.name, lx, ly, validate_connection=False)
+            except Exception:
+                pass
+
+    content = sch.to_sexp()
+    return content if content else None
+
+
 def generate_schematic(
     components: list[SchemaComponent],
     connections: list[SchemaNet],
@@ -860,10 +913,12 @@ def generate_schematic(
     project_id: str = "",
 ) -> str:
     """
-    Primary  : circuit_synth pip (20s timeout)
-    Fallback : S-expression hand-written generator
-    Returns .kicad_sch content string.
+    Primary    : circuit_synth pip (20s timeout)
+    Fallback 1 : kicad-tools Schematic class
+    Fallback 2 : empty string → TypeScript S-expr (schematic-engine.ts)
+    Returns .kicad_sch content, or "" when all Python paths fail.
     """
+    # Primary: circuit_synth pip
     if _circuit_synth_available():
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -882,10 +937,20 @@ def generate_schematic(
                     logger.info("generate_schematic: circuit_synth succeeded")
                     return sch_content
         except Exception as exc:
-            logger.warning("generate_schematic: circuit_synth failed (%s) — fallback S-expr", exc)
+            logger.warning("generate_schematic: circuit_synth failed (%s) — trying kicad-tools", exc)
 
-    logger.info("generate_schematic: using S-expression fallback")
-    return _generate_schematic_fallback(components, connections)
+    # Fallback 1: kicad-tools Schematic class
+    try:
+        sch_content = _generate_with_kicad_tools(components, connections)
+        if sch_content:
+            logger.info("generate_schematic: kicad-tools succeeded")
+            return sch_content
+    except Exception as exc:
+        logger.warning("generate_schematic: kicad-tools failed (%s) — TypeScript fallback needed", exc)
+
+    # Fallback 2: return "" → router returns success=False → TypeScript S-expr takes over
+    logger.warning("generate_schematic: all Python paths failed")
+    return ""
 
 
 def execute_cs_code(

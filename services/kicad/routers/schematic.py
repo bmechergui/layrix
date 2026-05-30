@@ -103,7 +103,9 @@ def generate(req: SchematicRequest) -> SchematicResponse:
             req.components, req.connections, req.nets,
             req.board_width_mm, req.board_height_mm, req.project_id,
         )
-        return SchematicResponse(success=True, kicad_sch_content=sch_content)
+        if sch_content:
+            return SchematicResponse(success=True, kicad_sch_content=sch_content)
+        return SchematicResponse(success=False, error="All Python schematic paths failed — TypeScript S-expr fallback")
     except Exception as exc:
         logger.error("generate schematic failed: %s", exc)
         return SchematicResponse(success=False, error=str(exc))
