@@ -80,7 +80,11 @@ Utilisateur (texte naturel)
      ③ skipped=True           — les deux absents, pipeline continue
 
 ⑧ call_agent_export    → PCB_LIVRÉ
-     POST /export/all → Gerbers RS-274X + drill Excellon + BOM JLCPCB + CPL
+     ① kicad-tools kct export --mfr jlcpcb ⭐⭐⭐
+        Gerbers JLCPCB (GTL/GBL/GKO) + BOM LCSC + CPL rotation corrections
+     ② kicad-cli pcb export {gerbers,drill,pos} ⭐⭐
+        si kicad-tools échoue
+     ③ skipped=True → BOM CSV seulement (kicad-cli absent)
      Upload Supabase Storage → signed URLs KiCanvas
 
    call_agent_simulation → (optionnel, 3 crédits, Pro+)
@@ -100,7 +104,7 @@ Utilisateur (texte naturel)
 | Placement | `call_agent_placement` | — | kicad-tools CMA-ES (cluster-by-net) → pcbnew grille → error | `.kicad_pcb` placé |
 | Routing | `call_agent_routing` | — | kicad-tools A* (≤30 nets/comps) → Freerouting Java → GND plane | `.kicad_pcb` routé |
 | DRC | `call_agent_drc` | — | kicad-tools 27 règles JLCPCB → kicad-cli auto-fix max 3× → skipped | `.kicad_pcb` corrigé |
-| Export | `call_agent_export` | — | Gerbers + BOM CSV + CPL + devis JLCPCB | `.zip` b64 + `bom_csv` + `quote_usd` |
+| Export | `call_agent_export` | — | kicad-tools JLCPCB → kicad-cli standard → BOM CSV | `.zip` b64 + `bom_csv` + `quote_usd` |
 | Simulation | `call_agent_simulation` | — | kicad-cli SPICE + ngspice batch → fallback démo synthétique | `SimulationData` (vecteurs V/A) |
 | Ask | `ask_user` | — | Pose une question bloquante à l'utilisateur | — |
 

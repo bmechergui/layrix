@@ -213,7 +213,10 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      ② kicad-cli pcb drc — officiel KiCad, refill zones, auto-fix max 3×
      ③ skipped=True — les deux absents
   ⑧ call_agent_export     → Ingénieur Fabrication
-     runRealExport() → POST /export/all (Gerbers + drill + CPL, zip base64)
+     POST /export/all
+     ① kicad-tools kct export --mfr jlcpcb — GTL/GBL/GKO, BOM LCSC, CPL rotations
+     ② kicad-cli pcb export {gerbers,drill,pos} — si kicad-tools échoue
+     ③ skipped=True — kicad-cli absent → BOM CSV seulement
      ↓ Upload Supabase Storage → signed URLs KiCanvas
 ```
 

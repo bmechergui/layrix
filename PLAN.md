@@ -74,7 +74,8 @@ Pipeline 8 agents (ordre strict) :
    ① kicad-tools A* (≤30 nets/comps, 60s) · ② Freerouting Java · ③ GND plane
 ⑦ `call_agent_drc` → Ingénieur Qualité
    ① kicad-tools 27 règles JLCPCB · ② kicad-cli auto-fix max 3× · ③ skipped
-⑧ `call_agent_export` → Ingénieur Fabrication — Gerbers RS-274X + BOM JLCPCB + CPL
+⑧ `call_agent_export` → Ingénieur Fabrication
+   ① kicad-tools --mfr jlcpcb (GTL/GBL/BOM LCSC/CPL) · ② kicad-cli standard · ③ BOM CSV
 
 - **Circuit-Synth** (Python pip) → génère `.kicad_sch` ; `.kicad_pcb` généré séparément par `call_agent_gen_pcb`
 - Fallback TypeScript : `schematic-engine.ts` si Docker absent

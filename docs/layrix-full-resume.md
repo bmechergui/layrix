@@ -78,6 +78,9 @@ Orchestrateur Sonnet 4.6 · 8 agents Haiku 4.5 · max 15 itérations · SSE stre
      ② kicad-cli pcb drc auto-fix max 3× (si erreurs persistent)
 
 ⑧ call_agent_export    → Gerbers + BOM JLCPCB + CPL → Supabase Storage
+     ① kicad-tools --mfr jlcpcb (GTL/GBL/GKO + BOM LCSC + CPL rotations)
+     ② kicad-cli pcb export standard (fallback)
+     ③ BOM CSV seulement (kicad-cli absent)
 ```
 
 Résultat : fichiers KiCad natifs + Gerbers RS-274X + JLCPCB-ready ✅
