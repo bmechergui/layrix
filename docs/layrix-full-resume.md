@@ -30,7 +30,7 @@ jusqu'à DRC propre + Gerbers exportés + commande JLCPCB ✅
 - Concept : SaaS web 100% cloud de conception PCB via langage naturel
 - Moteur PCB : Circuit-Synth (Python, génère .kicad_sch + .kicad_pcb natifs) + KiCad (pro multi-couches)
 - Placement auto : kicad-tools CMA-ES (optimisation mathématique cluster-by-net, pur Python)
-- Routage auto : Freerouting (Java, dockerisé) → fallback kicad-tools Python A* (circuits simples ≤10 nets)
+- Routage auto : kicad-tools A* (≤30 nets/composants) → Freerouting Java (circuits complexes) → GND plane
 - Couches : 2 à 8 couches selon le plan
 - Exports : .kicad_pcb + .kicad_sch + Gerber + BOM + PDF + STEP 3D
 - Viewer Schéma + PCB : KiCanvas (rendu natif KiCad dans le navigateur)
@@ -69,8 +69,9 @@ Orchestrateur Sonnet 4.6 · 8 agents Haiku 4.5 · max 15 itérations · SSE stre
      Fallback : pcbnew grille (fallback) Python (dans le service Docker)
 
 ⑥ call_agent_routing   → traces + plans de masse
-     Path 1 : Freerouting Java .dsn → .ses → .kicad_pcb
-     Path 2 : kicad-tools Python A* (≤10 nets, 60s)
+     ① kicad-tools A* (≤30 nets ET ≤30 composants, 60s)
+     ② Freerouting Java .dsn → .ses → .kicad_pcb (circuits complexes)
+     ③ GND plane seulement (fallback final)
 
 ⑦ call_agent_drc       → DRC_CLEAN (boucle max 3×)
      kicad-cli pcb drc → kicad-tools 27 règles JLCPCB (fallback)

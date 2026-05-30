@@ -67,9 +67,10 @@ Utilisateur (texte naturel)
      ③ status:'error' si service Docker down (fail fast)
 
 ⑥ call_agent_routing   → ROUTING_DONE
-     Path 1 : Freerouting Java .dsn → .ses → .kicad_pcb
-     Path 2 : kicad-tools Python A* (fallback, ≤10 nets, 60s)
-     Fallback : GND plane B.Cu sur PCB propre (pas de routage simulé MST)
+     ① kicad-tools A* négocié   — ≤30 nets ET ≤30 composants, timeout 60s
+     ② Freerouting Java          — circuits complexes OU si kicad-tools échoue
+        .kicad_pcb → Specctra .dsn → Java → .ses → .kicad_pcb
+     ③ skipped=True              → TypeScript addGroundPlane() GND plane B.Cu
 
 ⑦ call_agent_drc       → DRC_CLEAN (boucle max 3×)
      Primaire : POST /drc/auto (kicad-cli pcb drc, auto-fix)
@@ -94,7 +95,7 @@ Utilisateur (texte naturel)
 | Footprint | `call_agent_footprint` | Haiku 4.5 | Cascade 4 étapes KiCad→pgvector→LCSC→IA | `footprint_name` + `kicad_mod` |
 | PCB Layout | `call_agent_gen_pcb` | — | kicad-tools PCBFromSchematic → pcbnew direct → TS S-expr | `.kicad_pcb` |
 | Placement | `call_agent_placement` | — | kicad-tools CMA-ES (cluster-by-net) → pcbnew grille → error | `.kicad_pcb` placé |
-| Routing | `call_agent_routing` | — | Freerouting Java → kicad-tools A* (≤10 nets) → GND plane | `.kicad_pcb` routé |
+| Routing | `call_agent_routing` | — | kicad-tools A* (≤30 nets/comps) → Freerouting Java → GND plane | `.kicad_pcb` routé |
 | DRC | `call_agent_drc` | — | kicad-cli pcb drc auto-fix max 3× → kicad-tools 27 règles (fallback) | `.kicad_pcb` corrigé |
 | Export | `call_agent_export` | — | Gerbers + BOM CSV + CPL + devis JLCPCB | `.zip` b64 + `bom_csv` + `quote_usd` |
 | Simulation | `call_agent_simulation` | — | kicad-cli SPICE + ngspice batch → fallback démo synthétique | `SimulationData` (vecteurs V/A) |

@@ -201,9 +201,10 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      ③ status:'error' si Docker down (fail fast)
      fallback : pcbnew grille simple
   ⑥ call_agent_routing    → Ingénieur Routage
-     runRealRouting() → POST /route/auto
-       Path 1 : Freerouting Java .dsn → .ses → .kicad_pcb (tous les circuits)
-       Path 2 : kicad-tools Python A* négocié (fallback Java absent, ≤10 nets, 60s)
+     POST /route/auto
+     ① kicad-tools A* négocié — ≤30 nets ET ≤30 composants, timeout 60s
+     ② Freerouting Java       — circuits complexes OU si kicad-tools échoue
+     ③ skipped=True           → TypeScript addGroundPlane() GND plane B.Cu
      fallback : routing-fallback.ts (MST pur TS)
   ⑦ call_agent_drc        → Ingénieur Qualité (boucle max 3×)
      runRealDRC() → POST /drc/auto
