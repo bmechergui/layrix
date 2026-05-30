@@ -6,7 +6,6 @@ import { validateAndCorrectSchema } from './engines/schematic-engine';
 import type { SchemaJson } from './engines/engine-router';
 import type { SchemaComponent } from '@layrix/types';
 import { runRealPlacement } from './engines/placement-service';
-import { computeLayout, layoutToPlacements, applyLayoutToPcb } from './engines/placement-fallback';
 import { runRealErc, ErcServiceUnavailableError } from './engines/erc-service';
 import { runErcFallback } from './engines/erc-fallback';
 import { runRealRouting, RoutingServiceUnavailableError } from './engines/routing-service';
@@ -670,26 +669,11 @@ export async function executeToolStub(
           note: `Placement pcbnew — PCB ${boardW}×${boardH} mm, ${placements.length} composants.`,
         };
       } catch (err) {
-        log.warn({ err }, 'placement service unavailable — using TS fallback planner');
-        const refs = schema.components.map((c) => c.ref);
-        const layout = computeLayout(refs, boardW, boardH);
-        const placements = layoutToPlacements(layout);
-        // Apply the computed positions into the PCB S-expression so the routing
-        // agent works on a properly-placed board (not the initial grid positions).
-        const placedPcbContent = applyLayoutToPcb(base.kicad_pcb_content, layout);
-        _pcbStateCache.set(projectId, {
-          schema, boardW, boardH, kicad_pcb_content: placedPcbContent,
-        });
+        log.error({ err, projectId }, 'placement service unavailable');
         return {
-          status: 'success',
-          pcb_status: 'PLACEMENT_DONE',
-          placements,
-          kicad_pcb_content: placedPcbContent,
-          board_width_mm: boardW,
-          board_height_mm: boardH,
-          engine: 'fallback-ts',
-          warning: 'pcbnew service unreachable — positions computed by the TS fallback planner',
-          note: `Placement fallback — PCB ${boardW}×${boardH} mm, ${placements.length} composants (planner TS).`,
+          status: 'error',
+          error: err instanceof Error ? err.message : 'placement service unavailable',
+          note: 'Service pcbnew inaccessible — vérifie que le conteneur Docker KiCad tourne (KICAD_SERVICE_URL).',
         };
       }
     }
