@@ -900,13 +900,12 @@ export async function runCircuitSynthEngine(
         const data = await res.json() as {
           success: boolean;
           kicad_sch_content?: string | null;
-          kicad_pcb_content?: string | null;
           error?: string;
         };
-        if (data.success && data.kicad_sch_content && data.kicad_pcb_content) {
+        if (data.success && data.kicad_sch_content) {
           return {
             kicad_sch_content: data.kicad_sch_content,
-            kicad_pcb_content: data.kicad_pcb_content,
+            kicad_pcb_content: '',
           };
         }
       }

@@ -548,7 +548,7 @@ export async function executeToolStub(
 
       if (serviceUrl) {
         try {
-          const res = await fetch(`${serviceUrl}/schematic/generate`, {
+          const res = await fetch(`${serviceUrl}/pcb/generate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

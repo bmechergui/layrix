@@ -1,7 +1,9 @@
 """
 Layrix KiCad Service — FastAPI headless
 Endpoints actifs (tous via routers/) :
-  /health · /schematic/generate · /schematic/execute
+  /health
+  /schematic/execute · /schematic/generate · /schematic/validate-symbols
+  /pcb/generate
   /place/auto · /erc · /route/auto · /drc/auto · /export/all · /simulate/auto
 """
 
@@ -48,9 +50,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# KiCad file generator router — JSON schema → .kicad_sch (circuit_synth) + .kicad_pcb (Python S-expr)
-from routers.kicad_gen import router as kicad_gen_router  # noqa: E402
-app.include_router(kicad_gen_router)
+# Schematic router — /schematic/execute · /schematic/generate · /schematic/validate-symbols
+from routers.schematic import router as schematic_router  # noqa: E402
+app.include_router(schematic_router)
+
+# PCB router — /pcb/generate
+from routers.pcb import router as pcb_router  # noqa: E402
+app.include_router(pcb_router)
 
 # Placement router — /place (explicit) + /place/auto (grid algorithm, base64 I/O)
 from routers.placement import router as placement_router  # noqa: E402
