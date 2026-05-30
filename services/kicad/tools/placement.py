@@ -71,7 +71,14 @@ def auto_place(
     board_height_mm: float,
 ) -> dict:
     pcb_text = base64.b64decode(kicad_pcb_b64).decode("utf-8", errors="replace")
-    pcb_text = _inject_board_outline(pcb_text, board_width_mm, board_height_mm)
+
+    # Only inject Edge.Cuts when the PCB has no valid board outline.
+    # PCBFromSchematic already writes correct Edge.Cuts at the board origin;
+    # injecting new lines at (0,0) shifts the kicad-tools bounds by -board_origin
+    # and causes CMA-ES to place footprints outside the visible board area.
+    _needs_outline = '"Edge.Cuts"' not in pcb_text
+    if _needs_outline:
+        pcb_text = _inject_board_outline(pcb_text, board_width_mm, board_height_mm)
 
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "input.kicad_pcb"
@@ -83,7 +90,7 @@ def auto_place(
             from kicad_tools.placement.place_unplaced import place_unplaced
             result = place_unplaced(
                 str(src), output_path=str(dst),
-                margin=1.5, spacing=1.0, cluster=True,
+                margin=3.0, spacing=3.0, cluster=True,
             )
             output_bytes = dst.read_bytes() if dst.exists() else src.read_bytes()
             logger.info("kicad-tools placement: %d composants placés", len(result.placed_refs))

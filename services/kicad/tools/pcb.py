@@ -244,11 +244,24 @@ def _generate_with_kicad_tools(
         workflow.assign_nets()
         workflow.save(pcb_path)
 
-        if pcb_path.exists():
-            content = pcb_path.read_text(encoding="utf-8")
-            logger.info("kicad-tools PCBFromSchematic: %d footprints", len(workflow.get_components()))
-            return content
-        return None
+        if not pcb_path.exists():
+            return None
+
+        # Move all footprints outside the board so that place_unplaced (CMA-ES)
+        # in call_agent_placement can perform real cluster-by-net placement.
+        # place_all_components only adds footprints — without this reset they are
+        # considered "already placed" and CMA-ES becomes a no-op.
+        try:
+            from kicad_tools.schema.pcb import PCB as _PCB
+            pcb = _PCB.load(str(pcb_path))
+            for fp in pcb.footprints:
+                fp.position = (fp.position[0], -(board_h + 20.0))
+            pcb.save(str(pcb_path))
+            logger.info("kicad-tools PCBFromSchematic: %d footprints staged outside board for CMA-ES", len(list(pcb.footprints)))
+        except Exception as exc:
+            logger.warning("footprint reset skipped (%s) — placement CMA-ES may be no-op", exc)
+
+        return pcb_path.read_text(encoding="utf-8")
 
 
 # ============================================================
