@@ -1187,7 +1187,7 @@ DRC_CLEAN  →  PCB_LIVRÉ  (après "OUI JE CONFIRME")
 
 ---
 
-## État final — Phase 4 (2026-05-26)
+## État final — Phase 4 (2026-05-29)
 
 **Pipeline complet validé :** Design ✅ → Schema ✅ → ERC ✅ → Footprint ⚠️ → KiCad ✅ → Placement ✅ → Routing ✅ → DRC ✅ → Export ✅ → JLCPCB ✅
 
