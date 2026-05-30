@@ -81,54 +81,108 @@ def auto_place(
     board_height_mm: float,
 ) -> dict:
     """
-    Auto-placement via kicad-tools CMA-ES place_unplaced.
-    Pur Python — ne dépend PAS de pcbnew, compatible toutes versions KiCad.
-    Fallback : placement grille déterministe si kicad-tools échoue.
+    Auto-placement via compute_layout (cluster-by-function, pure-Python regex).
+    Algorithm: IC at center, passives clustered around IC, connectors on edges.
+    Falls back to kicad-tools text-flow place_unplaced if compute_layout fails.
     I/O base64.
     """
     pcb_bytes = base64.b64decode(kicad_pcb_b64)
     pcb_text = pcb_bytes.decode("utf-8", errors="replace")
 
-    # Réinitialiser les positions des footprints à (0 0) pour que CMA-ES les place
-    # (kicad_gen.py pré-place avec une grille basique — CMA-ES fait mieux)
-    pcb_text = _reset_footprint_positions(pcb_text)
-
-    # Injecter le contour Edge.Cuts (manipulation texte S-expression)
     pcb_text = _inject_board_outline(pcb_text, board_width_mm, board_height_mm)
 
+    # Primary path: cluster-by-function layout via compute_layout (regex apply)
+    refs = _extract_footprint_refs(pcb_text)
+    if refs:
+        layout = compute_layout(refs, board_width_mm, board_height_mm)
+        new_text, placed_refs, positions = _apply_layout_positions(pcb_text, layout)
+        logger.info(
+            "compute_layout placement: %d/%d refs placed", len(placed_refs), len(refs)
+        )
+        return {
+            "kicad_pcb_b64": base64.b64encode(new_text.encode("utf-8")).decode(),
+            "placed_count": len(placed_refs),
+            "positions": positions,
+        }
+
+    # Fallback: kicad-tools text-flow (when refs can't be parsed)
+    pcb_text = _reset_footprint_positions(pcb_text)
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "input.kicad_pcb"
         dst = Path(tmp) / "output.kicad_pcb"
         src.write_text(pcb_text, encoding="utf-8")
-
         placed_refs: list[str] = []
-
-        # Étape 1 : kicad-tools place_unplaced (CMA-ES, pur Python)
         try:
             from kicad_tools.placement.place_unplaced import place_unplaced
             result = place_unplaced(
-                str(src),
-                output_path=str(dst),
-                margin=1.0,
-                spacing=1.0,
-                cluster=True,
+                str(src), output_path=str(dst),
+                margin=1.0, spacing=1.0, cluster=True,
             )
             placed_refs = result.placed_refs
-            logger.info(
-                "kicad-tools CMA-ES: %d placed, %d overflow",
-                result.placed_count,
-                result.overflow_count,
-            )
         except Exception as exc:
-            logger.warning("kicad-tools placement failed (%s) — fallback grille", exc)
-            placed_refs = _fallback_grid_place(src, dst, board_width_mm, board_height_mm)
-
+            logger.warning("kicad-tools placement failed (%s)", exc)
         output_bytes = dst.read_bytes() if dst.exists() else src.read_bytes()
         return {
             "kicad_pcb_b64": base64.b64encode(output_bytes).decode(),
             "placed_count": len(placed_refs),
             "positions": [{"ref": r} for r in placed_refs],
         }
+
+
+def _extract_footprint_refs(pcb_text: str) -> list[str]:
+    """Extract refs from each footprint block, preserving file order.
+    Supports both modern (property "Reference") and inline (fp_text reference) formats.
+    """
+    refs: list[str] = []
+    # Walk each footprint block in order
+    for block in pcb_text.split('(footprint ')[1:]:
+        # Limit to current footprint scope — stop at next footprint or end
+        # (simple heuristic: the (property "Reference" appears near the top of each block)
+        head = block[:2000]
+        m = re.search(r'\(property\s+"Reference"\s+"([^"]+)"', head)
+        if not m:
+            m = re.search(r'\(fp_text\s+reference\s+"([^"]+)"', head)
+        if m:
+            refs.append(m.group(1))
+    return refs
+
+
+def _apply_layout_positions(
+    pcb_text: str,
+    layout: dict[str, tuple[float, float, float]],
+) -> tuple[str, list[str], list[dict]]:
+    """Replace each footprint's primary (at ...) with its computed position.
+    Returns (new_pcb_text, placed_refs, positions).
+    """
+    placed: list[str] = []
+    positions: list[dict] = []
+
+    parts = pcb_text.split('(footprint ')
+    out_parts = [parts[0]]
+
+    for part in parts[1:]:
+        head = part[:2000]
+        m = re.search(r'\(property\s+"Reference"\s+"([^"]+)"', head) \
+            or re.search(r'\(fp_text\s+reference\s+"([^"]+)"', head)
+
+        if m and m.group(1) in layout:
+            ref = m.group(1)
+            x, y, rot = layout[ref]
+            # Replace ONLY the first (at ...) — the footprint's own position
+            new_part = re.sub(
+                r'\(at\s+[\d\.\-]+\s+[\d\.\-]+(?:\s+[\d\.\-]+)?\)',
+                f'(at {x:.3f} {y:.3f} {rot:.1f})',
+                part,
+                count=1,
+            )
+            placed.append(ref)
+            positions.append({"ref": ref, "x_mm": round(x, 3), "y_mm": round(y, 3)})
+        else:
+            new_part = part
+
+        out_parts.append('(footprint ' + new_part)
+
+    return ''.join(out_parts), placed, positions
 
 
 def _reset_footprint_positions(pcb_text: str) -> str:
