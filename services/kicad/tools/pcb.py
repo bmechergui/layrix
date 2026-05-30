@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from tools.schematic import SchemaComponent, SchemaNet, _expand_footprint
+from tools.schematic import SchemaComponent, SchemaNet, SchemaPin, _expand_footprint
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +255,53 @@ def _generate_with_kicad_tools(
 # Public API
 # ============================================================
 
+def _generate_from_sch_python(
+    kicad_sch_content: str,
+    board_w: float,
+    board_h: float,
+) -> Optional[str]:
+    """Niveau 2 — Python pur depuis .kicad_sch avec vrais footprints.
+
+    Parse le .kicad_sch via kicad-tools Schematic.load(),
+    extrait composants + netlist, génère le .kicad_pcb S-expr
+    avec _generate_pcb_sexpr() qui lit les vrais .kicad_mod.
+    """
+    import tempfile as _tmp
+    from kicad_tools.schematic.models.schematic import Schematic
+
+    with _tmp.TemporaryDirectory() as tmp:
+        sch_path = Path(tmp) / "schematic.kicad_sch"
+        sch_path.write_text(kicad_sch_content, encoding="utf-8")
+
+        sch = Schematic.load(sch_path)
+
+        # Extraire composants (ignorer les symboles power #PWR, #FLG)
+        components: list[SchemaComponent] = []
+        for sym in sch.symbols:
+            if sym.reference.startswith('#'):
+                continue
+            components.append(SchemaComponent(
+                ref=sym.reference,
+                value=sym.value or sym.reference,
+                footprint=sym.footprint or "",
+            ))
+
+        # Extraire netlist → SchemaNet
+        netlist = sch.extract_netlist()
+        connections: list[SchemaNet] = []
+        nets: list[str] = []
+        for net_name, pin_refs in netlist.items():
+            nets.append(net_name)
+            pins = [SchemaPin(ref=p.symbol_ref, pin=str(p.pin)) for p in pin_refs]
+            connections.append(SchemaNet(name=net_name, pins=pins))
+
+        logger.info(
+            "_generate_from_sch_python: %d composants, %d nets",
+            len(components), len(connections),
+        )
+        return _generate_pcb_sexpr(components, connections, board_w, board_h)
+
+
 def generate_pcb(
     components: list[SchemaComponent],
     connections: list[SchemaNet],
@@ -262,24 +309,34 @@ def generate_pcb(
     board_h: float,
     kicad_sch_content: Optional[str] = None,
 ) -> str:
-    """Generate .kicad_pcb — 3-level pipeline:
-    1. kicad-tools PCBFromSchematic   (si kicad_sch_content fourni)
-    2. S-expression Python natif      (footprints réels depuis KiCad install)
-    3. "" → router retourne success=False → TypeScript fallback
+    """Pipeline génération .kicad_pcb — 3 niveaux :
+    1. kicad-tools PCBFromSchematic   — lit .kicad_sch, vrais footprints + nets complets
+    2. Python pur depuis .kicad_sch   — Schematic.load() + extract_netlist() + S-expr natif
+    3. '' → router success=False      → TypeScript runCircuitSynthEngine() fallback
     """
-    # Primary: kicad-tools PCBFromSchematic
+    # Niveau 1 : kicad-tools PCBFromSchematic
     if kicad_sch_content:
         try:
             content = _generate_with_kicad_tools(kicad_sch_content, board_w, board_h)
             if content:
-                logger.info("generate_pcb: kicad-tools succeeded")
+                logger.info("generate_pcb: niveau 1 kicad-tools OK")
                 return content
         except Exception as exc:
-            logger.warning("generate_pcb: kicad-tools failed (%s) — S-expr fallback", exc)
+            logger.warning("generate_pcb: kicad-tools échoué (%s) — niveau 2", exc)
 
-    # Fallback: S-expression Python (footprints KiCad natifs si dispo)
-    logger.info("generate_pcb: using S-expression Python generator")
-    return _generate_pcb_sexpr(components, connections, board_w, board_h)
+    # Niveau 2 : Python pur depuis .kicad_sch avec vrais footprints
+    if kicad_sch_content:
+        try:
+            content = _generate_from_sch_python(kicad_sch_content, board_w, board_h)
+            if content:
+                logger.info("generate_pcb: niveau 2 Python pur OK")
+                return content
+        except Exception as exc:
+            logger.warning("generate_pcb: Python pur échoué (%s) — TypeScript fallback", exc)
+
+    # Niveau 3 : '' → router retourne success=False → TypeScript prend le relais
+    logger.warning("generate_pcb: tous les niveaux Python ont échoué")
+    return ""
 
 
 def _generate_pcb_sexpr(
