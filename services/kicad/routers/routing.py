@@ -130,11 +130,23 @@ def _specctra_roundtrip(pcb_bytes: bytes, ses_path: Path) -> bytes:
         return out_pcb.read_bytes()
 
 
-def _count_signal_nets(pcb_bytes: bytes) -> int:
-    """Count named nets in a .kicad_pcb S-expression (excludes empty string net 0)."""
+def _count_routable_nets(pcb_bytes: bytes) -> int:
+    """Count nets that actually require routing (≥ 2 pads assigned).
+
+    In a .kicad_pcb file each net appears exactly once as a top-level
+    declaration ``(net N "name")`` plus once per pad that carries it.
+    Total occurrences = 1 (declaration) + pad_count.
+    A net needs routing only when pad_count ≥ 2, i.e. total count ≥ 3.
+
+    Single-pad nets (unconnected Arduino pins → Net-(U1-X)) appear exactly
+    twice (declaration + 1 pad) and are correctly excluded.
+    """
     text = pcb_bytes.decode("utf-8", errors="replace")
-    nets = re.findall(r'\(net\s+\d+\s+"([^"]+)"\)', text)
-    return len([n for n in nets if n])
+    from collections import Counter
+    all_occurrences = re.findall(r'\(net\s+(\d+)\s+"[^"]+"\)', text)
+    counts = Counter(all_occurrences)
+    # ≥3 = 1 top-level declaration + at least 2 pad assignments
+    return sum(1 for c in counts.values() if c >= 3)
 
 
 def _count_footprints(pcb_bytes: bytes) -> int:
@@ -222,12 +234,12 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=f"invalid base64: {exc}") from exc
 
-    net_count = _count_signal_nets(pcb_bytes)
+    net_count = _count_routable_nets(pcb_bytes)
     comp_count = _count_footprints(pcb_bytes)
     is_simple = net_count <= _KICAD_TOOLS_MAX_NETS and comp_count <= _KICAD_TOOLS_MAX_COMPS
 
     logger.info(
-        "route_auto: %d nets, %d composants — simple=%s",
+        "route_auto: %d routable nets, %d composants — simple=%s",
         net_count, comp_count, is_simple,
     )
 
