@@ -54,8 +54,9 @@ Utilisateur (texte naturel)
      Cascade : KiCad libs → pgvector cache → LCSC/EasyEDA → Haiku IA (3 crédits)
 
 ④ call_agent_gen_pcb   → .kicad_pcb généré avec footprints résolus
-     Primaire : POST /pcb/generate (Docker tools/pcb.py) → .kicad_pcb
-     Fallback : runCircuitSynthEngine() TS inline
+     ① kicad-tools PCBFromSchematic(.kicad_sch) → vrais footprints + nets
+     ② pcbnew direct : BOARD() + FootprintLoad() + SetNet() → .kicad_pcb natif
+     ③ success=False → TypeScript runCircuitSynthEngine() S-expr inline
 
 ⑤ call_agent_placement → PLACEMENT_DONE
      Primaire : POST /place/auto → kicad-tools CMA-ES (cluster-by-net, footprint-aware)
@@ -88,7 +89,7 @@ Utilisateur (texte naturel)
 | Schematic | `call_agent_schema` | Haiku 4.5 | circuit_synth Docker → kicad-tools Schematic → TS S-expr | `.kicad_sch` + `unresolved_footprints` |
 | ERC | `call_agent_erc` | — | kicad-tools validate → kicad-cli sch erc → TS fallback | rapport violations ERC |
 | Footprint | `call_agent_footprint` | Haiku 4.5 | Cascade 4 étapes KiCad→pgvector→LCSC→IA | `footprint_name` + `kicad_mod` |
-| PCB Layout | `call_agent_gen_pcb` | — | Génère .kicad_pcb depuis schéma + footprints résolus | `.kicad_pcb` |
+| PCB Layout | `call_agent_gen_pcb` | — | kicad-tools PCBFromSchematic → pcbnew direct → TS S-expr | `.kicad_pcb` |
 | Placement | `call_agent_placement` | — | kicad-tools CMA-ES (footprint-aware) → fallback Python grille | `.kicad_pcb` placé |
 | Routing | `call_agent_routing` | — | Freerouting Java → kicad-tools A* (≤10 nets) → GND plane | `.kicad_pcb` routé |
 | DRC | `call_agent_drc` | — | kicad-cli pcb drc auto-fix max 3× → kicad-tools 27 règles (fallback) | `.kicad_pcb` corrigé |

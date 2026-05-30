@@ -58,6 +58,7 @@ Orchestrateur Sonnet 4.6 · 8 agents Haiku 4.5 · max 15 itérations · SSE stre
      Cascade : KiCad libs → pgvector cache → LCSC → Haiku IA
 
 ④ call_agent_gen_pcb   → .kicad_pcb (généré après footprints résolus)
+     ① kicad-tools PCBFromSchematic · ② pcbnew direct · ③ TypeScript S-expr
      Primaire : Docker kicad_gen.py → .kicad_pcb
      Fallback : runCircuitSynthEngine() TypeScript inline
 

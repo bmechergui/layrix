@@ -189,8 +189,10 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
   ③ call_agent_footprint  → Ingénieur Composants (1 appel par ref dans unresolved_footprints)
      Cascade : KiCad libs → pgvector → LCSC → SnapMagic → AI Haiku
      Met à jour _pcbStateCache[projectId].schema.components[ref].footprint
-  ④ call_agent_gen_pcb      → Ingénieur Layout (NOUVEAU — séparé du schéma)
-     kicad_gen.py : _generate_pcb_sexpr() → .kicad_pcb depuis cache schéma + footprints
+  ④ call_agent_gen_pcb      → Ingénieur Layout — génère .kicad_pcb
+     ① kicad-tools PCBFromSchematic(.kicad_sch) — vrais footprints + nets complets
+     ② pcbnew direct : BOARD() + FootprintLoad() + SetNet() → .kicad_pcb natif
+     ③ TypeScript S-expr → fallback final (success=False)
      fallback : runCircuitSynthEngine() TypeScript
   ⑤ call_agent_placement  → Ingénieur Placement
      runRealPlacement() → POST /place/auto (kicad-tools CMA-ES place_unplaced + pcbnew resize, base64 I/O)
