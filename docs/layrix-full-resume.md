@@ -74,7 +74,8 @@ Orchestrateur Sonnet 4.6 · 8 agents Haiku 4.5 · max 15 itérations · SSE stre
      ③ GND plane seulement (fallback final)
 
 ⑦ call_agent_drc       → DRC_CLEAN (boucle max 3×)
-     kicad-cli pcb drc → kicad-tools 27 règles JLCPCB (fallback)
+     ① kicad-tools 27 règles JLCPCB (pur Python)
+     ② kicad-cli pcb drc auto-fix max 3× (si erreurs persistent)
 
 ⑧ call_agent_export    → Gerbers + BOM JLCPCB + CPL → Supabase Storage
 ```

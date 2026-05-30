@@ -72,7 +72,8 @@ Pipeline 8 agents (ordre strict) :
    ① kicad-tools CMA-ES place_unplaced (cluster-by-net) · ② pcbnew grille · ③ error si Docker down
 ⑥ `call_agent_routing` → Ingénieur Routage
    ① kicad-tools A* (≤30 nets/comps, 60s) · ② Freerouting Java · ③ GND plane
-⑦ `call_agent_drc` → Ingénieur Qualité — kicad-cli DRC auto-fix max 3× → kicad-tools Python DRC 27 règles (fallback)
+⑦ `call_agent_drc` → Ingénieur Qualité
+   ① kicad-tools 27 règles JLCPCB · ② kicad-cli auto-fix max 3× · ③ skipped
 ⑧ `call_agent_export` → Ingénieur Fabrication — Gerbers RS-274X + BOM JLCPCB + CPL
 
 - **Circuit-Synth** (Python pip) → génère `.kicad_sch` ; `.kicad_pcb` généré séparément par `call_agent_gen_pcb`

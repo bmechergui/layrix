@@ -73,8 +73,11 @@ Utilisateur (texte naturel)
      ③ skipped=True              → TypeScript addGroundPlane() GND plane B.Cu
 
 ⑦ call_agent_drc       → DRC_CLEAN (boucle max 3×)
-     Primaire : POST /drc/auto (kicad-cli pcb drc, auto-fix)
-     Fallback : kicad-tools Python 27 règles JLCPCB
+     ① kicad-tools Python DRC — 27 règles JLCPCB, pur Python, toujours dispo
+        0 erreur → DRC_CLEAN immédiat · erreurs → niveau 2
+     ② kicad-cli pcb drc      — officiel KiCad, auto-fix loop max 3× (si dispo)
+        refill zones via pcbnew · retourne .kicad_pcb corrigé
+     ③ skipped=True           — les deux absents, pipeline continue
 
 ⑧ call_agent_export    → PCB_LIVRÉ
      POST /export/all → Gerbers RS-274X + drill Excellon + BOM JLCPCB + CPL
@@ -96,7 +99,7 @@ Utilisateur (texte naturel)
 | PCB Layout | `call_agent_gen_pcb` | — | kicad-tools PCBFromSchematic → pcbnew direct → TS S-expr | `.kicad_pcb` |
 | Placement | `call_agent_placement` | — | kicad-tools CMA-ES (cluster-by-net) → pcbnew grille → error | `.kicad_pcb` placé |
 | Routing | `call_agent_routing` | — | kicad-tools A* (≤30 nets/comps) → Freerouting Java → GND plane | `.kicad_pcb` routé |
-| DRC | `call_agent_drc` | — | kicad-cli pcb drc auto-fix max 3× → kicad-tools 27 règles (fallback) | `.kicad_pcb` corrigé |
+| DRC | `call_agent_drc` | — | kicad-tools 27 règles JLCPCB → kicad-cli auto-fix max 3× → skipped | `.kicad_pcb` corrigé |
 | Export | `call_agent_export` | — | Gerbers + BOM CSV + CPL + devis JLCPCB | `.zip` b64 + `bom_csv` + `quote_usd` |
 | Simulation | `call_agent_simulation` | — | kicad-cli SPICE + ngspice batch → fallback démo synthétique | `SimulationData` (vecteurs V/A) |
 | Ask | `ask_user` | — | Pose une question bloquante à l'utilisateur | — |

@@ -207,9 +207,11 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      ③ skipped=True           → TypeScript addGroundPlane() GND plane B.Cu
      fallback : routing-fallback.ts (MST pur TS)
   ⑦ call_agent_drc        → Ingénieur Qualité (boucle max 3×)
-     runRealDRC() → POST /drc/auto
-       Path 1 : kicad-cli pcb drc (officiel, auto-fix, base64 I/O)
-       Path 2 : kicad-tools Python DRC 27 règles JLCPCB (fallback kicad-cli absent)
+     POST /drc/auto
+     ① kicad-tools Python DRC 27 règles JLCPCB — pur Python, toujours dispo
+        0 erreur → DRC_CLEAN · erreurs → kicad-cli auto-fix
+     ② kicad-cli pcb drc — officiel KiCad, refill zones, auto-fix max 3×
+     ③ skipped=True — les deux absents
   ⑧ call_agent_export     → Ingénieur Fabrication
      runRealExport() → POST /export/all (Gerbers + drill + CPL, zip base64)
      ↓ Upload Supabase Storage → signed URLs KiCanvas
