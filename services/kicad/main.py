@@ -24,6 +24,18 @@ if not os.environ.get("KICAD_SYMBOL_DIR"):
             os.environ["KICAD_SYMBOL_DIR"] = _dir
             break
 
+if not os.environ.get("KICAD_FOOTPRINT_DIR"):
+    _fp_candidates = [
+        r"C:\Program Files\KiCad\10.99\share\kicad\footprints",
+        r"C:\Program Files\KiCad\9.0\share\kicad\footprints",
+        r"C:\Program Files\KiCad\8.0\share\kicad\footprints",
+        "/usr/share/kicad/footprints",  # Linux/Docker
+    ]
+    for _dir in _fp_candidates:
+        if os.path.isdir(_dir):
+            os.environ["KICAD_FOOTPRINT_DIR"] = _dir
+            break
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
