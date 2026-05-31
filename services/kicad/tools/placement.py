@@ -96,9 +96,9 @@ def auto_place(
                     sys.executable, "-m", "kicad_tools.cli", "optimize-placement",
                     str(src), "--output", str(dst),
                     "--strategy", "cmaes",
-                    "--max-iterations", "300",
+                    "--max-iterations", "500",
                     "--time-budget", "120",
-                    "--seed", "force-directed",
+                    "--seed", "force-directed",  # repositionne depuis zéro (pas juste raffiner)
                 ],
                 capture_output=True, text=True, timeout=130, check=False,
             )
