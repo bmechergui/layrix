@@ -69,7 +69,8 @@ Pipeline 8 agents (ordre strict) :
 ④ `call_agent_gen_pcb` → Ingénieur Layout — génère `.kicad_pcb`
    ① kicad-tools PCBFromSchematic · ② pcbnew direct · ③ TypeScript S-expr
 ⑤ `call_agent_placement` → Ingénieur Placement
-   ① kicad-tools CMA-ES place_unplaced (cluster-by-net) · ② pcbnew grille · ③ error si Docker down
+   ① kct optimize-placement CMA-ES (signal flow + power domains + priors, 120s)
+   ② place_unplaced(cluster=True) · ③ pcbnew grille · ④ error si Docker down
 ⑥ `call_agent_routing` → Ingénieur Routage
    ① kicad-tools A* negotiated (≤30 nets routables ≥2 pads, ≤30 comps, 60s)
    ② Freerouting REST API (1 JVM persistante Docker port 37864, RAM 400MB fixe)

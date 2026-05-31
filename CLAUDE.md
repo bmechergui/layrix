@@ -196,7 +196,9 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      fallback : runCircuitSynthEngine() TypeScript
   ⑤ call_agent_placement  → Ingénieur Placement
      POST /place/auto (kicad_pcb_b64)
-     ① kicad-tools CMA-ES place_unplaced(cluster=True, margin=1.5mm) — cluster-by-net
+     ① kct optimize-placement --strategy cmaes (300 iter, 120s)
+        detect_signal_flow + detect_power_domains + schematic_proximity_prior
+        bypass caps → <2mm des ICs · clock → proche MCU
      ② pcbnew grille simple : LoadBoard() + SetPosition() 15mm step
      ③ status:'error' si Docker down (fail fast)
      fallback : pcbnew grille simple
@@ -232,7 +234,7 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
   - Fallback final : `schematic-engine.ts generateSchematic()` (TypeScript S-expr, 0 Docker)
 - **Orchestrateur optimisé :** blobs KiCad (`kicad_sch_content`, `kicad_pcb_content`, `gerber_zip_b64`) strippés des `tool_result` Sonnet → économie ~70% tokens input
 
-**Placement actuel :** kicad-tools `place_unplaced` CMA-ES (cluster=True, margin 1.5mm) → fallback pcbnew grille simple
+**Placement actuel :** `kct optimize-placement --strategy cmaes` (signal flow + power domains) → fallback `place_unplaced(cluster=True)` → fallback pcbnew grille
 **Placement futur (Phase 6+) : RL_PCB** — hybride LLM + Reinforcement Learning :
   - Sonnet analyse le schéma et suggère une stratégie (groupes fonctionnels, zones sensibles)
   - RL_PCB optimise mathématiquement les positions X/Y
