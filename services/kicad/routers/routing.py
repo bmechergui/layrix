@@ -354,11 +354,24 @@ def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
         src = Path(tmp) / "input.kicad_pcb"
         src.write_bytes(pcb_bytes)
 
+        # load_pcb_for_routing calls classify_and_apply_rules internally:
+        # - Power nets (GND, VCC_5V, +5V…) → trace 0.5mm, zone fill, is_pour=True
+        # - Clock nets (CLK, SCK…)           → length_critical=True, priority routing
+        # - High-speed (SPI, USB…)           → clearance 0.15mm, coupled routing
+        # - Digital (DHT_DATA, D2…)          → trace 0.2mm standard
+        # All rules are active automatically via net_class_map on the Autorouter.
         router, net_map = load_pcb_for_routing(
             str(src),
             validate_drc=False,
             strict_drc=False,
         )
+
+        # Log active net classes for visibility
+        ncm = getattr(router, "net_class_map", {}) or {}
+        power = [n for n, c in ncm.items() if getattr(c, "is_pour_net", False)]
+        clock = [n for n, c in ncm.items() if getattr(c, "length_critical", False)]
+        if power or clock:
+            logger.info("net classes actives — power: %s | clock: %s", power[:5], clock[:3])
 
         routes = router.route_all_negotiated(
             timeout=float(_PYTHON_ROUTER_TIMEOUT_S),
