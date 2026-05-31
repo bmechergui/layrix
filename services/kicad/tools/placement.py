@@ -13,6 +13,8 @@ import base64
 import logging
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -85,24 +87,54 @@ def auto_place(
         dst = Path(tmp) / "output.kicad_pcb"
         src.write_text(pcb_text, encoding="utf-8")
 
-        # Primaire : kicad-tools CMA-ES
+        # Primaire : kct optimize-placement CMA-ES
+        # Utilise signal flow + power domains + proximity priors automatiquement.
+        # Prend les positions grille de place_all_components() et les raffine.
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable, "-m", "kicad_tools.cli", "optimize-placement",
+                    str(src), "--output", str(dst),
+                    "--strategy", "cmaes",
+                    "--max-iterations", "300",
+                    "--time-budget", "120",
+                    "--seed", "force-directed",
+                ],
+                capture_output=True, text=True, timeout=130, check=False,
+            )
+            if dst.exists():
+                output_bytes = dst.read_bytes()
+                import re as _re
+                fp_count = len(_re.findall(r'\(footprint\s+"', output_bytes.decode("utf-8", errors="replace")))
+                logger.info("kct optimize-placement CMA-ES: %d footprints optimisés", fp_count)
+                return {
+                    "kicad_pcb_b64": base64.b64encode(output_bytes).decode(),
+                    "placed_count": fp_count,
+                    "positions": [],
+                }
+            logger.warning("kct optimize-placement: pas de sortie (rc=%d) — %s",
+                           result.returncode, result.stderr[:200])
+        except Exception as exc:
+            logger.warning("kct optimize-placement échoué (%s) — fallback place_unplaced", exc)
+
+        # Fallback 1 : place_unplaced cluster (pour composants hors-board)
         try:
             from kicad_tools.placement.place_unplaced import place_unplaced
-            result = place_unplaced(
+            pu_result = place_unplaced(
                 str(src), output_path=str(dst),
                 margin=3.0, spacing=3.0, cluster=True,
             )
             output_bytes = dst.read_bytes() if dst.exists() else src.read_bytes()
-            logger.info("kicad-tools placement: %d composants placés", len(result.placed_refs))
+            logger.info("place_unplaced fallback: %d composants placés", len(pu_result.placed_refs))
             return {
                 "kicad_pcb_b64": base64.b64encode(output_bytes).decode(),
-                "placed_count": len(result.placed_refs),
-                "positions": [{"ref": r} for r in result.placed_refs],
+                "placed_count": len(pu_result.placed_refs),
+                "positions": [{"ref": r} for r in pu_result.placed_refs],
             }
         except Exception as exc:
-            logger.warning("kicad-tools placement échoué (%s) — fallback pcbnew grille", exc)
+            logger.warning("place_unplaced échoué (%s) — fallback pcbnew grille", exc)
 
-        # Fallback : pcbnew grille simple
+        # Fallback 2 : pcbnew grille simple
         placed = _pcbnew_grid_place(str(src), str(dst), board_width_mm, board_height_mm)
         output_bytes = dst.read_bytes() if dst.exists() else src.read_bytes()
         logger.info("pcbnew grille fallback: %d composants placés", len(placed))
