@@ -202,9 +202,13 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      fallback : pcbnew grille simple
   ⑥ call_agent_routing    → Ingénieur Routage
      POST /route/auto
-     ① kicad-tools A* négocié — ≤30 nets ET ≤30 composants, timeout 60s
-     ② Freerouting Java       — circuits complexes OU si kicad-tools échoue
-     ③ skipped=True           → TypeScript addGroundPlane() GND plane B.Cu
+     ① kicad-tools A* Python  — ≤30 nets routables (≥2 pads, ≥3 occurrences), ≤30 comps
+        load_pcb_for_routing + route_all_negotiated + merge_routes_into_pcb
+        GND/VCC zones injectées via _add_power_zones (B.Cu + F.Cu)
+     ② Freerouting REST API   — 1 JVM persistante port 37864, RAM fixe 400MB pour tous
+        POST /api/v1/sessions/create → jobs/enqueue → upload DSN → PUT start → GET output
+     ③ Freerouting subprocess — fallback si API server absent
+     ④ skipped=True           → TypeScript addGroundPlane() GND plane B.Cu
      fallback : routing-fallback.ts (MST pur TS)
   ⑦ call_agent_drc        → Ingénieur Qualité (boucle max 3×)
      POST /drc/auto
@@ -237,6 +241,27 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
 
 **NEVER** TSCircuit en nouveau code — déprécié depuis v0.3.0
 **NEVER** de commande JLCPCB automatique — confirmation "OUI JE CONFIRME" obligatoire
+
+## Architecture Docker KiCad — Thread-safety (2026-05-31)
+
+```
+1 Docker = 4 uvicorn workers (PROCESSUS séparés, pas threads)
+
+kicad-tools   → ✅ thread-safe  (objets Autorouter indépendants)
+pcbnew        → ❌ PAS thread-safe (état global C++ — nécessite process séparé)
+kicad-cli     → ✅ thread-safe  (subprocess isolé)
+circuit_synth → ✅ thread-safe  (objets Circuit indépendants)
+Freerouting   → ✅ API server   (1 JVM persistante port 37864, RAM 400MB fixe)
+```
+
+**Variables obligatoires dans Docker :**
+```
+KICAD_SYMBOL_DIR=/usr/share/kicad/symbols
+KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints   ← CRITIQUE (0 footprints si absent)
+FREEROUTING_API_URL=http://127.0.0.1:37864
+```
+
+**Routing — nets routables :** `_count_routable_nets` compte uniquement les nets avec ≥3 occurrences dans le PCB (1 déclaration globale + ≥2 pads). Les nets mono-pad `Net-(U1-X)` ne comptent pas.
 
 ## Système de crédits
 

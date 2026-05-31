@@ -67,10 +67,14 @@ Utilisateur (texte naturel)
      ③ status:'error' si service Docker down (fail fast)
 
 ⑥ call_agent_routing   → ROUTING_DONE
-     ① kicad-tools A* négocié   — ≤30 nets ET ≤30 composants, timeout 60s
-     ② Freerouting Java          — circuits complexes OU si kicad-tools échoue
-        .kicad_pcb → Specctra .dsn → Java → .ses → .kicad_pcb
-     ③ skipped=True              → TypeScript addGroundPlane() GND plane B.Cu
+     ① kicad-tools A* Python     — ≤30 nets routables (≥2 pads), ≤30 composants, timeout 60s
+        API Python : load_pcb_for_routing + route_all_negotiated + merge_routes_into_pcb
+        GND/VCC auto-skippés comme "pour nets" → zones cuivre injectées après
+     ② Freerouting REST API       — 1 JVM persistant dans Docker, port 37864
+        POST /api/v1/sessions/create → jobs/enqueue → upload DSN → PUT start → GET output
+        RAM fixe 400MB (vs N×400MB subprocess) — tous les utilisateurs partagent 1 JVM
+     ③ Freerouting subprocess     — fallback si API server absent (kicad-cli Specctra roundtrip)
+     ④ skipped=True              → TypeScript addGroundPlane() GND plane B.Cu
 
 ⑦ call_agent_drc       → DRC_CLEAN (boucle max 3×)
      ① kicad-tools Python DRC — 27 règles JLCPCB, pur Python, toujours dispo
@@ -102,7 +106,7 @@ Utilisateur (texte naturel)
 | Footprint | `call_agent_footprint` | Haiku 4.5 | Cascade 4 étapes KiCad→pgvector→LCSC→IA | `footprint_name` + `kicad_mod` |
 | PCB Layout | `call_agent_gen_pcb` | — | kicad-tools PCBFromSchematic → pcbnew direct → TS S-expr | `.kicad_pcb` |
 | Placement | `call_agent_placement` | — | kicad-tools CMA-ES (cluster-by-net) → pcbnew grille → error | `.kicad_pcb` placé |
-| Routing | `call_agent_routing` | — | kicad-tools A* (≤30 nets/comps) → Freerouting Java → GND plane | `.kicad_pcb` routé |
+| Routing | `call_agent_routing` | — | kicad-tools A* Python (≤30 nets routables) → Freerouting API REST (1 JVM) → subprocess → GND plane | `.kicad_pcb` routé |
 | DRC | `call_agent_drc` | — | kicad-tools 27 règles JLCPCB → kicad-cli auto-fix max 3× → skipped | `.kicad_pcb` corrigé |
 | Export | `call_agent_export` | — | kicad-tools JLCPCB → kicad-cli standard → BOM CSV | `.zip` b64 + `bom_csv` + `quote_usd` |
 | Simulation | `call_agent_simulation` | — | kicad-cli SPICE + ngspice batch → fallback démo synthétique | `SimulationData` (vecteurs V/A) |
@@ -236,6 +240,105 @@ SchemaJson
 ```
 
 **Pourquoi deux implémentations :** résilience — si le service FastAPI n'est pas accessible (`KICAD_SERVICE_URL` non défini, ex: développement local sans Docker), l'agent ne bloque pas. Le TS fallback génère les fichiers directement en mémoire. Circuit-Synth n'a pas besoin de KiCad installé ni de Docker pour générer les S-expressions — Docker sert uniquement à déployer le service FastAPI. Jamais les deux en même temps — un seul chemin retourne les fichiers.
+
+---
+
+### Architecture Docker KiCad — Workers et thread-safety (mis à jour 2026-05-31)
+
+#### Modèle de déploiement
+
+```
+1 Docker Container (DigitalOcean, ~40€/mois, 4 CPU / 8GB RAM)
+│
+├── Processus persistants (démarrés au boot du container)
+│   ├── Xvfb :99          → display virtuel pour kicad-cli
+│   ├── Freerouting JAR   → REST API server port 37864 (1 JVM = 400MB fixe)
+│   └── uvicorn × 4 workers → FastAPI port 8766
+│
+└── Par requête (éphémère)
+    ├── Répertoire /tmp/kicad-jobs/{project_id}/
+    └── Nettoyé après traitement
+```
+
+#### Thread-safety des outils KiCad
+
+| Outil | Type | Thread-safe | Explication |
+|-------|------|-------------|-------------|
+| **kicad-tools** | Bibliothèque Python | ✅ OUI | Chaque appel crée un objet `Autorouter` indépendant en mémoire. Plusieurs workers peuvent l'utiliser simultanément sans conflit. |
+| **pcbnew** | Bibliothèque Python | ❌ NON | État global C++ partagé. 2 threads = crash/corruption. Nécessite un process séparé par job (uvicorn workers = processes isolés, pas threads). |
+| **kicad-cli** | Exécutable externe | ✅ OUI | Subprocess totalement isolé. Chaque appel = nouveau process kicad-cli indépendant. Thread-safe par nature. |
+| **circuit_synth** | Bibliothèque Python | ✅ OUI | Objets Circuit indépendants, pas d'état global. |
+| **Freerouting (subprocess)** | JAR Java | ✅ OUI | Subprocess isolé. Mais 1 JVM par job = RAM ×N. |
+| **Freerouting (API server)** | REST API | ✅ OUI | 1 JVM persistante, jobs traités en file. RAM fixe 400MB. |
+
+#### Pourquoi 4 uvicorn workers (processes) et non threads
+
+```python
+# uvicorn --workers 4
+# = 4 processus Python séparés (fork), PAS 4 threads
+
+Worker 1 (PID 101) → pcbnew chargé en mémoire 1 → projet A ✅
+Worker 2 (PID 102) → pcbnew chargé en mémoire 2 → projet B ✅
+Worker 3 (PID 103) → pcbnew chargé en mémoire 3 → projet C ✅
+Worker 4 (PID 104) → pcbnew chargé en mémoire 4 → projet D ✅
+```
+
+Chaque worker a sa propre copie de pcbnew → jamais de conflit.
+pcbnew en mode thread (1 process, 4 threads) → CRASH garanti.
+
+#### Freerouting : subprocess vs API server
+
+```
+AVANT (subprocess par job)          APRÈS (API server persistant)
+──────────────────────────          ──────────────────────────────
+Job A → new JVM 400MB               Docker boot → 1 JVM 400MB fixe
+Job B → new JVM 400MB                     ↓
+Job C → new JVM 400MB               Job A → HTTP POST /api/v1/jobs
+10 jobs = 4GB RAM JVMs              Job B → HTTP POST /api/v1/jobs
+                                    Job C → HTTP POST /api/v1/jobs
+                                    10 jobs = 400MB RAM total
+```
+
+Implémenté dans `routers/routing.py` : `_find_freerouting_api()` + `_route_with_freerouting_api()`.
+Démarré dans `Dockerfile` : `java -jar freerouting.jar --api_server.enabled=true --api_server-endpoints=http://127.0.0.1:37864`.
+
+#### Variables d'environnement KiCad requises
+
+```bash
+KICAD_SYMBOL_DIR=/usr/share/kicad/symbols       # auto-détecté dans main.py
+KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints  # auto-détecté dans main.py (ajouté 2026-05-31)
+FREEROUTING_API_URL=http://127.0.0.1:37864       # défini dans Dockerfile
+```
+
+**Bug corrigé 2026-05-31 :** `KICAD_FOOTPRINT_DIR` manquant → kicad-tools PCBFromSchematic ne chargeait pas les footprints → 0 composant placé dans le PCB. Fixé dans `main.py` (auto-detect) et `docker-compose.yml`.
+
+#### Pipeline routing — 4 niveaux (mis à jour 2026-05-31)
+
+```python
+# routers/routing.py route_auto()
+
+# Nets routables = nets avec ≥2 pads (corrigé : exclure Net-(U1-X) mono-pad)
+net_count  = _count_routable_nets(pcb_bytes)   # ≥3 occurrences dans le fichier
+comp_count = _count_footprints(pcb_bytes)
+is_simple  = net_count <= 30 and comp_count <= 30
+
+# Niveau 1 : kicad-tools A* Python (circuits simples)
+if is_simple:
+    → load_pcb_for_routing + route_all_negotiated + merge_routes_into_pcb
+    → _add_power_zones(merged)  # GND B.Cu + VCC F.Cu zones
+
+# Niveau 2 : Freerouting REST API (1 JVM persistant)
+elif _find_freerouting_api():
+    → POST /api/v1/sessions/create → jobs/enqueue → upload DSN → PUT start → GET output
+
+# Niveau 3 : Freerouting subprocess (fallback)
+elif _find_freerouting():
+    → java -jar freerouting.jar (subprocess)
+
+# Niveau 4 : skipped
+else:
+    → TypeScript addGroundPlane()
+```
 
 **Output toujours :**
 - `.kicad_sch` — schéma électronique (symboles, fils, netliste, power flags, title block). La netlist est embarquée sous forme de fils + labels de nets.
