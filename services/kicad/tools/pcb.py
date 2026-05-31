@@ -240,7 +240,9 @@ def _generate_with_kicad_tools(
 
         workflow = PCBFromSchematic(sch_path)
         workflow.create_pcb(width=board_w, height=board_h, layers=2, title="Layrix PCB")
-        workflow.place_all_components(spacing=15.0, margin=5.0)
+        # spacing=80mm : large enough for Arduino UNO R3 (68×53mm footprint)
+        # CMA-ES optimize-placement will refine positions afterwards
+        workflow.place_all_components(spacing=80.0, margin=5.0)
         workflow.assign_nets()
         workflow.save(pcb_path)
 

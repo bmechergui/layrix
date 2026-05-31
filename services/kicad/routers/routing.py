@@ -364,6 +364,7 @@ def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
             str(src),
             validate_drc=False,
             strict_drc=False,
+            auto_adjust_grid=True,   # adapt grid to off-grid pads (e.g. Arduino UNO)
         )
 
         # Log active net classes for visibility
