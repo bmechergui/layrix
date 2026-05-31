@@ -494,12 +494,24 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             logger.exception("Freerouting échoué: %s", exc)
             raise HTTPException(status_code=500, detail="routing failed") from exc
 
-    # --- Niveau 3 : skipped → GND plane seulement (TypeScript addGroundPlane) ---
-    reason = (
-        f"kicad-tools A* indisponible et Freerouting (Java) introuvable"
-        if is_simple
-        else f"Circuit complexe ({net_count} nets, {comp_count} composants) — Freerouting (Java) introuvable"
-    )
+    # --- Niveau 4 : kicad-tools negotiated sans limite (tous circuits) ---
+    # Même algorithme A* negotiated que niveau 1, mais timeout plus long
+    # et sans la contrainte is_simple — fallback quand Freerouting absent.
+    try:
+        new_pcb, routed_pct = _route_with_kicad_tools(pcb_bytes)
+        logger.info("kicad-tools A* (no limit): %d%% routé", routed_pct)
+        return RouteAutoResponse(
+            kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
+            routed_percent=routed_pct,
+            layers=req.layers,
+            skipped=False,
+            warning=f"Freerouting indisponible — kicad-tools negotiated utilisé ({net_count} nets)",
+        )
+    except Exception as exc:
+        logger.warning("kicad-tools A* (no limit) échoué (%s) — GND plane", exc)
+
+    # --- Niveau 5 : skipped → GND plane seulement (TypeScript addGroundPlane) ---
+    reason = f"Tous les routeurs ont échoué ({net_count} nets, {comp_count} composants)"
     logger.info("Routage ignoré — %s", reason)
     return RouteAutoResponse(
         kicad_pcb_b64=None,
