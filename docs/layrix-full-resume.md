@@ -483,3 +483,90 @@ Pour un vrai SaaS Layrix avec plusieurs templates, utilisateurs payants, et agen
 
 
 pour protypage on utulise claude SDK
+
+
+Important pour ton RL (Layrix)
+
+Oui, c’est crucial :
+
+👉 FreeRouting = heuristique déterministe
+👉 PPO = apprentissage intelligent
+
+
+Oui tu peux utiliser FreeRouting + RL
+✔ C’est même la meilleure stratégie pour Layrix aujourd’hui
+✔ RL seul = trop difficile
+✔ FreeRouting seul = pas intelligent
+✔ ensemble = solution réaliste startup
+
+🧠 1. FreeRouting + RL = bonne idée ?
+
+Oui, parce que :
+
+FreeRouting = solveur heuristique puissant (autorouteur classique)
+RL (PPO) = apprend à améliorer / guider / optimiser
+
+👉 Donc tu ne remplaces pas FreeRouting, tu le boostes
+
+2. 3 façons de les combiner
+🥇 Option 1 — RL → FreeRouting (RECOMMANDÉ)
+
+Le RL fait :
+
+placement des composants
+choix des contraintes
+ordre de routing
+
+Puis :
+👉 FreeRouting fait le routage final
+
+✔ très stable
+✔ facile à entraîner
+✔ bon pour MVP Layrix
+
+Option 2 — FreeRouting → RL
+FreeRouting fait un routage initial
+RL améliore :
+réduction des vias
+réduction longueur pistes
+optimisation congestion
+
+✔ plus avancé
+❌ plus dur à modéliser
+
+Option 3 — RL + FreeRouting en boucle (advanced)
+RL propose placement
+FreeRouting route
+RL reçoit reward basé sur résultat
+RL apprend à améliorer FreeRouting
+
+👉 c’est le plus puissant mais aussi le plus complexe
+
+3. Pourquoi c’est très puissant pour Layrix
+
+FreeRouting te donne :
+
+un baseline correct
+une solution faisable même si RL est mauvais
+
+RL apporte :
+
+optimisation intelligente
+adaptation PCB complexe
+réduction coût / longueur / vias
+
+👉 ensemble = système industriel réel
+
+
+Pipeline :
+RL (PPO)
+placement composants
+orientation
+clustering
+FreeRouting
+routage complet automatique
+Reward RL
+wire length
+vias count
+overlap penalty
+success/failure routing
