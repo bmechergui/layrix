@@ -13,6 +13,8 @@ import base64
 import logging
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -65,22 +67,77 @@ def place_components(pcb_path: str, components: list[dict], output_path: str) ->
 # Mode 2 : auto-placement (I/O base64)
 # ---------------------------------------------------------------------------
 
+def _try_optimize_placement(pcb_bytes: bytes) -> bytes | None:
+    """Run `kct optimize-placement --strategy cmaes`.
+
+    Returns the optimized PCB bytes only when the optimizer reports a FEASIBLE
+    final result (no overlap/DRC). Returns None when infeasible or on error, so
+    the caller falls back to place_unplaced — this is the case for large shield
+    footprints (Arduino/STM32) where optimize-placement's pad-bbox overlap model
+    leaves components stacked.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "in.kicad_pcb"
+        dst = Path(tmp) / "out.kicad_pcb"
+        src.write_bytes(pcb_bytes)
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable, "-m", "kicad_tools.cli", "optimize-placement",
+                    str(src), "--output", str(dst),
+                    "--strategy", "cmaes",
+                    "--seed", "force-directed",
+                ],
+                capture_output=True, text=True, timeout=130, check=False,
+            )
+        except Exception as exc:
+            logger.warning("optimize-placement subprocess failed: %s", exc)
+            return None
+
+        # Keep result only if the FINAL line is feasible (not INFEASIBLE)
+        final_line = ""
+        for ln in result.stdout.splitlines():
+            if ln.strip().startswith("Final:"):
+                final_line = ln
+        feasible = "feasible" in final_line.lower() and "infeasible" not in final_line.lower()
+        if dst.exists() and feasible:
+            logger.info("optimize-placement: feasible — %s", final_line.strip()[:80])
+            return dst.read_bytes()
+        logger.info(
+            "optimize-placement: infeasible/no-output — fallback place_unplaced (%s)",
+            final_line.strip()[:80] or f"rc={result.returncode}",
+        )
+        return None
+
+
 def auto_place(
     kicad_pcb_b64: str,
     board_width_mm: float,
     board_height_mm: float,
 ) -> dict:
-    """Auto-placement via kicad-tools place_unplaced (cluster-by-net).
+    """Auto-placement — kct optimize-placement first, place_unplaced fallback.
 
-    Recipe (works for discrete circuits AND large modules like Arduino/STM32):
-      1. Use a generous working board so the grid cells (sized to the largest
-         footprint) all fit — avoids overflow on big shield footprints.
-      2. Move every footprint outside the board → marks them "unplaced".
-      3. place_unplaced(cluster=True) lays them out in a net-clustered grid.
-      4. Fit the final Edge.Cuts tightly around the placed components.
+    1. kct optimize-placement --strategy cmaes : optimal for circuits whose
+       footprints have full pad-extent bounding boxes (discrete parts).
+    2. place_unplaced(cluster=True) fallback : used when optimize-placement is
+       infeasible — large module/shield footprints (Arduino UNO R3, STM32)
+       where its pad-bbox overlap model stacks components. Lays out a clean
+       net-clustered grid on a generous board, then fits the outline.
     """
     pcb_bytes = base64.b64decode(kicad_pcb_b64)
 
+    # --- Niveau 1 : kct optimize-placement (si feasible) ---
+    optimized = _try_optimize_placement(pcb_bytes)
+    if optimized is not None:
+        import re as _re
+        fp_count = len(_re.findall(r'\(footprint\s+"', optimized.decode("utf-8", errors="replace")))
+        return {
+            "kicad_pcb_b64": base64.b64encode(optimized).decode(),
+            "placed_count": fp_count,
+            "positions": [],
+        }
+
+    # --- Niveau 2 : place_unplaced(cluster=True) ---
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "input.kicad_pcb"
         dst = Path(tmp) / "output.kicad_pcb"
