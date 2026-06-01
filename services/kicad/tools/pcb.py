@@ -397,17 +397,22 @@ def _generate_with_kicad_tools(
         pcb_path = Path(tmp) / "schematic.kicad_pcb"
         sch_path.write_text(kicad_sch_content, encoding="utf-8")
 
-        # If a circuit_synth .kicad_net file is available (correct netlist),
-        # write it alongside the schematic so PCBFromSchematic uses it directly
-        # instead of running kicad-cli (which fails on circuit_synth schematics
-        # because hierarchical labels are not at exact pin endpoints).
-        net_path: Optional[Path] = None
-        if kicad_net_content:
-            net_path = Path(tmp) / "schematic.kicad_net"
-            net_path.write_text(kicad_net_content, encoding="utf-8")
-            logger.info("_generate_with_kicad_tools: using circuit_synth .kicad_net for netlist")
+        workflow = PCBFromSchematic(sch_path)
 
-        workflow = PCBFromSchematic(sch_path, netlist_path=net_path)
+        # Inject circuit_synth netlist directly into workflow._netlist to bypass
+        # export_netlist() which deletes and re-exports via kicad-cli even when a
+        # correct .kicad_net is provided. kicad-cli cannot resolve hierarchical
+        # labels in circuit_synth schematics → wrong nets (Net-(R1-2) instead of DHT_DATA).
+        if kicad_net_content:
+            try:
+                from kicad_tools.operations.netlist import Netlist as _Netlist
+                _net_path = Path(tmp) / "schematic.kicad_net"
+                _net_path.write_text(kicad_net_content, encoding="utf-8")
+                workflow._netlist = _Netlist.load(str(_net_path))
+                logger.info("_generate_with_kicad_tools: circuit_synth netlist injected (%d nets)",
+                            len(list(workflow._netlist.nets)))
+            except Exception as exc:
+                logger.warning("netlist injection failed (%s) — falling back to kicad-cli", exc)
         workflow.create_pcb(width=board_w, height=board_h, layers=2, title="Layrix PCB")
         workflow.place_all_components(spacing=15.0, margin=5.0)
         workflow.assign_nets()
