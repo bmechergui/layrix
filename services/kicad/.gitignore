@@ -6,5 +6,10 @@ kicad-symbols/
 kicad_libs/
 *.log
 freerouting/
+
+# Dépendances vendorées — ignorées dans git, versions trackées dans DEPENDENCIES.md
+# Source: github.com/circuit-synth/circuit-synth (pip install -e .)
 circuit_synth/
+
+# Source: github.com/rjwalters/kicad-tools (pip install -e .[placement,drc,geometry])
 kicad_tools/
