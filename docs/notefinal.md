@@ -325,6 +325,8 @@ FREEROUTING_API_URL=http://127.0.0.1:37864       # défini dans Dockerfile
 
 **Bug corrigé 2026-05-31 :** `KICAD_FOOTPRINT_DIR` manquant → kicad-tools PCBFromSchematic ne chargeait pas les footprints → 0 composant placé dans le PCB. Fixé dans `main.py` (auto-detect) et `docker-compose.yml`.
 
+**Dépendances vendorées :** circuit_synth v0.12.1 et kicad_tools v0.13.0 utilisés avec patches Layrix — voir `CLAUDE.md` section "Dépendances vendorées" et `services/kicad/DEPENDENCIES.md`.
+
 #### Pipeline routing — 4 niveaux (mis à jour 2026-05-31)
 
 ```python
