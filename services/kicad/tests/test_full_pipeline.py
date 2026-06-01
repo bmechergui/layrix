@@ -33,7 +33,7 @@ sys.path.insert(0, str(CS_SRC))
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 OUT_DIR  = Path(r"C:\Users\Mechegui\Downloads\Kicadmcptest\test")
-BOARD_W, BOARD_H = 100.0, 100.0
+BOARD_W, BOARD_H = 200.0, 160.0  # assez grand pour 2 rangées Arduino (68×53) + composants
 
 
 # ── Script circuit_synth pour station météo Arduino ──────────────────────────

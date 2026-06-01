@@ -150,22 +150,9 @@ def auto_place(
             src.write_bytes(pcb_bytes)
             pcb = PCB.load(str(src))
             n = len(list(pcb.footprints))
-            # Grid sized so place_unplaced wraps into rows (cell = 70mm covers
-            # Arduino UNO R3 68×53mm). A rectangle cols×rows forces wrapping;
-            # a too-wide board would lay everything in a single row.
-            cols = max(1, _math.ceil(n ** 0.5))
-            rows = max(1, _math.ceil(n / cols))
-            cell = 70.0
-            work_w = max(board_width_mm, cols * cell)
-            work_h = max(board_height_mm, rows * cell)
-
-            # 1. Set the working board via the official PCB API (no regex)
-            pcb.replace_outline(0.0, 0.0, work_w, work_h)
-
-            # 2. Move all footprints outside the board → "unplaced"
-            bounds = _get_board_bounds(pcb)
-            for fp in pcb.footprints:
-                fp.position = (bounds[0], bounds[1] - 60.0)
+            bounds = _get_board_bounds(pcb) or (0.0, 0.0, board_width_mm, board_height_mm)
+            # Footprints are already outside the board (moved by _generate_with_kicad_tools).
+            # No additional displacement needed here.
             pcb.save(str(src))
 
             # 3. place_unplaced clusters them into a grid inside the board
@@ -175,21 +162,12 @@ def auto_place(
             )
             placed_count = len(result.placed_refs)
             logger.info(
-                "place_unplaced: %d placés, %d overflow (board %.0f×%.0fmm)",
-                placed_count, len(result.overflow_refs), work_w, work_h,
+                "place_unplaced: %d placés, %d overflow",
+                placed_count, len(result.overflow_refs),
             )
 
-            # 4. Fit board outline tightly around placed components (official API)
-            placed_pcb = PCB.load(str(dst))
-            xs = [fp.position[0] for fp in placed_pcb.footprints]
-            ys = [fp.position[1] for fp in placed_pcb.footprints]
-            if xs:
-                m = 10.0
-                placed_pcb.replace_outline(
-                    min(xs) - m, min(ys) - m,
-                    (max(xs) - min(xs)) + 2 * m, (max(ys) - min(ys)) + 2 * m,
-                )
-                placed_pcb.save(str(dst))
+            # Board outline: keep the original dimensions (board_width_mm × board_height_mm).
+            # The placed components fit inside — no board fitting needed.
 
             return {
                 "kicad_pcb_b64": base64.b64encode(dst.read_bytes()).decode(),

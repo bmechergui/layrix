@@ -452,6 +452,18 @@ def _generate_with_kicad_tools(
         workflow.assign_nets()
         workflow.save(pcb_path)
 
+        # Move all footprints outside the board so the placement agent
+        # (call_agent_placement → place_unplaced) detects them as "unplaced"
+        # and applies its cluster-by-net grid placement from scratch.
+        try:
+            from kicad_tools.schema.pcb import PCB as _PCB
+            _pcb = _PCB.load(str(pcb_path))
+            for i, _fp in enumerate(_pcb.footprints):
+                _fp.position = (-1000.0 - i * 10.0, -1000.0)
+            _pcb.save(str(pcb_path))
+        except Exception as _exc:
+            logger.warning("footprint pre-unplace failed (%s)", _exc)
+
         if not pcb_path.exists():
             return None
 
