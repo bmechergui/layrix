@@ -116,14 +116,21 @@ def run_circuit_synth() -> tuple[str, str | None]:
     sch_path = OUT_DIR / "meteo_arduino" / "meteo_arduino.kicad_sch"
     net_path = OUT_DIR / "meteo_arduino" / "meteo_arduino.net"
 
+    # Lire les contenus AVANT de supprimer le sous-dossier
+    sch_content = sch_path.read_text(encoding="utf-8") if sch_path.exists() else ""
+    net_content = net_path.read_text(encoding="utf-8") if net_path.exists() else None
+
     # Copier le schéma dans OUT_DIR (racine test/)
     if sch_path.exists():
         dest = OUT_DIR / "meteo_arduino.kicad_sch"
-        dest.write_text(sch_path.read_text(encoding="utf-8"), encoding="utf-8")
-        print(f"  .kicad_sch → {OUT_DIR}/{dest.name}")
+        dest.write_text(sch_content, encoding="utf-8")
+        print(f"  .kicad_sch → {dest.name}")
 
-    sch_content = sch_path.read_text(encoding="utf-8") if sch_path.exists() else ""
-    net_content = net_path.read_text(encoding="utf-8") if net_path.exists() else None
+    # Nettoyer le sous-dossier circuit_synth (meteo_arduino/) — tout dans test/ directement
+    import shutil as _shutil
+    sub = OUT_DIR / "meteo_arduino"
+    if sub.exists():
+        _shutil.rmtree(sub, ignore_errors=True)
 
     if net_content:
         print(f"  .kicad_net trouvé ({len(net_content):,} chars) — connexions correctes ✅")
