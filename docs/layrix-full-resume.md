@@ -29,7 +29,7 @@ jusqu'à DRC propre + Gerbers exportés + commande JLCPCB ✅
 
 - Concept : SaaS web 100% cloud de conception PCB via langage naturel
 - Moteur PCB : Circuit-Synth (Python, génère .kicad_sch + .kicad_pcb natifs) + KiCad (pro multi-couches)
-- Placement auto : kct optimize-placement CMA-ES (signal flow + power domains + proximity priors — bypass caps <2mm des ICs, clock proche MCU)
+- Placement auto : kct optimize-placement CMA-ES (circuits discrets) → fallback place_unplaced cluster-by-net (shields/modules Arduino/STM32) — board fitté automatiquement
 - Routage auto : kicad-tools A* Python (≤30 nets routables) → Freerouting REST API 1 JVM (circuits complexes) → subprocess → GND plane
 - Couches : 2 à 8 couches selon le plan
 - Exports : .kicad_pcb + .kicad_sch + Gerber + BOM + PDF + STEP 3D
@@ -63,8 +63,8 @@ Orchestrateur Sonnet 4.6 · 8 agents Haiku 4.5 · max 15 itérations · SSE stre
      Fallback : runCircuitSynthEngine() TypeScript inline
 
 ⑤ call_agent_placement → positions X/Y/rotation
-     ① kct optimize-placement CMA-ES (signal flow + power domains, 120s)
-        bypass caps → proches ICs · clock → proche MCU
+     ① kct optimize-placement CMA-ES (si feasible — circuits discrets)
+     ② place_unplaced(cluster=True) fallback shields/modules + board fitté
      ② pcbnew grille simple (si kicad-tools échoue)
      ③ error si Docker down
      Fallback : pcbnew grille (fallback) Python (dans le service Docker)

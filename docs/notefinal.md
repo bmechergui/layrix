@@ -59,17 +59,16 @@ Utilisateur (texte naturel)
      ③ success=False → TypeScript runCircuitSynthEngine() S-expr inline
 
 ⑤ call_agent_placement → PLACEMENT_DONE
-     POST /place/auto (kicad_pcb_b64)
-     ① kct optimize-placement --strategy cmaes (300 iter, 120s) ⭐⭐⭐⭐
-        Raffine la grille initiale de place_all_components() avec :
-        · detect_signal_flow()          → clock/SPI proches du MCU
-        · detect_power_domains()        → bypass caps <2mm des ICs
-        · schematic_proximity_prior()   → composants liés côte à côte
-     ② place_unplaced(cluster=True, margin=3mm) ⭐⭐⭐
-        cluster-by-net — fallback si optimize-placement échoue
-     ③ pcbnew grille : LoadBoard() + SetPosition() 15mm step ⭐
-        si kicad-tools indisponible
-     ③ status:'error' si service Docker down (fail fast)
+     POST /place/auto (kicad_pcb_b64)  — UNE solution universelle (discrets + shields)
+     ① kct optimize-placement --strategy cmaes ⭐⭐⭐⭐ — utilisé SI Final feasible
+        Optimal pour circuits discrets (R/C/LED/connecteurs) — bbox pads complète.
+        Détection feasibilité : parse la ligne "Final:" du stdout (INFEASIBLE → fallback).
+     ② place_unplaced(cluster=True, margin=3mm) ⭐⭐⭐ — fallback shields/modules
+        Arduino/STM32 : optimize-placement INFEASIBLE car son modèle overlap = bbox
+        pads et ignore le corps du footprint → empile. place_unplaced fait une grille
+        clusterisée sur board généreux (cols×rows×70mm) puis replace_outline() fitté.
+     ③ pcbnew grille : LoadBoard() + SetPosition() 15mm step ⭐ (si kicad-tools indispo)
+     ④ status:'error' si service Docker down (fail fast)
 
 ⑥ call_agent_routing   → ROUTING_DONE
      ① kicad-tools A* negotiated — ≤30 nets routables (≥2 pads), ≤30 comps, timeout 60s
@@ -110,7 +109,7 @@ Utilisateur (texte naturel)
 | ERC | `call_agent_erc` | — | kicad-tools validate → kicad-cli sch erc → TS fallback | rapport violations ERC |
 | Footprint | `call_agent_footprint` | Haiku 4.5 | Cascade 4 étapes KiCad→pgvector→LCSC→IA | `footprint_name` + `kicad_mod` |
 | PCB Layout | `call_agent_gen_pcb` | — | kicad-tools PCBFromSchematic → pcbnew direct → TS S-expr | `.kicad_pcb` |
-| Placement | `call_agent_placement` | — | kct optimize-placement CMA-ES (signal flow + power domains) → place_unplaced cluster → pcbnew grille | `.kicad_pcb` placé |
+| Placement | `call_agent_placement` | — | kct optimize-placement (si feasible) → place_unplaced cluster (shields) → pcbnew grille | `.kicad_pcb` placé |
 | Routing | `call_agent_routing` | — | ①kicad-tools A*(≤30) → ②Freerouting API(1JVM) → ③Freerouting subprocess → ④kicad-tools A*(tous) → ⑤GND plane | `.kicad_pcb` routé |
 | DRC | `call_agent_drc` | — | kicad-tools 27 règles JLCPCB → kicad-cli auto-fix max 3× → skipped | `.kicad_pcb` corrigé |
 | Export | `call_agent_export` | — | kicad-tools JLCPCB → kicad-cli standard → BOM CSV | `.zip` b64 + `bom_csv` + `quote_usd` |

@@ -196,12 +196,13 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      fallback : runCircuitSynthEngine() TypeScript
   ⑤ call_agent_placement  → Ingénieur Placement
      POST /place/auto (kicad_pcb_b64)
-     ① kct optimize-placement --strategy cmaes (300 iter, 120s)
-        detect_signal_flow + detect_power_domains + schematic_proximity_prior
-        bypass caps → <2mm des ICs · clock → proche MCU
-     ② pcbnew grille simple : LoadBoard() + SetPosition() 15mm step
-     ③ status:'error' si Docker down (fail fast)
-     fallback : pcbnew grille simple
+     ① kct optimize-placement --strategy cmaes — SI Final feasible (circuits discrets)
+universal: optimal quand footprints ont bbox pads complète
+     ② place_unplaced(cluster=True) — fallback si optimize-placement INFEASIBLE
+        (shields/modules : Arduino/STM32 — overlap model = bbox pads ignore le corps)
+        board généreux cols×rows×70mm → grille clusterisée → replace_outline() fitté
+     ③ pcbnew grille simple : LoadBoard() + SetPosition() 15mm step
+     ④ status:'error' si Docker down (fail fast)
   ⑥ call_agent_routing    → Ingénieur Routage
      POST /route/auto
      ① kicad-tools A* negotiated — ≤30 nets routables (≥2 pads), ≤30 comps, 60s
@@ -234,7 +235,7 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
   - Fallback final : `schematic-engine.ts generateSchematic()` (TypeScript S-expr, 0 Docker)
 - **Orchestrateur optimisé :** blobs KiCad (`kicad_sch_content`, `kicad_pcb_content`, `gerber_zip_b64`) strippés des `tool_result` Sonnet → économie ~70% tokens input
 
-**Placement actuel :** `kct optimize-placement --strategy cmaes` (signal flow + power domains) → fallback `place_unplaced(cluster=True)` → fallback pcbnew grille
+**Placement actuel :** `kct optimize-placement --strategy cmaes` SI feasible (circuits discrets) → fallback `place_unplaced(cluster=True)` pour shields/modules (Arduino/STM32 — optimize-placement INFEASIBLE car son modèle overlap = bbox pads, ignore le corps) → fallback pcbnew grille. Board fitté via `replace_outline()`.
 **Placement futur (Phase 6+) : RL_PCB** — hybride LLM + Reinforcement Learning :
   - Sonnet analyse le schéma et suggère une stratégie (groupes fonctionnels, zones sensibles)
   - RL_PCB optimise mathématiquement les positions X/Y
