@@ -36,6 +36,26 @@ if not os.environ.get("KICAD_FOOTPRINT_DIR"):
             os.environ["KICAD_FOOTPRINT_DIR"] = _dir
             break
 
+# Ensure kicad-cli is in PATH so PCBFromSchematic uses it for netlist export.
+# Without kicad-cli, export_netlist falls back to pure Python extraction which
+# does NOT resolve hierarchical labels from circuit_synth schematics — causing
+# R1.pin2 to become Net-(R1-2) instead of DHT_DATA.
+import shutil as _shutil
+if not _shutil.which("kicad-cli"):
+    _cli_candidates = [
+        r"C:\Program Files\KiCad\10.99\bin",
+        r"C:\Program Files\KiCad\9.0\bin",
+        r"C:\Program Files\KiCad\8.0\bin",
+        "/usr/bin",        # Linux/Docker (kicad-cli in PATH by default)
+        "/usr/local/bin",
+    ]
+    import os as _os
+    for _bin in _cli_candidates:
+        if _os.path.isfile(_os.path.join(_bin, "kicad-cli")) or \
+           _os.path.isfile(_os.path.join(_bin, "kicad-cli.exe")):
+            _os.environ["PATH"] = _bin + _os.pathsep + _os.environ.get("PATH", "")
+            break
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os

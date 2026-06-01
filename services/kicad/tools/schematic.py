@@ -1007,15 +1007,21 @@ _PROJECT_PATH = {repr(proj_dir)}
                 logger.warning("Failed to parse circuit_synth JSON: %s", e)
 
         conns: list[SchemaNet] = []
+        net_content: Optional[str] = None
         net_files = list(Path(proj_dir).rglob("*.net"))
         if net_files:
-            net_comps, _, conns = _parse_net_file(net_files[0].read_text(encoding="utf-8"))
+            net_content = net_files[0].read_text(encoding="utf-8")
+            net_comps, _, conns = _parse_net_file(net_content)
             if not comps:
                 comps = net_comps
 
         # Lazy import to avoid circular dependency with tools.pcb
         from tools.pcb import generate_pcb
-        pcb_content = generate_pcb(comps, conns, board_w, board_h)
+        pcb_content = generate_pcb(
+            comps, conns, board_w, board_h,
+            kicad_sch_content=sch_content,
+            kicad_net_content=net_content,
+        )
         return sch_content, pcb_content
 
     finally:

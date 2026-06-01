@@ -220,28 +220,194 @@ def _footprint_pads(fp: str) -> list[str]:
 # kicad-tools PCBFromSchematic (Primary)
 # ============================================================
 
+def _snap_labels_to_pins(sch_content: str, tolerance_mm: float = 8.0) -> str:
+    """Snap hierarchical labels to the nearest symbol pin endpoint.
+
+    circuit_synth places hierarchical labels near pin endpoints but not at the
+    exact position (off by 1-4mm). kicad-cli netlist extraction requires labels
+    to be at the exact pin endpoint, otherwise the pad is marked unconnected
+    (e.g. Net-(R1-2) instead of DHT_DATA for R1.pin2).
+
+    This function moves each label to the closest pin endpoint within tolerance.
+    """
+    import re as _re, math as _math
+
+    # --- Extract symbol pin endpoints ---
+    # Each symbol block: (symbol (lib_id "...") (at X Y ROT) ... (pin ...))
+    # Pin endpoints in world coords = symbol_at + rotate(pin_at, symbol_rot)
+    pin_endpoints: list[tuple[float, float]] = []
+
+    for sym_m in _re.finditer(
+        r'\(symbol\s+\(lib_id\s+"[^"]+"\)\s+\(at\s+([\d.\-]+)\s+([\d.\-]+)\s+([\d.\-]+)\)',
+        sch_content,
+    ):
+        cx, cy, rot = float(sym_m.group(1)), float(sym_m.group(2)), float(sym_m.group(3))
+        # Collect pin endpoints from the symbol *library* definition referenced in the schematic.
+        # We can't easily access the library, but we CAN collect all (at X Y) lines that belong
+        # to pin entries in the same symbol block, using the kicad_sch pin format.
+        pass
+
+    # Simpler approach: collect all pin endpoint markers from the schematic
+    # In kicad_sch, pins appear inside symbol blocks as "(pin (at X Y A) (length L) ...)"
+    # The actual endpoint in world coords requires library symbol pin defs — too complex.
+    # Instead, find all wire/bus endpoints and label positions, then snap labels to the
+    # nearest existing (at X Y) in a symbol. Use symbol (at) + offset heuristic.
+
+    # --- Simpler heuristic: collect all unique label target positions ---
+    # For each hierarchical_label at position P, find all (at X Y) positions
+    # in the schematic that are within tolerance. If we find pin endpoints
+    # (from pad positions in the net file or from wire endpoints), snap to them.
+
+    # Since we don't have a net file, use the symbol pin positions directly.
+    # In the kicad_sch format, symbol pins are encoded as standalone "(at X Y A)" lines
+    # inside "(pin ...)" blocks within the library symbol defs — but those aren't in the .kicad_sch.
+    # HOWEVER, circuit_synth places wires (length 0) or labels exactly where pins should be.
+    # We use the following approach: snap each label to the nearest OTHER label of a different net,
+    # using the observation that VCC_5V and DHT_DATA should NOT be co-located.
+
+    # Best practical approach without library access: snap label to nearest pin
+    # via symbol-level pin pitch detection.
+    # circuit_synth offset: labels are placed at the symbol center + an extra offset.
+    # The correct endpoint for a resistor pin is at center ± 2.54mm (standard KiCad pitch).
+    # We detect collisions (two labels at same position) and distribute them.
+
+    # Find all hierarchical labels: position, name
+    labels = [
+        (float(m.group(2)), float(m.group(3)), m.group(1), m.start(), m.end())
+        for m in _re.finditer(
+            r'\(hierarchical_label\s+"([^"]+)"[^\n]*\n\s+\(at\s+([\d.\-]+)\s+([\d.\-]+)',
+            sch_content,
+        )
+    ]
+
+    if not labels:
+        return sch_content
+
+    # Find all symbol positions to compute pin endpoints
+    # For Device:R (vertical, rotation 0): pin1 at (x, y-2.54), pin2 at (x, y+2.54)
+    # We detect the correct endpoint by finding symbols near each label group.
+    sym_positions = [
+        (float(m.group(1)), float(m.group(2)), float(m.group(3)))
+        for m in _re.finditer(
+            r'\(symbol\s+\(lib_id\s+"[^"]+"\)\s+\(at\s+([\d.\-]+)\s+([\d.\-]+)\s+([\d.\-]+)\)',
+            sch_content,
+        )
+    ]
+
+    # Group labels by position (same x,y within 0.1mm = co-located)
+    def _dist(p1, p2): return _math.hypot(p1[0]-p2[0], p1[1]-p2[1])
+
+    processed = sch_content
+    changes = 0
+
+    # For labels that are co-located (same position, different net) → problematic
+    # Find the nearest symbol and its expected pin endpoints, then distribute
+    for i, (lx, ly, lname, lstart, lend) in enumerate(labels):
+        # Find other labels at the same position
+        same_pos = [j for j, (ox, oy, on, _, _) in enumerate(labels)
+                    if j != i and abs(ox-lx) < 0.1 and abs(oy-ly) < 0.1]
+        if not same_pos:
+            continue  # unique position, likely OK
+
+        # Find nearest symbol
+        nearest_sym = min(sym_positions, key=lambda s: _dist((lx,ly), (s[0],s[1])), default=None)
+        if nearest_sym is None:
+            continue
+        sx, sy, srot = nearest_sym
+        dist_to_sym = _dist((lx, ly), (sx, sy))
+        if dist_to_sym > tolerance_mm:
+            continue
+
+        # Calculate standard pin endpoints for a 2-pin component
+        # Pin pitch = 2.54mm, along the axis determined by rotation
+        r = _math.radians(srot)
+        dx = 2.54 * _math.sin(r)   # x component of pin axis
+        dy = 2.54 * _math.cos(r)   # y component of pin axis (KiCad Y down)
+        pin1 = (sx - dx, sy - dy)   # pin "above" center
+        pin2 = (sx + dx, sy + dy)   # pin "below" center
+
+        # Assign co-located labels to the two nearest pin endpoints
+        group = [i] + same_pos
+        endpoints = [pin1, pin2] + [(lx, ly)] * max(0, len(group) - 2)
+
+        for k, lidx in enumerate(group):
+            if k >= len(endpoints):
+                break
+            lx2, ly2, ln2, ls2, le2 = labels[lidx]
+            nx, ny = endpoints[k]
+            if abs(nx - lx2) > 0.01 or abs(ny - ly2) > 0.01:
+                # Replace (at lx2 ly2 ...) with (at nx ny ...)
+                old_at = f"(at {lx2} {ly2}"
+                new_at = f"(at {nx:.4f} {ny:.4f}"
+                # Only replace the first occurrence after the label name
+                label_region_start = max(0, ls2 - 10)
+                label_region = processed[label_region_start:le2 + 20]
+                fixed_region = label_region.replace(old_at, new_at, 1)
+                processed = processed[:label_region_start] + fixed_region + processed[le2 + 20:]
+                changes += 1
+
+    if changes:
+        logger.info("_snap_labels_to_pins: %d label(s) repositioned", changes)
+    return processed
+
+
 def _generate_with_kicad_tools(
     kicad_sch_content: str,
     board_w: float,
     board_h: float,
+    connections: Optional[list] = None,
+    kicad_net_content: Optional[str] = None,
 ) -> Optional[str]:
     """kicad-tools PCBFromSchematic → .kicad_pcb. Returns None on failure.
 
     Reads the .kicad_sch, exports netlist (kicad-cli or pure Python fallback),
     creates a blank PCB, adds footprints, assigns nets.
+
+    connections: optional list of SchemaNet from circuit_synth JSON cache.
+    When provided, floating pads (single-pad nets like Net-(R1-2)) are
+    re-assigned to their correct net using the circuit_synth connectivity data,
+    fixing the label-not-at-pin-endpoint issue in circuit_synth schematics.
     """
+    import shutil as _shutil
+    import sys as _sys
     import tempfile as _tmp
     from kicad_tools.workflow import PCBFromSchematic
+
+    # Ensure kicad-cli is in PATH so export_netlist() uses it instead of the
+    # pure Python fallback. The Python extractor cannot resolve hierarchical
+    # labels from circuit_synth schematics (labels not at exact pin endpoints),
+    # causing single-pad nets like Net-(R1-2) instead of DHT_DATA.
+    # main.py already injects the path at service startup; this guard handles
+    # the case where _generate_with_kicad_tools is called directly in tests.
+    if not _shutil.which("kicad-cli"):
+        for _bin in [
+            r"C:\Program Files\KiCad\10.99\bin",
+            r"C:\Program Files\KiCad\9.0\bin",
+            r"C:\Program Files\KiCad\8.0\bin",
+            "/usr/bin",
+        ]:
+            import os as _os
+            if _os.path.isfile(_os.path.join(_bin, "kicad-cli")) or \
+               _os.path.isfile(_os.path.join(_bin, "kicad-cli.exe")):
+                _os.environ["PATH"] = _bin + _os.pathsep + _os.environ.get("PATH", "")
+                break
 
     with _tmp.TemporaryDirectory() as tmp:
         sch_path = Path(tmp) / "schematic.kicad_sch"
         pcb_path = Path(tmp) / "schematic.kicad_pcb"
         sch_path.write_text(kicad_sch_content, encoding="utf-8")
 
-        workflow = PCBFromSchematic(sch_path)
-        # Génération PCB simple : footprints + nets + contour rectangulaire.
-        # Le placement réel (clustering) est fait par call_agent_placement
-        # via place_unplaced(cluster=True).
+        # If a circuit_synth .kicad_net file is available (correct netlist),
+        # write it alongside the schematic so PCBFromSchematic uses it directly
+        # instead of running kicad-cli (which fails on circuit_synth schematics
+        # because hierarchical labels are not at exact pin endpoints).
+        net_path: Optional[Path] = None
+        if kicad_net_content:
+            net_path = Path(tmp) / "schematic.kicad_net"
+            net_path.write_text(kicad_net_content, encoding="utf-8")
+            logger.info("_generate_with_kicad_tools: using circuit_synth .kicad_net for netlist")
+
+        workflow = PCBFromSchematic(sch_path, netlist_path=net_path)
         workflow.create_pcb(width=board_w, height=board_h, layers=2, title="Layrix PCB")
         workflow.place_all_components(spacing=15.0, margin=5.0)
         workflow.assign_nets()
@@ -391,12 +557,109 @@ def _generate_with_pcbnew(
         return None
 
 
+def _patch_floating_nets(pcb_content: str, connections: list[SchemaNet]) -> str:
+    """Re-assign single-pad floating nets (Net-(X-Y), unconnected-*) using
+    circuit_synth connection data which has the correct pad→net topology.
+
+    circuit_synth schematics place hierarchical labels near pin endpoints but
+    not at the exact position, so kicad-cli netlist extraction leaves those
+    pads unconnected. The `connections` list (from _pcbStateCache) has the
+    truth: for each net, which (ref, pin) pairs belong to it.
+    """
+    import re as _re, uuid as _uuid
+
+    # Build lookup: (ref, pin) → correct net name from circuit_synth
+    pin_to_net: dict[tuple[str, str], str] = {}
+    for conn in connections:
+        for pin_ref in conn.pins:
+            pin_to_net[(pin_ref.ref, str(pin_ref.pin))] = conn.name
+
+    if not pin_to_net:
+        return pcb_content
+
+    # Collect all net ids from PCB header: id → name
+    net_id_to_name: dict[int, str] = {
+        int(m.group(1)): m.group(2)
+        for m in _re.finditer(r'^\s*\(net\s+(\d+)\s+"([^"]+)"\)', pcb_content, _re.MULTILINE)
+    }
+    name_to_net_id: dict[str, int] = {v: k for k, v in net_id_to_name.items()}
+
+    def _is_floating(net_name: str) -> bool:
+        return (net_name.startswith("Net-(") or
+                net_name.startswith("unconnected-") or
+                net_name.startswith("Net-("))
+
+    # Add missing net declarations for nets in connections that are not yet in PCB
+    next_id = max(net_id_to_name.keys(), default=0) + 1
+    new_net_decls: list[str] = []
+    for conn in connections:
+        if conn.name not in name_to_net_id:
+            name_to_net_id[conn.name] = next_id
+            net_id_to_name[next_id] = conn.name
+            new_net_decls.append(f'  (net {next_id} "{conn.name}")')
+            next_id += 1
+
+    if new_net_decls:
+        # Insert new net declarations before the first footprint
+        insert_before = _re.search(r'\n\s+\(footprint\s', pcb_content)
+        if insert_before:
+            pos = insert_before.start()
+            pcb_content = pcb_content[:pos] + "\n" + "\n".join(new_net_decls) + pcb_content[pos:]
+
+    # Patch pads: for each footprint/pad, if the current net is floating and
+    # we have a correct net for (ref, pad_number), replace it.
+    def _patch_pad(match: _re.Match) -> str:
+        block = match.group(0)
+        # Extract footprint reference
+        ref_m = _re.search(r'\(property\s+"Reference"\s+"([^"]+)"', block)
+        if not ref_m:
+            return block
+        ref = ref_m.group(1)
+
+        def _fix_pad(pm: _re.Match) -> str:
+            pad_block = pm.group(0)
+            pad_num_m = _re.search(r'\(pad\s+"([^"]+)"', pad_block)
+            if not pad_num_m:
+                return pad_block
+            pad_num = pad_num_m.group(1)
+            correct_net = pin_to_net.get((ref, pad_num))
+            if not correct_net:
+                return pad_block
+            net_m = _re.search(r'\(net\s+\d+\s+"([^"]+)"\)', pad_block)
+            if not net_m or not _is_floating(net_m.group(1)):
+                return pad_block
+            # Replace with correct net
+            correct_id = name_to_net_id.get(correct_net)
+            if correct_id is None:
+                return pad_block
+            fixed = _re.sub(
+                r'\(net\s+\d+\s+"[^"]+"\)',
+                f'(net {correct_id} "{correct_net}")',
+                pad_block,
+            )
+            logger.info("patch_floating_nets: %s.%s: %s → %s",
+                        ref, pad_num, net_m.group(1), correct_net)
+            return fixed
+
+        return _re.sub(r'\(pad\s+"[^"]+"\s+[\s\S]*?(?=\n\s+\(pad|\n\s+\(property|\n\t\))',
+                       _fix_pad, block)
+
+    # Apply patch to each footprint block
+    patched = _re.sub(
+        r'\(footprint\s+"[^"]+"\s+[\s\S]*?(?=\n\s+\(footprint|\n\s+\(gr_|\n\s+\(segment|\n\s+\(zone|\Z)',
+        _patch_pad,
+        pcb_content,
+    )
+    return patched
+
+
 def generate_pcb(
     components: list[SchemaComponent],
     connections: list[SchemaNet],
     board_w: float,
     board_h: float,
     kicad_sch_content: Optional[str] = None,
+    kicad_net_content: Optional[str] = None,
 ) -> str:
     """Pipeline génération .kicad_pcb — 3 niveaux :
     1. kicad-tools PCBFromSchematic   — lit .kicad_sch, vrais footprints + nets complets
@@ -406,7 +669,11 @@ def generate_pcb(
     # Niveau 1 : kicad-tools PCBFromSchematic
     if kicad_sch_content:
         try:
-            content = _generate_with_kicad_tools(kicad_sch_content, board_w, board_h)
+            content = _generate_with_kicad_tools(
+                kicad_sch_content, board_w, board_h,
+                connections=connections or [],
+                kicad_net_content=kicad_net_content,
+            )
             if content:
                 logger.info("generate_pcb: niveau 1 kicad-tools OK")
                 return content

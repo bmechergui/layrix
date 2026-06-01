@@ -48,10 +48,18 @@ def main() -> None:
     print("═" * 60)
     print("ÉTAPE 1 — Génération PCB (PCBFromSchematic)")
     print("═" * 60)
-    from tools.pcb import _generate_with_kicad_tools
+    # Utiliser generate_pcb() avec kicad_sch_content — même pipeline que POST /pcb/generate.
+    # generate_pcb() niveau 1 = _generate_with_kicad_tools (PCBFromSchematic + kicad-cli netlist).
+    from tools.pcb import generate_pcb
+    from tools.schematic import SchemaComponent, SchemaNet
 
-    pcb_content = _generate_with_kicad_tools(
-        SCH_PATH.read_text(encoding="utf-8"), BOARD_W, BOARD_H
+    # Pas de composants/connexions JSON (test minimal) — PCBFromSchematic lit le .kicad_sch
+    pcb_content = generate_pcb(
+        components=[],
+        connections=[],
+        board_w=BOARD_W,
+        board_h=BOARD_H,
+        kicad_sch_content=SCH_PATH.read_text(encoding="utf-8"),
     )
     if not pcb_content:
         print("ERREUR génération PCB")
