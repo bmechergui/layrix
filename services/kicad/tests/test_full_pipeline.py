@@ -32,7 +32,7 @@ CS_SRC = Path(__file__).parents[1] / "circuit_synth" / "src"
 sys.path.insert(0, str(CS_SRC))
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-OUT_DIR  = Path(r"C:\Users\Mechegui\Downloads\Kicadmcptest\test\meteo_arduino")
+OUT_DIR  = Path(r"C:\Users\Mechegui\Downloads\Kicadmcptest\test")
 BOARD_W, BOARD_H = 100.0, 100.0
 
 
@@ -116,11 +116,11 @@ def run_circuit_synth() -> tuple[str, str | None]:
     sch_path = OUT_DIR / "meteo_arduino" / "meteo_arduino.kicad_sch"
     net_path = OUT_DIR / "meteo_arduino" / "meteo_arduino.net"
 
-    # Copier le schéma dans OUT_DIR (racine)
+    # Copier le schéma dans OUT_DIR (racine test/)
     if sch_path.exists():
         dest = OUT_DIR / "meteo_arduino.kicad_sch"
         dest.write_text(sch_path.read_text(encoding="utf-8"), encoding="utf-8")
-        print(f"  .kicad_sch → {dest.name}")
+        print(f"  .kicad_sch → {OUT_DIR}/{dest.name}")
 
     sch_content = sch_path.read_text(encoding="utf-8") if sch_path.exists() else ""
     net_content = net_path.read_text(encoding="utf-8") if net_path.exists() else None

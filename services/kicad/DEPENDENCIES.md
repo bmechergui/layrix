@@ -9,7 +9,14 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
 - **Version locale :** 3.12 (0.12.1 selon git commit)
 - **Chemin :** `services/kicad/circuit_synth/`
 - **Install Docker :** `pip3 install --no-cache-dir ./circuit_synth`
-- **Patches Layrix :** aucun (bug labels hiérarchiques → workaround via kicad_net_content dans generate_pcb)
+- **Patches Layrix :**
+  - `src/circuit_synth/kicad/sch_gen/circuit_loader.py` — fix pin_identifier vide
+    → `_parse_circuit`: exclure `""` et `None` (pas seulement `"~"`) du test de nom de pin.
+    Sans ce fix: Device:R et Device:C → pin_identifier="" → find_pin retourne toujours pin 1
+    → VCC_5V ET DHT_DATA tous deux au même endroit (pin1) → R1.pin2=unconnected.
+    Ligne ~286: `if "name" in pin_data and pin_data["name"] not in ("~", "", None):`
+  - `src/circuit_synth/kicad/schematic/geometry_utils.py` — fallback index-based
+    → `get_actual_pin_position`: si pin.number absent, utiliser l'index (défensif).
 
 ## kicad_tools
 
