@@ -80,13 +80,17 @@ def main() -> None:
     print(f"    {pcb_stats(placed_content)}")
     print(f"    placed_count = {place_res['placed_count']}")
 
-    # Positions finales
+    # Positions finales — vérifier contre le contour réel du board placé
     from kicad_tools.schema.pcb import PCB as _PCB
     pcb2 = _PCB.load(str(placed_path))
+    from kicad_tools.placement.place_unplaced import _get_board_bounds as _bb
+    bnds = _bb(pcb2) or (0, 0, BOARD_W, BOARD_H)
+    bx0, by0, bx1, by1 = bnds
+    print(f"    Board: {bx1-bx0:.0f}×{by1-by0:.0f}mm")
     all_inside = True
     for fp in pcb2.footprints:
         x, y = fp.position
-        inside = 0 <= x <= BOARD_W and 0 <= y <= BOARD_H
+        inside = bx0 <= x <= bx1 and by0 <= y <= by1
         if not inside:
             all_inside = False
         print(f"    {fp.reference:6s}  ({x:.1f}, {y:.1f})mm  {'OK' if inside else 'HORS-BOARD'}")

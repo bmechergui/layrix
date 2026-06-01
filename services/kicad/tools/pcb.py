@@ -239,10 +239,10 @@ def _generate_with_kicad_tools(
         sch_path.write_text(kicad_sch_content, encoding="utf-8")
 
         workflow = PCBFromSchematic(sch_path)
-        # Small initial board smaller than the largest footprint.
-        # Forces kct optimize-placement to spread components (overlap penalty).
-        # Final board dimensions are computed by the placement agent.
-        workflow.create_pcb(width=50.0, height=50.0, layers=2, title="Layrix PCB")
+        # Génération PCB simple : footprints + nets + contour rectangulaire.
+        # Le placement réel (clustering) est fait par call_agent_placement
+        # via place_unplaced(cluster=True).
+        workflow.create_pcb(width=board_w, height=board_h, layers=2, title="Layrix PCB")
         workflow.place_all_components(spacing=15.0, margin=5.0)
         workflow.assign_nets()
         workflow.save(pcb_path)
@@ -250,9 +250,6 @@ def _generate_with_kicad_tools(
         if not pcb_path.exists():
             return None
 
-        # Footprints are placed in a grid by place_all_components().
-        # call_agent_placement will refine positions using kct optimize-placement
-        # (CMA-ES) which takes existing positions as starting point.
         logger.info(
             "kicad-tools PCBFromSchematic: %d components, board %.0f×%.0fmm",
             len(workflow.get_components()), board_w, board_h,
