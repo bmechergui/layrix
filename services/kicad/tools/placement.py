@@ -306,9 +306,11 @@ def auto_place(
 
             # Candidat A : place_unplaced — grille cluster-by-net, ligne de base
             # toujours faisable (0 chevauchement courtyard).
+            # Marges resserrées (1.5/1.0 vs 3.0/3.0) : –23% de segments routés,
+            # même qualité DRC (validé expérimentalement 2026-06-02).
             result = place_unplaced(
                 str(src), output_path=str(dst),
-                margin=3.0, spacing=3.0, cluster=True,
+                margin=1.5, spacing=1.0, cluster=True,
             )
             placed_count = len(result.placed_refs)
             logger.info("place_unplaced: %d placés, %d overflow",
