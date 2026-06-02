@@ -304,8 +304,44 @@ def _build_zone_sexp(net_id: int, net_name: str, layer: str,
     )
 
 
+def _strip_power_zones(pcb_text: str) -> str:
+    """Remove all top-level (zone ...) blocks from the PCB text.
+
+    Used to discard zones created by kct route (which puts GND on B.Cu
+    regardless of --power-nets argument) before injecting our own corrected zones.
+    Uses balanced-paren scanning so footprint bodies are never touched.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(pcb_text)
+    while i < n:
+        if pcb_text.startswith("\t(zone", i) or pcb_text.startswith("  (zone", i) or pcb_text.startswith("(zone", i):
+            depth = 0
+            j = i
+            while j < n:
+                c = pcb_text[j]
+                if c == "(":
+                    depth += 1
+                elif c == ")":
+                    depth -= 1
+                    if depth == 0:
+                        j += 1
+                        break
+                j += 1
+            i = j  # skip entire zone block
+        else:
+            out.append(pcb_text[i])
+            i += 1
+    return "".join(out)
+
+
 def _add_power_zones(pcb_text: str) -> str:
-    """Inject GND (B.Cu) and VCC_5V / +5V (F.Cu) copper-pour zones into the PCB."""
+    """Inject GND and VCC_5V copper-pour zones — both on F.Cu.
+
+    Using F.Cu for all power zones ensures SMD component pads (which only
+    exist on F.Cu) connect directly to the copper pour without needing vias.
+    Putting GND on B.Cu would leave SMD GND pads unconnected after zone fill.
+    """
     bbox = _extract_board_bbox(pcb_text)
     if not bbox:
         logger.warning("_add_power_zones: board bbox not found — zones skipped")
@@ -313,16 +349,14 @@ def _add_power_zones(pcb_text: str) -> str:
 
     x0, y0, x1, y1 = bbox
 
-    # Extract net IDs from top-level declarations only (lines with exactly 2 indent levels)
-    # Pattern: "  (net N "name")" — top-level nets appear before any footprint block
+    # Extract net IDs from top-level declarations only
     seen: dict[str, tuple[int, str, str]] = {}  # net_name → (id, name, layer)
     for m in re.finditer(r'^\s{0,4}\(net\s+(\d+)\s+"([^"]+)"\)', pcb_text, re.MULTILINE):
         nid, name = int(m.group(1)), m.group(2)
         if name in seen:
             continue
-        if name == "GND":
-            seen[name] = (nid, name, "B.Cu")
-        elif name in ("VCC_5V", "+5V", "VCC", "VDD", "+3V3", "+3.3V"):
+        # All power zones on F.Cu — SMD pads are on F.Cu, direct connection
+        if name in ("GND", "VCC_5V", "+5V", "VCC", "VDD", "+3V3", "+3.3V"):
             seen[name] = (nid, name, "F.Cu")
 
     if not seen:
@@ -354,11 +388,13 @@ def _detect_power_nets(pcb_text: str) -> list[str]:
 def _power_nets_arg(power_nets: list[str]) -> str:
     """Format power nets as kct '--power-nets NET:LAYER,...'.
 
-    GND → B.Cu, supply rails → F.Cu (standard 2-layer pour convention).
+    Both GND and supply rails → F.Cu for simple 2-layer boards with SMD
+    components. SMD pads only exist on F.Cu; putting GND on B.Cu would require
+    vias from every SMD GND pad, leaving pads unconnected after zone fill.
+    Using F.Cu for all power zones ensures direct connectivity for SMD.
     kct expects the NET:LAYER form; a bare net list is mis-parsed.
     """
-    layer_for = lambda n: "B.Cu" if n == "GND" else "F.Cu"
-    return ",".join(f"{n}:{layer_for(n)}" for n in power_nets)
+    return ",".join(f"{n}:F.Cu" for n in power_nets)
 
 
 def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
@@ -399,8 +435,15 @@ def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
                 f"{result.stderr[:200] or result.stdout[-200:]}"
             )
 
-        routed = dst.read_bytes()
-        routed_text = routed.decode("utf-8", errors="replace")
+        routed_text = dst.read_text(encoding="utf-8", errors="replace")
+
+        # kct route may create power zones with wrong layers (GND on B.Cu
+        # regardless of --power-nets argument). Strip kct zones and re-inject
+        # ours (all on F.Cu so SMD pads connect without vias).
+        routed_text = _strip_power_zones(routed_text)
+        routed_text = _add_power_zones(routed_text)
+
+        routed = routed_text.encode("utf-8")
         seg_count = len(re.findall(r'\(segment[\s\n]', routed_text))
         zone_count = len(re.findall(r'\(zone[\s\n]', routed_text))
 
@@ -411,7 +454,7 @@ def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
             routed_pct = round(int(m.group(1)) / int(m.group(2)) * 100)
 
         logger.info(
-            "kct route: %d segments, %d zones, power-nets=%s (%d%%)",
+            "kct route: %d segments, %d zones (F.Cu), power-nets=%s (%d%%)",
             seg_count, zone_count, power_nets, routed_pct,
         )
         return routed, routed_pct

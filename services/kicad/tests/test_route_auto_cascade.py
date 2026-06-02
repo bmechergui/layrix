@@ -48,6 +48,6 @@ def test_low_kicad_tools_kept_when_freerouting_absent(monkeypatch):
 
 def test_power_nets_arg_uses_net_layer_format():
     from routers.routing import _power_nets_arg
-    # GND → B.Cu, supply nets → F.Cu (2-layer convention)
-    assert _power_nets_arg(["GND", "VCC_5V"]) == "GND:B.Cu,VCC_5V:F.Cu"
+    # All power zones on F.Cu so SMD pads connect without vias (GND was B.Cu → broken)
+    assert _power_nets_arg(["GND", "VCC_5V"]) == "GND:F.Cu,VCC_5V:F.Cu"
     assert _power_nets_arg([]) == ""
