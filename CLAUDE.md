@@ -200,13 +200,13 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      fallback : runCircuitSynthEngine() TypeScript
   ⑤ call_agent_placement  → Ingénieur Placement
      POST /place/auto (kicad_pcb_b64)
-     ① kct optimize-placement --strategy cmaes — SI Final feasible (circuits discrets)
-universal: optimal quand footprints ont bbox pads complète
-     ② place_unplaced(cluster=True) — fallback si optimize-placement INFEASIBLE
-        (shields/modules : Arduino/STM32 — overlap model = bbox pads ignore le corps)
-        board généreux cols×rows×70mm → grille clusterisée → replace_outline() fitté
-     ③ pcbnew grille simple : LoadBoard() + SetPosition() 15mm step
-     ④ status:'error' si Docker down (fail fast)
+     Pré-requis : footprints déjà hors-board (-1000,-1000) par call_agent_gen_pcb
+     Niveau 1 : kicad-tools
+       a. kct optimize-placement (si Final feasible + area>50mm²) — circuits discrets
+       b. place_unplaced(cluster=True) — sinon (Arduino/STM32, tout circuit)
+     Niveau 2 : pcbnew grille simple — si kicad-tools indisponible
+     Niveau 3 : TypeScript S-expr — fallback final (generate_pcb retourne '')
+     status:'error' si Docker down (fail fast)
   ⑥ call_agent_routing    → Ingénieur Routage
      POST /route/auto
      ① kicad-tools A* negotiated — ≤30 nets routables (≥2 pads), ≤30 comps, 60s

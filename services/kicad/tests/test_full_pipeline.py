@@ -23,14 +23,33 @@ from pathlib import Path
 
 logging.basicConfig(level=logging.WARNING)
 
+# Console Windows (cp1252) plante sur les caractères Unicode (═, ✅) — forcer UTF-8
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
 _KICAD = Path(r"C:\Program Files\KiCad\10.99")
 os.environ.setdefault("KICAD_SYMBOL_DIR",    str(_KICAD / "share/kicad/symbols"))
 os.environ.setdefault("KICAD_FOOTPRINT_DIR", str(_KICAD / "share/kicad/footprints"))
 
-# circuit_synth sur le PYTHONPATH
-CS_SRC = Path(__file__).parents[1] / "circuit_synth" / "src"
-sys.path.insert(0, str(CS_SRC))
-sys.path.insert(0, str(Path(__file__).parents[1]))
+# Utiliser les copies Layrix patchées (services/kicad/) en priorité sur les versions installées
+_SVC = Path(__file__).parents[1]
+CS_SRC = _SVC / "circuit_synth" / "src"
+KT_SRC = _SVC / "kicad_tools" / "src"
+for _p in [str(CS_SRC), str(KT_SRC), str(_SVC)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+# Propager aux sous-processus (kct route / optimize-placement lancent
+# `python -m kicad_tools.cli` — sys.path ne se propage pas aux enfants)
+_pp = [str(KT_SRC), str(CS_SRC)]
+_existing = os.environ.get("PYTHONPATH", "")
+os.environ["PYTHONPATH"] = os.pathsep.join(
+    _pp + [p for p in (_existing.split(os.pathsep) if _existing else []) if p and p not in _pp]
+)
 
 OUT_DIR  = Path(r"C:\Users\Mechegui\Downloads\Kicadmcptest\test")
 BOARD_W, BOARD_H = 200.0, 160.0  # assez grand pour 2 rangées Arduino (68×53) + composants
@@ -103,8 +122,8 @@ def run_circuit_synth() -> tuple[str, str | None]:
     try:
         r = subprocess.run(
             [sys.executable, str(script)],
-            capture_output=True, text=True, timeout=120,
-            env={**os.environ, "PYTHONUTF8": "1"},
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120, env={**os.environ, "PYTHONUTF8": "1"},
         )
         if r.returncode != 0:
             print(f"  ERREUR circuit_synth (rc={r.returncode}):\n{r.stderr[-500:]}")

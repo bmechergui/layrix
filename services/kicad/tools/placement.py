@@ -120,13 +120,14 @@ def _optimize_with_priors(pcb_path: str, output_path: str,
         logger.info("seed écrit dans PCB: %s", seeded_pcb.name)
 
         # 5. CMA-ES raffine depuis le seed physique
-        # wirelength×2 = boost des contraintes réseau, area×0.5 = minimize board
+        # seed_method="existing" → utilise les positions du PCB seeded
+        # (notre patch kicad-tools qui lit les positions actuelles du PCB)
         success = run_optimize_placement(
             pcb_path=str(seeded_pcb),
             strategy_name="cmaes",
             max_iterations=max_iterations,
             output_path=str(output_path),
-            seed_method="force-directed",  # repart du seed écrit dans PCB
+            seed_method="existing",  # ← patch Layrix : utilise le prior écrit dans PCB
             weights_json='{"wirelength": 2.0, "overlap": 1e6, "area": 0.5}',
             time_budget=time_budget,
             quiet=True,
@@ -160,7 +161,8 @@ def _try_optimize_placement(pcb_bytes: bytes) -> bytes | None:
                     "--strategy", "cmaes",
                     "--seed", "force-directed",
                 ],
-                capture_output=True, text=True, timeout=130, check=False,
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=130, check=False,
             )
         except Exception as exc:
             logger.warning("optimize-placement subprocess failed: %s", exc)
@@ -243,7 +245,8 @@ def auto_place(
                     opt_r = subprocess.run(
                         [sys.executable, "-m", "kicad_tools.cli", "optimize-placement",
                          str(dst), "--output", str(opt), "--strategy", "cmaes"],
-                        capture_output=True, text=True, timeout=90, check=False,
+                        capture_output=True, text=True, encoding="utf-8", errors="replace",
+                        timeout=90, check=False,
                     )
                     final_line = next(
                         (l for l in opt_r.stdout.splitlines() if l.strip().startswith("Final:")), ""

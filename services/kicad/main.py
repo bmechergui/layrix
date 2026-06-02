@@ -8,6 +8,31 @@ Endpoints actifs (tous via routers/) :
 """
 
 import os
+import sys as _sys
+
+# Use Layrix-patched copies of circuit_synth and kicad_tools (in services/kicad/).
+# These contain bug fixes and extensions not in the original packages.
+# Priority: local patched copy → installed package.
+# PYTHONPATH is updated too so CLI subprocesses (`python -m kicad_tools.cli route`
+# in routers/routing.py and tools/placement.py) inherit the patched copies — an
+# in-process sys.path insert does not propagate to child processes. In Docker
+# kicad_tools is pip-installed (editable), so subprocesses already resolve it;
+# prepending the same source dir here is redundant but harmless.
+_here = os.path.dirname(__file__)
+_patched_dirs: list[str] = []
+for _lib in ["circuit_synth/src", "kicad_tools/src"]:
+    _lib_path = os.path.join(_here, _lib)
+    if os.path.isdir(_lib_path):
+        if _lib_path not in _sys.path:
+            _sys.path.insert(0, _lib_path)
+        _patched_dirs.append(_lib_path)
+
+if _patched_dirs:
+    _existing_pp = os.environ.get("PYTHONPATH", "")
+    _pp_parts = [p for p in (_existing_pp.split(os.pathsep) if _existing_pp else []) if p]
+    os.environ["PYTHONPATH"] = os.pathsep.join(
+        _patched_dirs + [p for p in _pp_parts if p not in _patched_dirs]
+    )
 
 # Ensure KiCad symbol library path is set BEFORE importing any router that probes it.
 # Priority: env var → repo-local kicad-symbols/ → Windows KiCad install.

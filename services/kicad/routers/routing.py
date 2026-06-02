@@ -374,7 +374,7 @@ def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
             cmd += ["--power-nets", ",".join(power_nets)]
 
         result = subprocess.run(
-            cmd, capture_output=True, text=True,
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=_PYTHON_ROUTER_TIMEOUT_S + 30, check=False,
         )
 
