@@ -128,7 +128,9 @@ def _optimize_with_priors(pcb_path: str, output_path: str,
             max_iterations=max_iterations,
             output_path=str(output_path),
             seed_method="existing",  # ← patch Layrix : utilise le prior écrit dans PCB
-            weights_json='{"wirelength": 2.0, "overlap": 1e6, "area": 0.5}',
+            # drc=1e6 : respecte les pad clearances (validé expérimentalement 2026-06-02)
+            # wirelength=2.0 : tire les composants vers les vrais pins (pin-aware HPWL)
+            weights_json='{"wirelength": 2.0, "overlap": 1e6, "drc": 1e6, "area": 0.5}',
             time_budget=time_budget,
             quiet=True,
         )
@@ -184,6 +186,28 @@ def _try_optimize_placement(pcb_bytes: bytes) -> bytes | None:
         return None
 
 
+def _courtyard_area_fp(fp) -> float:
+    """Return the F/B.CrtYd bounding-box area (mm²) for a footprint object.
+
+    Returns 0.0 when the footprint has no courtyard graphics.
+    Used to classify footprints as large modules (area > 500mm²) vs small
+    discrete components so the hybrid placement strategy can fix module positions
+    while letting CMA-ES optimise small-component positions.
+    """
+    xs: list[float] = []
+    ys: list[float] = []
+    for g in getattr(fp, "graphics", []):
+        if getattr(g, "layer", None) not in ("F.CrtYd", "B.CrtYd"):
+            continue
+        for pt in (getattr(g, "start", None), getattr(g, "end", None)):
+            if pt is not None:
+                xs.append(pt[0])
+                ys.append(pt[1])
+    if not xs:
+        return 0.0
+    return (max(xs) - min(xs)) * (max(ys) - min(ys))
+
+
 def _count_placement_conflicts(pcb_bytes: bytes) -> int:
     """Number of courtyard/clearance conflicts (0 = manufacturable placement).
 
@@ -207,11 +231,15 @@ def _count_placement_conflicts(pcb_bytes: bytes) -> int:
 
 
 def _hpwl(pcb_bytes: bytes) -> float:
-    """Half-perimeter wirelength: sum over multi-pad nets of bbox (width+height).
+    """Half-perimeter wirelength using absolute pad positions (pin-aware).
 
-    Standard placement-quality metric — lower means shorter traces and better
-    routability. Used to choose among feasible candidates.
+    Computes the HPWL bounding box over the true absolute pad positions of
+    each multi-pad net, applying the footprint rotation so the metric reflects
+    the real wire length after placement — not just the distance between
+    component origins. This matches the pin-aware cost used by the CMA-ES
+    optimizer (cost.py compute_wirelength with component_defs).
     """
+    import math
     from kicad_tools.schema.pcb import PCB
 
     with tempfile.NamedTemporaryFile(suffix=".kicad_pcb", mode="wb", delete=False) as f:
@@ -226,10 +254,17 @@ def _hpwl(pcb_bytes: bytes) -> float:
 
     nets: dict[str, list[tuple[float, float]]] = {}
     for fp in pcb.footprints:
+        fx, fy = fp.position
+        rot_rad = math.radians(fp.rotation)
+        cos_r, sin_r = math.cos(rot_rad), math.sin(rot_rad)
         for pad in getattr(fp, "pads", []):
             name = getattr(pad, "net_name", None)
-            if name:
-                nets.setdefault(name, []).append(pad.position)
+            if not name:
+                continue
+            px, py = pad.position  # relative to footprint origin
+            abs_x = fx + px * cos_r - py * sin_r
+            abs_y = fy + px * sin_r + py * cos_r
+            nets.setdefault(name, []).append((abs_x, abs_y))
 
     total = 0.0
     for pts in nets.values():
@@ -301,6 +336,7 @@ def auto_place(
 
         try:
             from kicad_tools.placement.place_unplaced import place_unplaced
+            from kicad_tools.schema.pcb import PCB
 
             src.write_bytes(pcb_bytes)
 
@@ -324,19 +360,43 @@ def auto_place(
                  "placed_refs": result.placed_refs},
             ]
 
-            # Candidat B : CMA-ES + priors physiques, raffiné depuis la grille.
-            # Conservé uniquement s'il est FAISABLE (0 conflit courtyard) via la
-            # sélection — son modèle d'overlap ignore le corps des modules, donc
-            # on ne lui fait pas confiance aveuglément (cf. Arduino/STM32).
+            # Candidat B : hybride pin-aware
+            # 1. CMA-ES (avec HPWL calculé sur les vrais pads, cf. Codex pin-aware fix)
+            #    optimise TOUS les composants — gros modules inclus.
+            # 2. Les gros modules (courtyard > 500mm²) sont restaurés à leurs positions
+            #    place_unplaced (stables, dans le board) — le CMA-ES a tenté de les
+            #    déplacer sans connaître leur corps réel.
+            # 3. Les petits composants gardent leurs positions CMA-ES pin-aware
+            #    → serrés près des vrais pins des modules.
+            # Gate : sélection retient ce candidat seulement s'il a 0 conflit courtyard.
             try:
+                # Sauvegarder positions place_unplaced des gros modules
+                pcb_pu = PCB.load(str(dst))
+                large_pos = {
+                    fp.reference: (fp.position, fp.rotation)
+                    for fp in pcb_pu.footprints
+                    if _courtyard_area_fp(fp) > 500
+                }
+
                 if _optimize_with_priors(str(dst), str(opt),
-                                         max_iterations=200, time_budget=60.0) and opt.exists():
+                                         max_iterations=300, time_budget=90.0) and opt.exists():
+                    # Restaurer les gros modules à leurs positions stables
+                    if large_pos:
+                        pcb_cmaes = PCB.load(str(opt))
+                        for ref, (pos, rot) in large_pos.items():
+                            pcb_cmaes.update_footprint_position(ref, pos[0], pos[1], rotation=rot)
+                        pcb_cmaes.save(str(opt))
+                        logger.info(
+                            "hybride: %d module(s) restauré(s) depuis place_unplaced: %s",
+                            len(large_pos), list(large_pos.keys()),
+                        )
+
                     candidates.append(
-                        {"name": "cmaes", "bytes": opt.read_bytes(),
+                        {"name": "cmaes_hybrid", "bytes": opt.read_bytes(),
                          "placed_refs": result.placed_refs}
                     )
             except Exception as exc:
-                logger.warning("CMA-ES échoué (%s) — candidat ignoré", exc)
+                logger.warning("CMA-ES hybride échoué (%s) — candidat ignoré", exc)
 
             best = _select_best_placement(candidates)
             logger.info("placement retenu: %s", best["name"])
