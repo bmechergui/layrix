@@ -27,6 +27,15 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
 - **Patches Layrix :**
   - `src/kicad_tools/cli/route_cmd.py` — fix fsync sur handle read-only (Windows OSError [Errno 9])
     → `_write_routed_pcb`: ouverture en mode write pour fsync, best-effort
+  - `src/kicad_tools/cli/optimize_placement_cmd.py` — **fix pad-collapse (2026-06-02)**
+    → `_write_placements_to_pcb`: réécrit pour utiliser le modèle PCB
+    (`PCB.load` + `update_footprint_position(ref, x, y, rotation)` + `pcb.save`)
+    au lieu d'un remplacement texte des lignes `(at …)`.
+    Sans ce fix : la regex matchait **toutes** les lignes `(at …)` d'un footprint
+    (y compris les pads) et, une fois la référence connue, les remplaçait toutes
+    par la position du footprint → **tous les pads empilés sur un seul point**
+    → PCB non routable (`No path found`, routage 0%). Mirror du chemin `place_unplaced`.
+    Voir test : `services/kicad/tests/test_placement_pad_integrity.py`.
 
 ## Mise à jour
 
