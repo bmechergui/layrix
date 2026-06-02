@@ -43,6 +43,10 @@ _KICAD_TOOLS_MAX_NETS: int = 30
 _KICAD_TOOLS_MAX_COMPS: int = 30
 _PYTHON_ROUTER_TIMEOUT_S: int = 60
 
+# Below this completion %, prefer Freerouting (higher quality) when available.
+# Matches kct's own --min-completion 0.95 default.
+_MIN_ROUTED_PCT: int = 95
+
 
 class RouteAutoRequest(BaseModel):
     kicad_pcb_b64: str = Field(..., description=".kicad_pcb encoded as base64")
@@ -456,16 +460,26 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         net_count, comp_count, is_simple,
     )
 
+    # Best kicad-tools partial result so far (reused at Niveau 4 if Freerouting absent)
+    kt_partial: Optional[tuple[bytes, int]] = None
+
     # --- Niveau 1 : kicad-tools A* (circuits simples ≤30 nets/comps) ---
     if is_simple:
         try:
             new_pcb, routed_pct = _route_with_kicad_tools(pcb_bytes)
             logger.info("kicad-tools A*: %d%% routé", routed_pct)
-            return RouteAutoResponse(
-                kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
-                routed_percent=routed_pct,
-                layers=req.layers,
-                skipped=False,
+            if routed_pct >= _MIN_ROUTED_PCT:
+                return RouteAutoResponse(
+                    kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
+                    routed_percent=routed_pct,
+                    layers=req.layers,
+                    skipped=False,
+                )
+            # Below threshold: keep it, but try Freerouting for a better result.
+            kt_partial = (new_pcb, routed_pct)
+            logger.info(
+                "kicad-tools %d%% < %d%% — tentative Freerouting",
+                routed_pct, _MIN_ROUTED_PCT,
             )
         except Exception as exc:
             logger.warning("kicad-tools A* échoué (%s) — Freerouting API", exc)
@@ -509,10 +523,14 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             raise HTTPException(status_code=500, detail="routing failed") from exc
 
     # --- Niveau 4 : kicad-tools negotiated sans limite (tous circuits) ---
-    # Même algorithme A* negotiated que niveau 1, mais timeout plus long
-    # et sans la contrainte is_simple — fallback quand Freerouting absent.
+    # Reuse the Niveau-1 partial when we already have one (avoid a second
+    # expensive run). Même algorithme A* negotiated, fallback quand Freerouting
+    # absent ou échoue.
     try:
-        new_pcb, routed_pct = _route_with_kicad_tools(pcb_bytes)
+        if kt_partial is not None:
+            new_pcb, routed_pct = kt_partial
+        else:
+            new_pcb, routed_pct = _route_with_kicad_tools(pcb_bytes)
         logger.info("kicad-tools A* (no limit): %d%% routé", routed_pct)
         return RouteAutoResponse(
             kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
