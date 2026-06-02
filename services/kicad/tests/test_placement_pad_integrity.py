@@ -3,9 +3,10 @@
 Root cause of routing 0% (2026-06-02): the CMA-ES seed writer
 (_write_placements_to_pcb) overwrote every (at ...) line inside a footprint —
 including pads — stacking all pads onto one point, so the router found no path.
-These tests assert each footprint keeps as many distinct pad coordinates as it
-has pads, through place_unplaced AND the CMA-ES _optimize_with_priors step.
+_optimize_with_priors was removed from placement.py (refactor 2026-06-02) as it
+was no longer in the pipeline; the integrity guarantee is now tested via auto_place.
 """
+import base64
 import re
 import sys
 import tempfile
@@ -23,9 +24,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _pad_uniqueness(pcb_path: str) -> list[tuple[str, int, int]]:
+def _pad_uniqueness(pcb_bytes: bytes) -> list[tuple[str, int, int]]:
     """Return [(footprint_name, n_pads, n_distinct_pad_positions), ...]."""
-    text = Path(pcb_path).read_text(encoding="utf-8", errors="replace")
+    text = pcb_bytes.decode("utf-8", errors="replace")
     rows = []
     for blk in text.split("\n\t(footprint ")[1:]:
         name = blk[:40].split('"')[1] if '"' in blk[:40] else "?"
@@ -34,27 +35,15 @@ def _pad_uniqueness(pcb_path: str) -> list[tuple[str, int, int]]:
     return rows
 
 
-def _place_unplaced(src_path: str, dst_path: str) -> None:
-    from kicad_tools.placement.place_unplaced import place_unplaced
-    place_unplaced(src_path, output_path=dst_path, margin=3.0, spacing=3.0, cluster=True)
+def test_auto_place_preserves_pad_positions():
+    """auto_place must not collapse footprint pads (root cause of routing 0%)."""
+    from tools.placement import auto_place
 
+    src = GENERATED.read_bytes()
+    res = auto_place(base64.b64encode(src).decode(), 200.0, 160.0)
+    out = base64.b64decode(res["kicad_pcb_b64"])
 
-def test_optimize_with_priors_preserves_pad_positions():
-    from tools.placement import _optimize_with_priors
-
-    tmp = Path(tempfile.mkdtemp())
-    placed = tmp / "placed.kicad_pcb"
-    _place_unplaced(str(GENERATED), str(placed))
-
-    # Sanity: place_unplaced keeps pads distinct
-    for name, n_pads, n_uniq in _pad_uniqueness(str(placed)):
-        assert n_uniq == n_pads, f"place_unplaced already collapsed {name}"
-
-    out = tmp / "opt.kicad_pcb"
-    ok = _optimize_with_priors(str(placed), str(out), max_iterations=40, time_budget=15.0)
-    assert ok and out.exists(), "optimize did not produce output"
-
-    for name, n_pads, n_uniq in _pad_uniqueness(str(out)):
+    for name, n_pads, n_uniq in _pad_uniqueness(out):
         assert n_uniq == n_pads, (
-            f"{name}: pads collapsed by CMA-ES — {n_uniq} distinct of {n_pads}"
+            f"{name}: pads collapsed after auto_place — {n_uniq} distinct of {n_pads}"
         )
