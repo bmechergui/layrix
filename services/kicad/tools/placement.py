@@ -184,6 +184,91 @@ def _try_optimize_placement(pcb_bytes: bytes) -> bytes | None:
         return None
 
 
+def _count_placement_conflicts(pcb_bytes: bytes) -> int:
+    """Number of courtyard/clearance conflicts (0 = manufacturable placement).
+
+    Authoritative feasibility gate: PlacementAnalyzer reads real footprint
+    courtyards (incl. module bodies such as Arduino), unlike the CMA-ES overlap
+    model which only sees pad bounding boxes. On any failure, returns a large
+    sentinel so the candidate is treated as worst (never silently "feasible").
+    """
+    from kicad_tools.placement.analyzer import PlacementAnalyzer
+
+    with tempfile.NamedTemporaryFile(suffix=".kicad_pcb", mode="wb", delete=False) as f:
+        f.write(pcb_bytes)
+        p = Path(f.name)
+    try:
+        return len(PlacementAnalyzer().find_conflicts(str(p)))
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("find_conflicts échoué (%s) — candidat marqué non-faisable", exc)
+        return 10**6
+    finally:
+        p.unlink(missing_ok=True)
+
+
+def _hpwl(pcb_bytes: bytes) -> float:
+    """Half-perimeter wirelength: sum over multi-pad nets of bbox (width+height).
+
+    Standard placement-quality metric — lower means shorter traces and better
+    routability. Used to choose among feasible candidates.
+    """
+    from kicad_tools.schema.pcb import PCB
+
+    with tempfile.NamedTemporaryFile(suffix=".kicad_pcb", mode="wb", delete=False) as f:
+        f.write(pcb_bytes)
+        p = Path(f.name)
+    try:
+        pcb = PCB.load(str(p))
+    except Exception:  # pragma: no cover - defensive
+        return float("inf")
+    finally:
+        p.unlink(missing_ok=True)
+
+    nets: dict[str, list[tuple[float, float]]] = {}
+    for fp in pcb.footprints:
+        for pad in getattr(fp, "pads", []):
+            name = getattr(pad, "net_name", None)
+            if name:
+                nets.setdefault(name, []).append(pad.position)
+
+    total = 0.0
+    for pts in nets.values():
+        if len(pts) < 2:
+            continue
+        xs = [x for x, _ in pts]
+        ys = [y for _, y in pts]
+        total += (max(xs) - min(xs)) + (max(ys) - min(ys))
+    return total
+
+
+def _select_best_placement(candidates: list[dict]) -> dict:
+    """Pick the best placement candidate.
+
+    Hard gate: only candidates with zero courtyard/clearance conflicts are
+    eligible (Layrix rule — never emit an overlapping / DRC-violating board).
+    Among feasible candidates, choose the lowest HPWL (shortest wirelength →
+    most routable). If none is feasible, keep the candidate with the fewest
+    conflicts (the place_unplaced baseline is the reliably-feasible fallback).
+    """
+    scored: list[tuple[int, float, dict]] = []
+    for c in candidates:
+        conflicts = _count_placement_conflicts(c["bytes"])
+        score = _hpwl(c["bytes"]) if conflicts == 0 else float("inf")
+        logger.info(
+            "placement candidat %s: %d conflits, hpwl=%s",
+            c["name"], conflicts, f"{score:.1f}" if score != float("inf") else "n/a",
+        )
+        scored.append((conflicts, score, c))
+
+    feasible = [s for s in scored if s[0] == 0]
+    if feasible:
+        feasible.sort(key=lambda s: s[1])  # lowest HPWL wins
+        return feasible[0][2]
+
+    scored.sort(key=lambda s: s[0])  # fewest conflicts = least-bad fallback
+    return scored[0][2]
+
+
 def auto_place(
     kicad_pcb_b64: str,
     board_width_mm: float,
@@ -215,12 +300,12 @@ def auto_place(
         opt = Path(tmp) / "optimized.kicad_pcb"
 
         try:
-            from kicad_tools.schema.pcb import PCB
-            from kicad_tools.placement.place_unplaced import place_unplaced, _get_board_bounds
+            from kicad_tools.placement.place_unplaced import place_unplaced
 
             src.write_bytes(pcb_bytes)
 
-            # Étape 1 : place_unplaced — grille cluster-by-net
+            # Candidat A : place_unplaced — grille cluster-by-net, ligne de base
+            # toujours faisable (0 chevauchement courtyard).
             result = place_unplaced(
                 str(src), output_path=str(dst),
                 margin=3.0, spacing=3.0, cluster=True,
@@ -232,39 +317,31 @@ def auto_place(
             if not dst.exists() or placed_count == 0:
                 raise RuntimeError("place_unplaced n'a rien placé")
 
-            # Étape 2 : CMA-ES avec priors physiques (detect_power_domains +
-            # detect_signal_flow + schematic_proximity_prior) pour raffiner
-            # le résultat de place_unplaced avec les contraintes physiques réelles.
-            try:
-                ok = _optimize_with_priors(str(dst), str(opt), max_iterations=200, time_budget=60.0)
-                if ok and opt.exists():
-                    dst = opt
-                    logger.info("optimize_with_priors: placement physique activé")
-                else:
-                    # Fallback : CLI kct optimize-placement sans priors
-                    opt_r = subprocess.run(
-                        [sys.executable, "-m", "kicad_tools.cli", "optimize-placement",
-                         str(dst), "--output", str(opt), "--strategy", "cmaes"],
-                        capture_output=True, text=True, encoding="utf-8", errors="replace",
-                        timeout=90, check=False,
-                    )
-                    final_line = next(
-                        (l for l in opt_r.stdout.splitlines() if l.strip().startswith("Final:")), ""
-                    )
-                    import re as _re
-                    area_m = _re.search(r'area=([\d.]+)', final_line)
-                    area_val = float(area_m.group(1)) if area_m else 0.0
-                    feasible = "feasible" in final_line.lower() and "infeasible" not in final_line.lower()
-                    if opt.exists() and feasible and area_val > 50.0:
-                        dst = opt
-                        logger.info("kct optimize-placement CLI: %s", final_line.strip()[:70])
-            except Exception as exc:
-                logger.warning("optimize échoué (%s) — garder place_unplaced", exc)
+            candidates: list[dict] = [
+                {"name": "place_unplaced", "bytes": dst.read_bytes(),
+                 "placed_refs": result.placed_refs},
+            ]
 
+            # Candidat B : CMA-ES + priors physiques, raffiné depuis la grille.
+            # Conservé uniquement s'il est FAISABLE (0 conflit courtyard) via la
+            # sélection — son modèle d'overlap ignore le corps des modules, donc
+            # on ne lui fait pas confiance aveuglément (cf. Arduino/STM32).
+            try:
+                if _optimize_with_priors(str(dst), str(opt),
+                                         max_iterations=200, time_budget=60.0) and opt.exists():
+                    candidates.append(
+                        {"name": "cmaes", "bytes": opt.read_bytes(),
+                         "placed_refs": result.placed_refs}
+                    )
+            except Exception as exc:
+                logger.warning("CMA-ES échoué (%s) — candidat ignoré", exc)
+
+            best = _select_best_placement(candidates)
+            logger.info("placement retenu: %s", best["name"])
             return {
-                "kicad_pcb_b64": base64.b64encode(dst.read_bytes()).decode(),
+                "kicad_pcb_b64": base64.b64encode(best["bytes"]).decode(),
                 "placed_count": placed_count,
-                "positions": [{"ref": r} for r in result.placed_refs],
+                "positions": [{"ref": r} for r in best["placed_refs"]],
             }
         except Exception as exc:
             logger.warning("place_unplaced échoué (%s) — fallback pcbnew grille", exc)
