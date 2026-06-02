@@ -115,59 +115,70 @@ def auto_place(
     board_width_mm: float,
     board_height_mm: float,
 ) -> dict:
-    """Auto-placement — kct optimize-placement first, place_unplaced fallback.
+    """Pipeline placement call_agent_placement — 3 niveaux.
 
-    1. kct optimize-placement --strategy cmaes : optimal for circuits whose
-       footprints have full pad-extent bounding boxes (discrete parts).
-    2. place_unplaced(cluster=True) fallback : used when optimize-placement is
-       infeasible — large module/shield footprints (Arduino UNO R3, STM32)
-       where its pad-bbox overlap model stacks components. Lays out a clean
-       net-clustered grid on a generous board, then fits the outline.
+    Ordre optimal : place_unplaced D'ABORD (bon starting point),
+    puis kct optimize-placement TOUJOURS pour raffiner.
+
+    Niveau 1 : kicad-tools
+      a. place_unplaced(cluster=True)   ← grille initiale cluster-by-net
+         footprints déjà à (-1000,-1000) par _generate_with_kicad_tools
+      b. kct optimize-placement         ← raffine TOUJOURS depuis la grille
+         si result.area > 50mm² (pas stacked) → utilise le résultat
+
+    Niveau 2 : pcbnew grille simple
+      → si kicad-tools indisponible ou exception
+
+    Niveau 3 : TypeScript S-expr
+      → retourné comme '' par generate_pcb() → TypeScript runCircuitSynthEngine()
     """
     pcb_bytes = base64.b64decode(kicad_pcb_b64)
 
-    # --- Niveau 1 : kct optimize-placement (si feasible) ---
-    optimized = _try_optimize_placement(pcb_bytes)
-    if optimized is not None:
-        import re as _re
-        fp_count = len(_re.findall(r'\(footprint\s+"', optimized.decode("utf-8", errors="replace")))
-        return {
-            "kicad_pcb_b64": base64.b64encode(optimized).decode(),
-            "placed_count": fp_count,
-            "positions": [],
-        }
-
-    # --- Niveau 2 : place_unplaced(cluster=True) ---
+    # --- Niveau 1 : place_unplaced → puis kct optimize-placement ---
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "input.kicad_pcb"
-        dst = Path(tmp) / "output.kicad_pcb"
+        dst = Path(tmp) / "placed.kicad_pcb"
+        opt = Path(tmp) / "optimized.kicad_pcb"
 
         try:
             from kicad_tools.schema.pcb import PCB
             from kicad_tools.placement.place_unplaced import place_unplaced, _get_board_bounds
 
-            import math as _math
             src.write_bytes(pcb_bytes)
-            pcb = PCB.load(str(src))
-            n = len(list(pcb.footprints))
-            bounds = _get_board_bounds(pcb) or (0.0, 0.0, board_width_mm, board_height_mm)
-            # Footprints are already outside the board (moved by _generate_with_kicad_tools).
-            # No additional displacement needed here.
-            pcb.save(str(src))
 
-            # 3. place_unplaced clusters them into a grid inside the board
+            # Étape 1 : place_unplaced — grille cluster-by-net
             result = place_unplaced(
                 str(src), output_path=str(dst),
                 margin=3.0, spacing=3.0, cluster=True,
             )
             placed_count = len(result.placed_refs)
-            logger.info(
-                "place_unplaced: %d placés, %d overflow",
-                placed_count, len(result.overflow_refs),
-            )
+            logger.info("place_unplaced: %d placés, %d overflow",
+                        placed_count, len(result.overflow_refs))
 
-            # Board outline: keep the original dimensions (board_width_mm × board_height_mm).
-            # The placed components fit inside — no board fitting needed.
+            if not dst.exists() or placed_count == 0:
+                raise RuntimeError("place_unplaced n'a rien placé")
+
+            # Étape 2 : kct optimize-placement TOUJOURS pour raffiner
+            try:
+                opt_r = subprocess.run(
+                    [sys.executable, "-m", "kicad_tools.cli", "optimize-placement",
+                     str(dst), "--output", str(opt), "--strategy", "cmaes"],
+                    capture_output=True, text=True, timeout=90, check=False,
+                )
+                final_line = next(
+                    (l for l in opt_r.stdout.splitlines() if l.strip().startswith("Final:")), ""
+                )
+                feasible = "feasible" in final_line.lower() and "infeasible" not in final_line.lower()
+                import re as _re
+                area_m = _re.search(r'area=([\d.]+)', final_line)
+                area_val = float(area_m.group(1)) if area_m else 0.0
+                if opt.exists() and feasible and area_val > 50.0:
+                    dst = opt
+                    logger.info("optimize-placement raffiné: %s", final_line.strip()[:70])
+                else:
+                    logger.info("optimize-placement skipped (area=%.1f) — garder place_unplaced", area_val)
+            except Exception as exc:
+                logger.warning("optimize-placement échoué (%s) — garder place_unplaced", exc)
 
             return {
                 "kicad_pcb_b64": base64.b64encode(dst.read_bytes()).decode(),
