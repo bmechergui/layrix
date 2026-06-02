@@ -335,12 +335,106 @@ def _strip_power_zones(pcb_text: str) -> str:
     return "".join(out)
 
 
-def _add_power_zones(pcb_text: str) -> str:
-    """Inject GND and VCC_5V copper-pour zones — both on F.Cu.
+def _add_supply_traces(pcb_text: str) -> str:
+    """Add explicit copper traces for supply nets (VCC_5V, +5V, VCC, VDD, +3V3).
 
-    Using F.Cu for all power zones ensures SMD component pads (which only
-    exist on F.Cu) connect directly to the copper pour without needing vias.
-    Putting GND on B.Cu would leave SMD GND pads unconnected after zone fill.
+    kct route auto-skips these nets (net names containing V/VCC/VDD/+/PWR).
+    We route them as a minimum-spanning-tree daisy-chain on F.Cu using the
+    absolute pad positions already written in the PCB by the placer.
+    Pads without net assignment are skipped.
+    """
+    import math as _math
+    import uuid as _uuid
+
+    SUPPLY_NETS = {"VCC_5V", "+5V", "VCC", "VDD", "+3V3", "+3.3V", "VBUS"}
+    TRACE_WIDTH = 0.4  # mm — wider than signal traces (0.2mm)
+
+    # Build net_id → net_name map from top-level declarations
+    net_id_to_name: dict[int, str] = {}
+    for m in re.finditer(r'^\s+\(net\s+(\d+)\s+"([^"]+)"\)', pcb_text, re.MULTILINE):
+        net_id_to_name[int(m.group(1))] = m.group(2)
+
+    supply_net_ids = {nid for nid, name in net_id_to_name.items() if name in SUPPLY_NETS}
+    if not supply_net_ids:
+        return pcb_text
+
+    # Collect absolute pad positions per supply net
+    net_pads: dict[int, list[tuple[float, float]]] = {nid: [] for nid in supply_net_ids}
+
+    for fp_m in re.finditer(
+        r'\t\(footprint [^\n]+\n([\s\S]*?)(?=\n\t\(footprint |\n\t\(segment |\n\t\(zone |\Z)',
+        pcb_text,
+    ):
+        blk = fp_m.group(0)
+        at_m = re.search(r'^\t\t\(at\s+([\d.\-]+)\s+([\d.\-]+)(?:\s+([\d.\-]+))?\)', blk, re.MULTILINE)
+        if not at_m:
+            continue
+        fx, fy = float(at_m.group(1)), float(at_m.group(2))
+        rot_rad = _math.radians(float(at_m.group(3) or 0))
+        cos_r, sin_r = _math.cos(rot_rad), _math.sin(rot_rad)
+
+        for pad_m in re.finditer(r'\(pad\s+"[^"]+"\s+\w+\s+\w+\n[\s\S]{0,300}?\(net\s+(\d+)\s+', blk):
+            nid = int(pad_m.group(1))
+            if nid not in supply_net_ids:
+                continue
+            at2 = re.search(r'\(at\s+([\d.\-]+)\s+([\d.\-]+)', blk[pad_m.start():pad_m.start()+200])
+            if not at2:
+                continue
+            px, py = float(at2.group(1)), float(at2.group(2))
+            abs_x = fx + px * cos_r - py * sin_r
+            abs_y = fy + px * sin_r + py * cos_r
+            net_pads[nid].append((round(abs_x, 4), round(abs_y, 4)))
+
+    # Generate daisy-chain traces (nearest-neighbour MST approximation)
+    new_segments: list[str] = []
+    for nid, pads in net_pads.items():
+        if len(pads) < 2:
+            continue
+        # Nearest-neighbour chain starting from the pad with lowest y (closest to module)
+        remaining = list(pads)
+        remaining.sort(key=lambda p: p[1])  # start from smallest y
+        chain = [remaining.pop(0)]
+        while remaining:
+            last = chain[-1]
+            nearest = min(remaining, key=lambda p: (p[0]-last[0])**2+(p[1]-last[1])**2)
+            remaining.remove(nearest)
+            chain.append(nearest)
+
+        for i in range(len(chain) - 1):
+            x1, y1 = chain[i]
+            x2, y2 = chain[i + 1]
+            new_segments.append(
+                f'\t(segment\n'
+                f'\t\t(start {x1} {y1})\n'
+                f'\t\t(end {x2} {y2})\n'
+                f'\t\t(width {TRACE_WIDTH})\n'
+                f'\t\t(layer "F.Cu")\n'
+                f'\t\t(uuid "{_uuid.uuid4()}")\n'
+                f'\t\t(net {nid})\n'
+                f'\t)\n'
+            )
+        logger.info(
+            "_add_supply_traces: %s — %d traces pour %d pads",
+            net_id_to_name[nid], len(chain) - 1, len(chain),
+        )
+
+    if not new_segments:
+        return pcb_text
+
+    last = pcb_text.rfind(")")
+    if last < 0:
+        return pcb_text + "".join(new_segments)
+    return pcb_text[:last] + "".join(new_segments) + pcb_text[last:]
+
+
+def _add_power_zones(pcb_text: str) -> str:
+    """Inject GND copper-pour zones on BOTH F.Cu and B.Cu (double ground plane).
+
+    Standard 2-layer approach:
+    - GND plane on F.Cu  → SMD GND pads connect directly (no vias needed)
+    - GND plane on B.Cu  → full ground reference plane + THT pads connect
+    - VCC and signal nets → routed as traces by kct route (NOT as zones)
+    This ensures every GND pad connects to copper pour on its own layer.
     """
     bbox = _extract_board_bbox(pcb_text)
     if not bbox:
@@ -349,24 +443,22 @@ def _add_power_zones(pcb_text: str) -> str:
 
     x0, y0, x1, y1 = bbox
 
-    # Extract net IDs from top-level declarations only
+    # Only GND gets copper pours (both layers). VCC is routed as traces.
     seen: dict[str, tuple[int, str, str]] = {}  # net_name → (id, name, layer)
     for m in re.finditer(r'^\s{0,4}\(net\s+(\d+)\s+"([^"]+)"\)', pcb_text, re.MULTILINE):
         nid, name = int(m.group(1)), m.group(2)
-        if name in seen:
-            continue
-        # All power zones on F.Cu — SMD pads are on F.Cu, direct connection
-        if name in ("GND", "VCC_5V", "+5V", "VCC", "VDD", "+3V3", "+3.3V"):
-            seen[name] = (nid, name, "F.Cu")
+        if name == "GND" and name not in seen:
+            seen[name] = (nid, name, "F.Cu")  # will also add B.Cu below
 
     if not seen:
-        logger.info("_add_power_zones: no GND/VCC nets found")
+        logger.info("_add_power_zones: no GND net found")
         return pcb_text
 
-    zones_sexp = "".join(
-        _build_zone_sexp(*args, x0=x0, y0=y0, x1=x1, y1=y1)
-        for args in seen.values()
-    )
+    # Build GND zones on both F.Cu and B.Cu
+    zones_sexp = ""
+    for nid, name, _ in seen.values():
+        zones_sexp += _build_zone_sexp(nid, name, "F.Cu", x0=x0, y0=y0, x1=x1, y1=y1)
+        zones_sexp += _build_zone_sexp(nid, name, "B.Cu", x0=x0, y0=y0, x1=x1, y1=y1)
     last_paren = pcb_text.rfind(")")
     if last_paren < 0:
         return pcb_text
@@ -386,15 +478,14 @@ def _detect_power_nets(pcb_text: str) -> list[str]:
 
 
 def _power_nets_arg(power_nets: list[str]) -> str:
-    """Format power nets as kct '--power-nets NET:LAYER,...'.
+    """Return empty string — do NOT pass --power-nets to kct route.
 
-    Both GND and supply rails → F.Cu for simple 2-layer boards with SMD
-    components. SMD pads only exist on F.Cu; putting GND on B.Cu would require
-    vias from every SMD GND pad, leaving pads unconnected after zone fill.
-    Using F.Cu for all power zones ensures direct connectivity for SMD.
-    kct expects the NET:LAYER form; a bare net list is mis-parsed.
+    kct auto-skips any net named VCC*/GND*/+* when --power-nets is set,
+    even if that net is not in the argument. Passing nothing forces kct to
+    route ALL nets (VCC_5V, GND, DHT_DATA…) as explicit copper traces.
+    GND copper pours (F.Cu + B.Cu) are added afterward by _add_power_zones.
     """
-    return ",".join(f"{n}:F.Cu" for n in power_nets)
+    return ""
 
 
 def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
@@ -439,8 +530,11 @@ def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
 
         # kct route may create power zones with wrong layers (GND on B.Cu
         # regardless of --power-nets argument). Strip kct zones and re-inject
-        # ours (all on F.Cu so SMD pads connect without vias).
+        # ours: GND on both F.Cu and B.Cu (double ground plane).
+        # Then add explicit traces for supply nets (VCC_5V etc.) that kct
+        # auto-skips — they must appear as copper tracks, not just zones.
         routed_text = _strip_power_zones(routed_text)
+        routed_text = _add_supply_traces(routed_text)
         routed_text = _add_power_zones(routed_text)
 
         routed = routed_text.encode("utf-8")
