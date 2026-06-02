@@ -46,10 +46,3 @@ def test_low_kicad_tools_kept_when_freerouting_absent(monkeypatch):
     assert base64.b64decode(resp.kicad_pcb_b64) == b"partial"
 
 
-def test_power_nets_arg_uses_net_layer_format():
-    from routers.routing import _power_nets_arg
-    # kct auto-skips VCC/supply nets regardless — we return "" so kct routes ALL
-    # nets as traces; GND zones added afterward by _add_power_zones
-    assert _power_nets_arg(["GND", "VCC_5V"]) == ""
-    assert _power_nets_arg([]) == ""
-    assert _power_nets_arg(["GND"]) == ""

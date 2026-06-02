@@ -256,268 +256,33 @@ def _count_footprints(pcb_bytes: bytes) -> int:
     return len(re.findall(r'\(footprint\s+"', text))
 
 
-def _extract_board_bbox(pcb_text: str) -> tuple[float, float, float, float] | None:
-    """Extract board bounding box from Edge.Cuts gr_rect or gr_line elements only."""
-    # Priority 1: gr_rect on Edge.Cuts (PCBFromSchematic output)
-    m = re.search(
-        r'\(gr_rect\s+\(start\s+([\d.\-]+)\s+([\d.\-]+)\)\s+\(end\s+([\d.\-]+)\s+([\d.\-]+)\)',
-        pcb_text,
-    )
-    if m:
-        return float(m.group(1)), float(m.group(2)), float(m.group(3)), float(m.group(4))
-
-    # Priority 2: gr_line elements labeled Edge.Cuts
-    xs, ys = [], []
-    for block in re.finditer(r'\(gr_line.*?"Edge\.Cuts".*?\)', pcb_text, re.DOTALL):
-        for c in re.finditer(r'\((?:start|end)\s+([\d.\-]+)\s+([\d.\-]+)\)', block.group()):
-            xs.append(float(c.group(1)))
-            ys.append(float(c.group(2)))
-    if xs:
-        return min(xs), min(ys), max(xs), max(ys)
-    return None
-
-
-def _build_zone_sexp(net_id: int, net_name: str, layer: str,
-                     x0: float, y0: float, x1: float, y1: float,
-                     inset: float = 0.3) -> str:
-    """Build a filled copper-pour zone S-expression covering the board."""
-    import uuid as _uuid
-    xi0, yi0 = round(x0 + inset, 4), round(y0 + inset, 4)
-    xi1, yi1 = round(x1 - inset, 4), round(y1 - inset, 4)
-    uid = str(_uuid.uuid4())
-    return (
-        f'\n  (zone\n'
-        f'    (net {net_id})\n'
-        f'    (net_name "{net_name}")\n'
-        f'    (layer "{layer}")\n'
-        f'    (uuid "{uid}")\n'
-        f'    (hatch edge 0.5)\n'
-        f'    (connect_pads (clearance 0.3))\n'
-        f'    (min_thickness 0.25)\n'
-        f'    (filled_areas_thickness no)\n'
-        f'    (fill yes (thermal_gap 0.3) (thermal_bridge_width 0.4))\n'
-        f'    (polygon (pts\n'
-        f'      (xy {xi0} {yi0}) (xy {xi0} {yi1})\n'
-        f'      (xy {xi1} {yi1}) (xy {xi1} {yi0})\n'
-        f'    ))\n'
-        f'  )'
-    )
-
-
-def _strip_power_zones(pcb_text: str) -> str:
-    """Remove all top-level (zone ...) blocks from the PCB text.
-
-    Used to discard zones created by kct route (which puts GND on B.Cu
-    regardless of --power-nets argument) before injecting our own corrected zones.
-    Uses balanced-paren scanning so footprint bodies are never touched.
-    """
-    out: list[str] = []
-    i = 0
-    n = len(pcb_text)
-    while i < n:
-        if pcb_text.startswith("\t(zone", i) or pcb_text.startswith("  (zone", i) or pcb_text.startswith("(zone", i):
-            depth = 0
-            j = i
-            while j < n:
-                c = pcb_text[j]
-                if c == "(":
-                    depth += 1
-                elif c == ")":
-                    depth -= 1
-                    if depth == 0:
-                        j += 1
-                        break
-                j += 1
-            i = j  # skip entire zone block
-        else:
-            out.append(pcb_text[i])
-            i += 1
-    return "".join(out)
-
-
-def _add_supply_traces(pcb_text: str) -> str:
-    """Add explicit copper traces for supply nets (VCC_5V, +5V, VCC, VDD, +3V3).
-
-    kct route auto-skips these nets (net names containing V/VCC/VDD/+/PWR).
-    We route them as a minimum-spanning-tree daisy-chain on F.Cu using the
-    absolute pad positions already written in the PCB by the placer.
-    Pads without net assignment are skipped.
-    """
-    import math as _math
-    import uuid as _uuid
-
-    SUPPLY_NETS = {"VCC_5V", "+5V", "VCC", "VDD", "+3V3", "+3.3V", "VBUS"}
-    TRACE_WIDTH = 0.4  # mm — wider than signal traces (0.2mm)
-
-    # Build net_id → net_name map from top-level declarations
-    net_id_to_name: dict[int, str] = {}
-    for m in re.finditer(r'^\s+\(net\s+(\d+)\s+"([^"]+)"\)', pcb_text, re.MULTILINE):
-        net_id_to_name[int(m.group(1))] = m.group(2)
-
-    supply_net_ids = {nid for nid, name in net_id_to_name.items() if name in SUPPLY_NETS}
-    if not supply_net_ids:
-        return pcb_text
-
-    # Collect absolute pad positions per supply net
-    net_pads: dict[int, list[tuple[float, float]]] = {nid: [] for nid in supply_net_ids}
-
-    for fp_m in re.finditer(
-        r'\t\(footprint [^\n]+\n([\s\S]*?)(?=\n\t\(footprint |\n\t\(segment |\n\t\(zone |\Z)',
-        pcb_text,
-    ):
-        blk = fp_m.group(0)
-        at_m = re.search(r'^\t\t\(at\s+([\d.\-]+)\s+([\d.\-]+)(?:\s+([\d.\-]+))?\)', blk, re.MULTILINE)
-        if not at_m:
-            continue
-        fx, fy = float(at_m.group(1)), float(at_m.group(2))
-        rot_rad = _math.radians(float(at_m.group(3) or 0))
-        cos_r, sin_r = _math.cos(rot_rad), _math.sin(rot_rad)
-
-        for pad_m in re.finditer(r'\(pad\s+"[^"]+"\s+\w+\s+\w+\n[\s\S]{0,300}?\(net\s+(\d+)\s+', blk):
-            nid = int(pad_m.group(1))
-            if nid not in supply_net_ids:
-                continue
-            at2 = re.search(r'\(at\s+([\d.\-]+)\s+([\d.\-]+)', blk[pad_m.start():pad_m.start()+200])
-            if not at2:
-                continue
-            px, py = float(at2.group(1)), float(at2.group(2))
-            abs_x = fx + px * cos_r - py * sin_r
-            abs_y = fy + px * sin_r + py * cos_r
-            net_pads[nid].append((round(abs_x, 4), round(abs_y, 4)))
-
-    # Generate daisy-chain traces (nearest-neighbour MST approximation)
-    new_segments: list[str] = []
-    for nid, pads in net_pads.items():
-        if len(pads) < 2:
-            continue
-        # Nearest-neighbour chain starting from the pad with lowest y (closest to module)
-        remaining = list(pads)
-        remaining.sort(key=lambda p: p[1])  # start from smallest y
-        chain = [remaining.pop(0)]
-        while remaining:
-            last = chain[-1]
-            nearest = min(remaining, key=lambda p: (p[0]-last[0])**2+(p[1]-last[1])**2)
-            remaining.remove(nearest)
-            chain.append(nearest)
-
-        for i in range(len(chain) - 1):
-            x1, y1 = chain[i]
-            x2, y2 = chain[i + 1]
-            new_segments.append(
-                f'\t(segment\n'
-                f'\t\t(start {x1} {y1})\n'
-                f'\t\t(end {x2} {y2})\n'
-                f'\t\t(width {TRACE_WIDTH})\n'
-                f'\t\t(layer "F.Cu")\n'
-                f'\t\t(uuid "{_uuid.uuid4()}")\n'
-                f'\t\t(net {nid})\n'
-                f'\t)\n'
-            )
-        logger.info(
-            "_add_supply_traces: %s — %d traces pour %d pads",
-            net_id_to_name[nid], len(chain) - 1, len(chain),
-        )
-
-    if not new_segments:
-        return pcb_text
-
-    last = pcb_text.rfind(")")
-    if last < 0:
-        return pcb_text + "".join(new_segments)
-    return pcb_text[:last] + "".join(new_segments) + pcb_text[last:]
-
-
-def _add_power_zones(pcb_text: str) -> str:
-    """Inject GND copper-pour zones on BOTH F.Cu and B.Cu (double ground plane).
-
-    Standard 2-layer approach:
-    - GND plane on F.Cu  → SMD GND pads connect directly (no vias needed)
-    - GND plane on B.Cu  → full ground reference plane + THT pads connect
-    - VCC and signal nets → routed as traces by kct route (NOT as zones)
-    This ensures every GND pad connects to copper pour on its own layer.
-    """
-    bbox = _extract_board_bbox(pcb_text)
-    if not bbox:
-        logger.warning("_add_power_zones: board bbox not found — zones skipped")
-        return pcb_text
-
-    x0, y0, x1, y1 = bbox
-
-    # Only GND gets copper pours (both layers). VCC is routed as traces.
-    seen: dict[str, tuple[int, str, str]] = {}  # net_name → (id, name, layer)
-    for m in re.finditer(r'^\s{0,4}\(net\s+(\d+)\s+"([^"]+)"\)', pcb_text, re.MULTILINE):
-        nid, name = int(m.group(1)), m.group(2)
-        if name == "GND" and name not in seen:
-            seen[name] = (nid, name, "F.Cu")  # will also add B.Cu below
-
-    if not seen:
-        logger.info("_add_power_zones: no GND net found")
-        return pcb_text
-
-    # Build GND zones on both F.Cu and B.Cu
-    zones_sexp = ""
-    for nid, name, _ in seen.values():
-        zones_sexp += _build_zone_sexp(nid, name, "F.Cu", x0=x0, y0=y0, x1=x1, y1=y1)
-        zones_sexp += _build_zone_sexp(nid, name, "B.Cu", x0=x0, y0=y0, x1=x1, y1=y1)
-    last_paren = pcb_text.rfind(")")
-    if last_paren < 0:
-        return pcb_text
-    return pcb_text[:last_paren] + zones_sexp + "\n" + pcb_text[last_paren:]
-
-
-_POWER_NET_NAMES = ("GND", "VCC_5V", "+5V", "VCC", "VDD", "+3V3", "+3.3V", "VBUS")
-
-
-def _detect_power_nets(pcb_text: str) -> list[str]:
-    """Return power net names present in the PCB (for kct route --power-nets)."""
-    found = set()
-    for m in re.finditer(r'\(net\s+\d+\s+"([^"]+)"\)', pcb_text):
-        if m.group(1) in _POWER_NET_NAMES:
-            found.add(m.group(1))
-    return sorted(found)
-
-
-def _power_nets_arg(power_nets: list[str]) -> str:
-    """Return empty string — do NOT pass --power-nets to kct route.
-
-    kct auto-skips any net named VCC*/GND*/+* when --power-nets is set,
-    even if that net is not in the argument. Passing nothing forces kct to
-    route ALL nets (VCC_5V, GND, DHT_DATA…) as explicit copper traces.
-    GND copper pours (F.Cu + B.Cu) are added afterward by _add_power_zones.
-    """
-    return ""
-
-
 def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
-    """Route via the official ``kct route`` CLI command.
+    """Route via the official ``kct route`` CLI (negotiated, auto-layers, auto-fix).
 
-    Uses kicad-tools' own routing rules — signal nets routed as tracks,
-    power nets (GND, VCC_5V…) handled as copper-pour zones via --power-nets.
-    No hand-rolled S-expression manipulation.
-
-    Returns (routed_pcb_bytes, routed_percent). Raises RuntimeError on failure.
+    Delegates entirely to kicad-tools — it routes signal nets and pours power
+    nets as copper zones itself. Output is returned as-is (no custom S-expr
+    post-processing). Returns (routed_pcb_bytes, routed_percent).
+    Raises RuntimeError on failure.
     """
-    pcb_text = pcb_bytes.decode("utf-8", errors="replace")
-    power_nets = _detect_power_nets(pcb_text)
-
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "input.kicad_pcb"
         dst = Path(tmp) / "output.kicad_pcb"
         src.write_bytes(pcb_bytes)
 
+        # Official kicad-tools recipe: let kct route auto-pour power nets
+        # (GND→B.Cu, VCC→F.Cu) and route signal nets, escalating layers and
+        # auto-fixing DRC. --seed makes it deterministic.
         cmd = [
             sys.executable, "-m", "kicad_tools.cli", "route",
-            str(src), "--output", str(dst),
+            str(src), "-o", str(dst),
             "--strategy", "negotiated",
+            "--auto-layers", "--auto-fix",
+            "--seed", "42",
             "--timeout", str(_PYTHON_ROUTER_TIMEOUT_S),
         ]
-        power_arg = _power_nets_arg(power_nets)
-        if power_arg:
-            cmd += ["--power-nets", power_arg]
-
         result = subprocess.run(
             cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=_PYTHON_ROUTER_TIMEOUT_S + 30, check=False,
+            timeout=_PYTHON_ROUTER_TIMEOUT_S + 60, check=False,
         )
 
         if not dst.exists():
@@ -526,31 +291,22 @@ def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
                 f"{result.stderr[:200] or result.stdout[-200:]}"
             )
 
-        routed_text = dst.read_text(encoding="utf-8", errors="replace")
-
-        # kct route may create power zones with wrong layers (GND on B.Cu
-        # regardless of --power-nets argument). Strip kct zones and re-inject
-        # ours: GND on both F.Cu and B.Cu (double ground plane).
-        # Then add explicit traces for supply nets (VCC_5V etc.) that kct
-        # auto-skips — they must appear as copper tracks, not just zones.
-        routed_text = _strip_power_zones(routed_text)
-        routed_text = _add_supply_traces(routed_text)
-        routed_text = _add_power_zones(routed_text)
-
-        routed = routed_text.encode("utf-8")
+        # Trust the official router output as-is (no custom S-expr post-processing).
+        # Power-net pours / ground planes are the router's responsibility; if a
+        # board needs explicit zones, use the official `kct zones` command.
+        routed = dst.read_bytes()
+        routed_text = routed.decode("utf-8", errors="replace")
         seg_count = len(re.findall(r'\(segment[\s\n]', routed_text))
         zone_count = len(re.findall(r'\(zone[\s\n]', routed_text))
 
-        # Parse completion % from CLI output ("Nets routed: N/M")
+        # Parse completion % from CLI output ("Routed: N/M nets (P%)")
         routed_pct = 100
-        m = re.search(r'(\d+)\s*/\s*(\d+)\s+nets', result.stdout)
+        m = re.search(r'Routed:\s*(\d+)\s*/\s*(\d+)\s+nets', result.stdout)
         if m and int(m.group(2)) > 0:
             routed_pct = round(int(m.group(1)) / int(m.group(2)) * 100)
 
-        logger.info(
-            "kct route: %d segments, %d zones (F.Cu), power-nets=%s (%d%%)",
-            seg_count, zone_count, power_nets, routed_pct,
-        )
+        logger.info("kct route: %d segments, %d zones (%d%%)",
+                    seg_count, zone_count, routed_pct)
         return routed, routed_pct
 
 
