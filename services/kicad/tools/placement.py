@@ -75,83 +75,51 @@ def _connector_refs(pcb) -> list[str]:
 
 
 def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float) -> dict:
-    """Place automatiquement les footprints via le workflow officiel kicad-tools.
+    """Optimise le placement d'un PCB déjà placé (fichier "unrouted" produit par
+    l'agent gen) via l'API officielle ``PlacementOptimizer`` :
+      · fixed_refs        → connecteurs (J*/P*) ancrés
+      · enable_clustering → regroupe les grappes (caps/quartz près du MCU)
+      · run() + snap_rotations_to_90() → rotations cardinales
 
-    1. ``place_unplaced`` — placement initial déterministe (grille cluster-by-net).
-    2. ``kct placement optimize`` — raffinement force-directed, connecteurs fixés.
-
-    Retourne le board optimisé ; sur erreur de l'optimiseur on garde le placement
-    initial (toujours valide). Lève si même le placement initial échoue.
+    Filet : si des footprints arrivent hors-carte (vieux PCB à -1000), on fait
+    d'abord un ``place_unplaced`` pour les ramener sur la carte.
     """
     pcb_bytes = base64.b64decode(kicad_pcb_b64)
 
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "input.kicad_pcb"
-        placed = Path(tmp) / "placed.kicad_pcb"
-        optimized = Path(tmp) / "optimized.kicad_pcb"
+        out = Path(tmp) / "out.kicad_pcb"
         src.write_bytes(pcb_bytes)
 
-        from kicad_tools.placement.place_unplaced import place_unplaced
         from kicad_tools.schema.pcb import PCB
+        from kicad_tools.optim import PlacementOptimizer
 
-        # 1. Placement initial officiel (grille cluster-by-net)
-        result = place_unplaced(
-            str(src), output_path=str(placed),
-            margin=2.0, spacing=2.0, cluster=True,
-        )
-        placed_refs = list(result.placed_refs)
-        logger.info("place_unplaced: %d placés, %d overflow",
-                    len(placed_refs), len(result.overflow_refs))
-        if not placed.exists() or not placed_refs:
-            raise RuntimeError("place_unplaced n'a rien placé")
+        pcb = PCB.load(str(src))
 
-        best = placed  # fallback = placement initial (toujours valide)
+        # Filet : footprints hors-carte (vieux PCB pré-placé à -1000) → placement initial
+        if any(fp.position[0] < -100 or fp.position[1] < -100 for fp in pcb.footprints):
+            from kicad_tools.placement.place_unplaced import place_unplaced
+            place_unplaced(str(src), output_path=str(src),
+                           margin=2.0, spacing=2.0, cluster=True)
+            pcb = PCB.load(str(src))
+            logger.info("footprints hors-carte → place_unplaced appliqué")
 
-        # 2. Raffinement officiel : kct optimize-placement (CMA-ES).
-        #    Recette validée (docs/guides/placement-optimization.md) :
-        #    verrouiller les connecteurs (J*/P*) → --anchor-weight garde leurs
-        #    nets courts ; le coût wirelength groupe automatiquement les grappes
-        #    (Quartz+caps près du MCU) ; --allow-infeasible laisse le routeur
-        #    --auto-fix absorber les violations de frontière résiduelles.
-        try:
-            pcb = PCB.load(str(placed))
-            fixed = _connector_refs(pcb)
-            for fp in pcb.footprints:
-                if fp.reference in fixed:
-                    fp.locked = True
-            if fixed:
-                pcb.save(str(placed))  # persist (locked) so --anchor-weight applies
-                logger.info("connecteurs verrouillés: %s", fixed)
+        # Optimisation officielle : clustering + connecteurs ancrés
+        conn = _connector_refs(pcb)
+        opt = PlacementOptimizer.from_pcb(pcb, fixed_refs=conn, enable_clustering=True)
+        opt.run(iterations=1000)
+        opt.snap_rotations_to_90()
+        opt.write_to_pcb(pcb)
+        pcb.save(str(out))
+        logger.info("PlacementOptimizer: clustering + %d connecteurs ancrés", len(conn))
 
-            cmd = [
-                sys.executable, "-m", "kicad_tools.cli", "optimize-placement",
-                str(placed), "-o", str(optimized),
-                "--anchor-weight", "2.0",
-                "--allow-infeasible",
-                "--time-budget", "120",
-                "--seed", "force-directed",
-            ]
-            r = subprocess.run(
-                cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=180, check=False,
-            )
-            if optimized.exists():
-                best = optimized
-                logger.info("kct optimize-placement OK (rc=%s)", r.returncode)
-            else:
-                logger.warning("kct optimize-placement sans sortie (rc=%s) — garde place_unplaced",
-                               r.returncode)
-        except Exception as exc:
-            logger.warning("optimize-placement exception (%s) — garde place_unplaced", exc)
-
-        out_bytes = best.read_bytes()
-        positions = [
-            {"ref": fp.reference,
-             "x": round(fp.position[0], 2), "y": round(fp.position[1], 2)}
-            for fp in PCB.load(str(best)).footprints
-        ]
+        footprints = PCB.load(str(out)).footprints
         return {
-            "kicad_pcb_b64": base64.b64encode(out_bytes).decode(),
-            "placed_count": len(placed_refs),
-            "positions": positions,
+            "kicad_pcb_b64": base64.b64encode(out.read_bytes()).decode(),
+            "placed_count": len(footprints),
+            "positions": [
+                {"ref": fp.reference,
+                 "x": round(fp.position[0], 2), "y": round(fp.position[1], 2)}
+                for fp in footprints
+            ],
         }

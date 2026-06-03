@@ -448,21 +448,12 @@ def _generate_with_kicad_tools(
                 logger.warning("netlist niveau 3 échoué (%s)", exc)
 
         workflow.create_pcb(width=board_w, height=board_h, layers=2, title="Layrix PCB")
+        # Place les footprints SUR la carte (fichier "unrouted" = placé, sans pistes).
+        # L'agent placement (PlacementOptimizer) raffine ensuite ce placement ;
+        # plus de pré-déplacement à (-1000,-1000) — workflow officiel kicad-tools.
         workflow.place_all_components(spacing=15.0, margin=5.0)
         workflow.assign_nets()
         workflow.save(pcb_path)
-
-        # Move all footprints outside the board so the placement agent
-        # (call_agent_placement → place_unplaced) detects them as "unplaced"
-        # and applies its cluster-by-net grid placement from scratch.
-        try:
-            from kicad_tools.schema.pcb import PCB as _PCB
-            _pcb = _PCB.load(str(pcb_path))
-            for i, _fp in enumerate(_pcb.footprints):
-                _fp.position = (-1000.0 - i * 10.0, -1000.0)
-            _pcb.save(str(pcb_path))
-        except Exception as _exc:
-            logger.warning("footprint pre-unplace failed (%s)", _exc)
 
         if not pcb_path.exists():
             return None
