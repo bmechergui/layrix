@@ -128,10 +128,6 @@ function getFootprintDims(footprint: string): PadDimensions {
   return FOOTPRINT_DIMS[key ?? '0402'] ?? FOOTPRINT_DIMS['0402']!;
 }
 
-function padCount(footprint: string): number {
-  return getFootprintDims(footprint).pads.length;
-}
-
 // ============================================================
 // Net helpers — power vs signal trace widths
 // ============================================================
@@ -657,7 +653,7 @@ function generateSchematic(
   connections.forEach((conn) => {
     if (!conn.pins.length) return;
     const name = conn.name.replace(/"/g, '\\"');
-    conn.pins.forEach((pin, pinIdx) => {
+    conn.pins.forEach((pin) => {
       const idx = compIdx.get(pin.ref);
       if (idx === undefined) return;
       const { x, y } = compPos[idx]!;
