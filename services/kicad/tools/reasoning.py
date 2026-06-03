@@ -67,14 +67,16 @@ def _extract_json(text: str) -> dict | None:
 
 
 def route_with_llm(pcb_bytes: bytes, max_steps: int = _MAX_STEPS,
-                   model: str = _MODEL) -> tuple[bytes, int]:
+                   model: str = _MODEL) -> tuple[bytes, int, list[str]]:
     """Sauvetage de routage par le reasoner LLM (Claude + PCBReasoningAgent).
 
-    Retourne (pcb_bytes, routed_percent). Lève si anthropic/clé absents ou si
-    l'agent échoue à charger.
+    Retourne (pcb_bytes, routed_percent, steps_log). ``steps_log`` décrit chaque
+    action IA en français pour l'affichage UI/SSE. Lève si anthropic/clé absents.
     """
     import anthropic
     from kicad_tools.reasoning import PCBReasoningAgent
+
+    steps_log: list[str] = []
 
     with tempfile.TemporaryDirectory() as tmp:
         board = Path(tmp) / "board.kicad_pcb"
@@ -86,7 +88,7 @@ def route_with_llm(pcb_bytes: bytes, max_steps: int = _MAX_STEPS,
 
         for step in range(max_steps):
             if agent.is_complete():
-                logger.info("reasoner LLM: complet après %d étapes", step)
+                steps_log.append(f"✓ Routage complet après {step} action(s) IA")
                 break
 
             prompt = agent.get_prompt()
@@ -100,24 +102,44 @@ def route_with_llm(pcb_bytes: bytes, max_steps: int = _MAX_STEPS,
                 )
             except Exception as exc:
                 logger.warning("reasoner LLM: appel Claude échoué (%s) — stop", exc)
+                steps_log.append(f"⚠ Appel IA échoué : {exc}")
                 break
 
             text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
             command = _extract_json(text)
             if not command:
-                logger.warning("reasoner LLM: pas de JSON dans la réponse — stop")
+                steps_log.append("⚠ Pas de commande exploitable — arrêt")
                 break
 
             try:
                 result, diagnosis = agent.execute_dict(command)
-                logger.info("reasoner LLM étape %d: %s → %s",
-                            step + 1, command.get("type"),
-                            "OK" if result.success else f"échec ({diagnosis or ''[:60]})")
+                ok = "✓" if result.success else "✗"
+                desc = _describe(command)
+                steps_log.append(f"{ok} {desc}")
+                logger.info("reasoner LLM étape %d: %s", step + 1, desc)
             except Exception as exc:
-                logger.warning("reasoner LLM: commande invalide (%s) — continue", exc)
+                steps_log.append(f"⚠ Commande invalide ({command.get('type')}) — ignorée")
                 continue
 
         agent.save(str(out))
         prog = agent.get_progress()
         pct = round(prog.nets_routed / prog.nets_total * 100) if prog.nets_total else 100
-        return out.read_bytes(), pct
+        return out.read_bytes(), pct, steps_log
+
+
+def _describe(command: dict) -> str:
+    """Description FR lisible d'une commande IA, pour l'UI."""
+    t = command.get("type")
+    if t == "route_net":
+        return f"Route le net {command.get('net')}"
+    if t == "place_component":
+        ref = command.get("ref")
+        near = command.get("near")
+        return f"Déplace {ref}" + (f" près de {near}" if near else "")
+    if t == "add_via":
+        return f"Ajoute un via sur {command.get('net')}"
+    if t == "delete_trace":
+        return f"Supprime la piste {command.get('net')}"
+    if t == "define_zone":
+        return f"Crée une zone {command.get('net')} ({command.get('layer')})"
+    return f"Action : {t}"

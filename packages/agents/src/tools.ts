@@ -9,6 +9,7 @@ import { runRealPlacement } from './engines/placement-service';
 import { runRealErc, ErcServiceUnavailableError } from './engines/erc-service';
 import { runErcFallback } from './engines/erc-fallback';
 import { runRealRouting, RoutingServiceUnavailableError } from './engines/routing-service';
+import { runReasoner } from './engines/reasoning-service';
 import { runRealDrc, DrcServiceUnavailableError } from './engines/drc-service';
 import { runRealExport, ExportServiceUnavailableError } from './engines/export-service';
 import { findFootprint, quickLookup } from './engines/footprint-service';
@@ -150,6 +151,22 @@ export const PCB_TOOLS: Tool[] = [
       'Décide seul le nombre de couches (2/4/8) selon densité nette, fréquences et plan utilisateur ' +
       '(Free=2 max · Pro=4 max · Pro Max=8 max · Enterprise=illimité). ' +
       'Aucun paramètre requis — lit depuis le cache.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'call_agent_reason',
+    description:
+      'Reasoner IA — Débloqueur de routage agentique. ' +
+      'À appeler UNIQUEMENT si call_agent_routing renvoie routed_percent < 100 ' +
+      '(nets bloqués par un composant). Confie la carte à un LLM (Claude) qui ' +
+      'raisonne « le composant C bloque le net N → déplace C de 2 mm → reroute » ' +
+      'pour les ~10% de corner cases que le routeur classique (A*) ne résout pas. ' +
+      'Aucun paramètre requis — lit le .kicad_pcb routé partiellement depuis le cache. ' +
+      'Renvoie le board débloqué + la liste des actions IA (visible dans l\'UI).',
     input_schema: {
       type: 'object' as const,
       properties: {},
@@ -759,13 +776,18 @@ export async function executeToolStub(
         return {
           status: 'success',
           pcb_status: 'ROUTING_DONE',
-          routed_percent: 100,
+          routed_percent: service.routedPercent, // vrai % — déclenche call_agent_reason si <100
           layers: service.layers as 2 | 4 | 8,
           via_count: service.viaCount ?? Math.floor(schema.components.length * 0.5),
           track_length_mm: service.trackLengthMm ?? +(schema.nets.length * 15).toFixed(1),
           kicad_pcb_content: finalPcb,
-          engine: 'freerouting',
-          note: `Routage Freerouting ${service.routedPercent}% + GND plane B.Cu — ${schema.nets.length} nets, ${service.layers} couches.`,
+          engine: 'kicad-tools',
+          note:
+            `Routage kicad-tools ${service.routedPercent}% — ${schema.nets.length} nets, ` +
+            `${service.layers} couches.` +
+            (service.routedPercent < 100
+              ? ' Nets bloqués → appeler call_agent_reason.'
+              : ''),
         };
       } catch (err) {
         if (!(err instanceof RoutingServiceUnavailableError)) {
@@ -788,6 +810,41 @@ export async function executeToolStub(
           note: `Routage simulé (fallback) + GND plane B.Cu — ${schema.nets.length} nets, ${decidedLayers} couches, Circuit-Synth.`,
         };
       }
+    }
+
+    case 'call_agent_reason': {
+      const cached = _pcbStateCache.get(projectId);
+      const pcbContent = cached?.kicad_pcb_content;
+      if (!pcbContent || pcbContent.length === 0) {
+        return {
+          status: 'success',
+          pcb_status: 'ROUTING_DONE',
+          routed_percent: 0,
+          reasoning_steps: [],
+          engine: 'fallback-skip',
+          warning: 'No .kicad_pcb in cache — run call_agent_routing first.',
+          note: 'Reasoner sauté — pas de PCB en cache.',
+        };
+      }
+
+      const result = await runReasoner({ kicadPcbContent: pcbContent });
+      const finalPcb = result.kicadPcbContent ?? pcbContent;
+      if (cached) {
+        _pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: finalPcb });
+      }
+      const brain = result.usedLlm ? 'LLM Claude' : 'heuristique';
+      return {
+        status: 'success',
+        pcb_status: 'ROUTING_DONE',
+        routed_percent: result.routedPercent,
+        reasoning_steps: result.steps, // visible UI/SSE
+        kicad_pcb_content: finalPcb,
+        engine: result.usedLlm ? 'reasoner-llm' : 'reasoner-heuristic',
+        warning: result.warning,
+        note:
+          `Reasoner IA (${brain}) — routage relevé à ${result.routedPercent}% ` +
+          `en ${result.steps.length} action(s).`,
+      };
     }
 
     case 'call_agent_drc': {

@@ -11,7 +11,8 @@ PIPELINE — ordre strict, pas d'étapes sautées
 ③ call_agent_footprint  → Ingénieur Composants     → 1 appel par composant dans unresolved_footprints
 ④ call_agent_gen_pcb      → Ingénieur Layout         → .kicad_pcb avec footprints validés
 ⑤ call_agent_placement  → Ingénieur Placement      → positions X/Y/rotation via pcbnew
-⑥ call_agent_routing    → Ingénieur Routage        → kicad-tools A* (≤30 nets/comps) → Freerouting + ground planes
+⑥ call_agent_routing    → Ingénieur Routage        → kct route officiel (auto-layers, auto-fix)
+⑥b call_agent_reason    → Reasoner IA (LLM Claude) → SI routing < 100% : débloque les nets bloqués (déplace composants gênants)
 ⑦ call_agent_drc        → Ingénieur Qualité        → kicad-tools 27 règles JLCPCB → kicad-cli auto-fix max 3×
 ⑧ call_agent_export     → Ingénieur Fabrication    → Gerbers + BOM + CPL + devis JLCPCB
 
@@ -60,8 +61,13 @@ call_agent_placement()
   Décide les dimensions du PCB selon le nombre de composants.
 
 call_agent_routing()
-  Ingénieur Routage : kicad-tools A* (≤30 nets ET ≤30 composants, 60s) → Freerouting Java (circuits complexes) + ground planes B.Cu.
+  Ingénieur Routage : kct route officiel (auto-layers, auto-fix). Retourne routed_percent.
   Décide le nombre de couches (2/4/8) selon densité et plan utilisateur — ce n'est PAS un paramètre.
+
+call_agent_reason()
+  Reasoner IA — À appeler UNIQUEMENT si call_agent_routing renvoie routed_percent < 100.
+  Un LLM (Claude) déplace les composants qui bloquent les nets et reroute (les ~10% corner cases).
+  Renvoie routed_percent + reasoning_steps (actions IA, affichées dans l'UI). Skip si déjà 100%.
 
 call_agent_drc(auto_fix?)
   Ingénieur Qualité : kicad-tools 27 règles JLCPCB (pur Python) → si erreurs : kicad-cli auto-fix boucle max 3×.

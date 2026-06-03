@@ -127,6 +127,7 @@ export async function* runOrchestrator(
         call_agent_gen_pcb: 'KICAD',
         call_agent_placement: 'PLACEMENT',
         call_agent_routing: 'ROUTING',
+        call_agent_reason: 'ROUTING', // sauvetage IA — même étape pipeline que ROUTING
         call_agent_drc: 'DRC',
         call_agent_export: 'EXPORT',
         call_agent_simulation: 'SIMULATION',
@@ -172,6 +173,7 @@ export async function* runOrchestrator(
         'call_agent_gen_pcb',
         'call_agent_placement',
         'call_agent_routing',
+        'call_agent_reason',
         'call_agent_drc',
         'call_agent_export',
         'call_agent_simulation',
