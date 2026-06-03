@@ -78,11 +78,14 @@ Pipeline 8 agents (ordre strict) :
    ① kct route --strategy negotiated --auto-layers --auto-fix --seed (zones power + signaux)
    ② Freerouting REST API / subprocess (fallback historique, port 37864)
    → renvoie routed_percent réel (plus de hardcode 100)
-⑥b `call_agent_reason` → Reasoner IA  [AGENT SÉPARÉ visible orchestrateur, SI < 100%]
+⑥b Reasoner IA  [SOUS-ÉTAPE DÉTERMINISTE — déclenchée par orchestrator.ts, PAS par Sonnet]
+   Trigger : SI routed_percent < 100 → l'orchestrateur lance call_agent_reason (shouldRescueRouting).
+   Retiré de ACTIVE_PCB_TOOLS (Sonnet ne le voit plus → zéro double-appel). Résultat fusionné
+   dans le tool_result routage (mergeRescueIntoRouting — ne peut qu'améliorer, jamais régresser).
    ① PCBReasoningAgent + Claude Haiku (si ANTHROPIC_API_KEY) — boucle get_prompt→Claude→execute
    ② sinon kct reason --auto-route (heuristique sans LLM)
    → reasoning_steps → event SSE `reasoning` → ChatRail affiche les actions IA temps-réel
-   Fix 34be8ae : _refresh_agent resync l'état (PCBReasoningAgent ne le fait pas → pct sous-évalué)
+   Fix 34be8ae : _refresh_agent resync l'état · Trigger déterministe : commit 13b919c (TDD)
 ⑦ `call_agent_drc` → Ingénieur Qualité
    ① kicad-tools 27 règles JLCPCB · ② kicad-cli auto-fix max 3× · ③ skipped
 ⑧ `call_agent_export` → Ingénieur Fabrication

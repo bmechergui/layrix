@@ -213,19 +213,25 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
         pour les power nets en zones + route les signaux + escalade couches)
      ② Freerouting REST API / subprocess — fallback historique (port 37864)
      → renvoie routed_percent RÉEL (tools.ts : plus jamais hardcodé 100)
-  ⑥b call_agent_reason    → Reasoner IA   [AGENT SÉPARÉ, visible orchestrateur]
-     À appeler UNIQUEMENT si call_agent_routing renvoie routed_percent < 100.
+  ⑥b Reasoner IA   [SOUS-ÉTAPE DÉTERMINISTE de ROUTING — déclenchée par CODE, pas par Sonnet]
+     orchestrator.ts : SI call_agent_routing renvoie routed_percent < 100, l'orchestrateur
+     lance LUI-MÊME call_agent_reason (règle métier à seuil, shouldRescueRouting()).
+     ⚠️ RETIRÉ de ACTIVE_PCB_TOOLS → Sonnet ne le voit plus, ne peut pas l'appeler
+        (zéro double-appel). Le handler reste actif dans tools.ts (appelé par code).
+     Résultat fusionné dans le tool_result du routage (mergeRescueIntoRouting, même
+     tool_use_id → API valide ; garde anti-régression : le reasoner ne peut qu'AMÉLIORER).
      POST /reason/auto
      ① reasoner LLM — PCBReasoningAgent + Claude Haiku (tools/reasoning.py)
         si ANTHROPIC_API_KEY → "C bloque le net → déplace C de 2mm → reroute"
         boucle get_prompt → Claude → execute_dict, max_steps bornés
      ② sinon kct reason --auto-route (heuristique, sans LLM)
-     → renvoie reasoning_steps : orchestrator.ts émet un event SSE `reasoning`
-       → orchestrator-bridge → ChatRail affiche les actions IA EN TEMPS RÉEL
+     → reasoning_steps : orchestrator.ts émet un event SSE `reasoning` → orchestrator-bridge
+       → ChatRail affiche les actions IA EN TEMPS RÉEL
        (« 🤖 Reasoner IA — déblocage du routage : déplace C12 près de U1… »)
      ⚠️ Fix 34be8ae : _refresh_agent recharge l'état après chaque commande réussie
         — PCBReasoningAgent ne resync pas PCBState en session → sinon pct=0 sur
         un board routé à 100% + boucle infinie jusqu'à max_steps. Voir notefinal.md
+     Trigger déterministe : commit 13b919c (shouldRescueRouting/mergeRescueIntoRouting, TDD)
   ⑦ call_agent_drc        → Ingénieur Qualité (boucle max 3×)
      POST /drc/auto
      ① kicad-tools Python DRC 27 règles JLCPCB — pur Python, toujours dispo

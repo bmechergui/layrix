@@ -954,6 +954,40 @@ features/workspace/{lib/agent-client.ts, ui/ChatRail.tsx}}`.
 
 ---
 
+### 2026-06-03 — Déclenchement DÉTERMINISTE du reasoner (code, pas jugement LLM)
+
+**Décision :** Le déclenchement de `call_agent_reason` passe de « soft » (Sonnet
+décide via un tool) à **déterministe (code)**. Après `call_agent_routing`, si
+`routed_percent < 100`, l'orchestrateur (`orchestrator.ts`) lance **lui-même** le
+reasoner. `call_agent_reason` est **retiré de `ACTIVE_PCB_TOOLS`** → Sonnet ne le
+voit plus, ne peut pas l'appeler (zéro double-appel) ; son handler reste actif,
+invoqué par code. Le board débloqué est fusionné dans le tool_result du routage
+(`mergeRescueIntoRouting`, même tool_use_id → API Anthropic valide).
+
+**Pourquoi :** « faut-il secourir le routage ? » est une **règle métier à seuil**
+(pct < 100), pas un jugement → doit vivre dans le code, pas dans un prompt. Gains :
+garantie de déclenchement (plus de board incomplet livré silencieusement, cf.
+« NEVER accepter routing < 100% »), jamais d'appel à tort à 100% (coût Haiku),
+1 itération Sonnet économisée, décision **testable** (TDD). Le jugement LLM reste
+là où il a de la valeur : **à l'intérieur** du reasoner (quel composant déplacer).
+
+**Garde anti-régression :** `mergeRescueIntoRouting` n'adopte le résultat du
+reasoner que s'il **améliore** (pct ≥ routage + board présent) — un reasoner
+indisponible (0%) ne fait jamais régresser 95% → 0%.
+
+**Visibilité conservée :** event SSE `reasoning` + `pcb_state` (board final) émis ;
+ChatRail temps-réel inchangé. « un seul l'orchestrateur » renforcé (le code maître,
+plus l'humeur de Sonnet).
+
+**Écarté :** garder le trigger LLM (non-déterministe, non-testable) ; double trigger
+code+LLM (risque double-spend) → on retire le tool de la liste à la place.
+
+**Fichiers concernés :** `packages/agents/src/{orchestrator.ts (shouldRescueRouting,
+mergeRescueIntoRouting, trigger), tools.ts (filtre ACTIVE_PCB_TOOLS + note),
+prompts.ts (reasoner = automatique), tests/orchestrator-reason.test.ts}`. Commit 13b919c.
+
+---
+
 ## Template pour la prochaine décision
 
 ```
