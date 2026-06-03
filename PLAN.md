@@ -76,9 +76,13 @@ Pipeline 8 agents (ordre strict) :
    (caps/quartz près du MCU). Filet : place_unplaced si footprints hors-carte.
 ⑥ `call_agent_routing` → Ingénieur Routage  [OFFICIEL kicad-tools]
    ① kct route --strategy negotiated --auto-layers --auto-fix --seed (zones power + signaux)
-   ② Sauvetage agentique si < 100% : reasoner LLM (PCBReasoningAgent + Claude Haiku,
-      si ANTHROPIC_API_KEY) sinon kct reason --auto-route (heuristique)
-   ③ Freerouting REST API / subprocess (fallback historique, port 37864)
+   ② Freerouting REST API / subprocess (fallback historique, port 37864)
+   → renvoie routed_percent réel (plus de hardcode 100)
+⑥b `call_agent_reason` → Reasoner IA  [AGENT SÉPARÉ visible orchestrateur, SI < 100%]
+   ① PCBReasoningAgent + Claude Haiku (si ANTHROPIC_API_KEY) — boucle get_prompt→Claude→execute
+   ② sinon kct reason --auto-route (heuristique sans LLM)
+   → reasoning_steps → event SSE `reasoning` → ChatRail affiche les actions IA temps-réel
+   Fix 34be8ae : _refresh_agent resync l'état (PCBReasoningAgent ne le fait pas → pct sous-évalué)
 ⑦ `call_agent_drc` → Ingénieur Qualité
    ① kicad-tools 27 règles JLCPCB · ② kicad-cli auto-fix max 3× · ③ skipped
 ⑧ `call_agent_export` → Ingénieur Fabrication

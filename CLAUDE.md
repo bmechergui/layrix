@@ -211,11 +211,21 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      POST /route/auto
      ① kct route --strategy negotiated --auto-layers --auto-fix --seed (officiel,
         pour les power nets en zones + route les signaux + escalade couches)
-     ② Sauvetage agentique si complétion < 100% (les ~10% corner cases) :
-        · reasoner LLM — PCBReasoningAgent + Claude Haiku (tools/reasoning.py)
-          si ANTHROPIC_API_KEY → "C bloque le net → déplace C de 2mm → reroute"
-        · sinon kct reason --auto-route (heuristique, sans LLM)
-     ③ Freerouting REST API / subprocess — fallback historique (port 37864)
+     ② Freerouting REST API / subprocess — fallback historique (port 37864)
+     → renvoie routed_percent RÉEL (tools.ts : plus jamais hardcodé 100)
+  ⑥b call_agent_reason    → Reasoner IA   [AGENT SÉPARÉ, visible orchestrateur]
+     À appeler UNIQUEMENT si call_agent_routing renvoie routed_percent < 100.
+     POST /reason/auto
+     ① reasoner LLM — PCBReasoningAgent + Claude Haiku (tools/reasoning.py)
+        si ANTHROPIC_API_KEY → "C bloque le net → déplace C de 2mm → reroute"
+        boucle get_prompt → Claude → execute_dict, max_steps bornés
+     ② sinon kct reason --auto-route (heuristique, sans LLM)
+     → renvoie reasoning_steps : orchestrator.ts émet un event SSE `reasoning`
+       → orchestrator-bridge → ChatRail affiche les actions IA EN TEMPS RÉEL
+       (« 🤖 Reasoner IA — déblocage du routage : déplace C12 près de U1… »)
+     ⚠️ Fix 34be8ae : _refresh_agent recharge l'état après chaque commande réussie
+        — PCBReasoningAgent ne resync pas PCBState en session → sinon pct=0 sur
+        un board routé à 100% + boucle infinie jusqu'à max_steps. Voir notefinal.md
   ⑦ call_agent_drc        → Ingénieur Qualité (boucle max 3×)
      POST /drc/auto
      ① kicad-tools Python DRC 27 règles JLCPCB — pur Python, toujours dispo

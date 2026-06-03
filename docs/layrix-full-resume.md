@@ -582,3 +582,37 @@ Les Avantages :
 Intégration Google Drive parfaite : C'est l'argument numéro 1 pour l'Apprentissage par Renforcement (RL). L'entraînement RL prend du temps. Avec Colab, vous pouvez sauvegarder votre modèle (model.pt ou model.onnx) directement sur votre Google Drive à chaque itération. Si ça crashe, vous ne perdez rien.
 Accès à des GPU surpuissants (comme les fameux A100 ou V100) qui accéléreront drastiquement la simulation de votre environnement KiCad virtuel.
 Les sessions peuvent durer jusqu'à 24 heures
+
+
+## Agent Raisonneur (`call_agent_reason`) — sauvetage de routage par IA
+
+`kct route` (A*) route ~90 % automatiquement. Les ~10 % de corner cases (pin
+enterré, canal bloqué par un composant) sont confiés à un **8ᵉ agent séparé,
+visible et piloté par l'orchestrateur** : `call_agent_reason`.
+
+Pipeline réel = **workflow OFFICIEL kicad-tools, API Python** (⚠️ PAS les flags
+`--thermal / --grouping / --anchor-weight` : ils N'EXISTENT PAS dans le dépôt) :
+
+```
+① call_agent_gen_pcb   → PCB "unrouted" = footprints PLACÉS (pas de -1000)
+② call_agent_placement → PlacementOptimizer.from_pcb(pcb, fixed_refs=<J*/P*>,
+     enable_clustering=True).run().snap_rotations_to_90().write_to_pcb()
+③ call_agent_routing   → kct route --strategy negotiated --auto-layers --auto-fix
+                         → renvoie routed_percent réel
+④ call_agent_reason    → SI routing < 100 % : PCBReasoningAgent + Claude Haiku
+     boucle get_prompt → Claude décide une commande JSON (route_net /
+     place_component / add_via / delete_trace / define_zone) → execute_dict.
+     Sinon `kct reason --auto-route` (heuristique sans LLM).
+⑤ call_agent_drc → 27 règles JLCPCB · ⑥ call_agent_export → Gerbers + BOM + CPL
+```
+
+**Visibilité temps-réel :** l'orchestrateur émet un event SSE `reasoning` après
+chaque tour du raisonneur → le ChatRail affiche les actions IA en direct
+(« 🤖 Reasoner IA — déblocage du routage : déplace C12 près de U1… »).
+
+**Gotcha corrigé (TDD, commit 34be8ae) :** `PCBReasoningAgent` ne resynchronise
+pas `PCBState` en session → `route_with_llm` rapportait 0 % sur un board routé à
+100 %. Fix : `_refresh_agent()` recharge l'état après chaque commande réussie.
+
+La solution du futur : L'Agent IA Raisonneur (`call_agent_reason`)
+C'est la fonctionnalité la plus innovante de kicad-tools. Au lieu d'utiliser des mathématiques pures ou des règles strictes, vous confiez la carte à un Modèle de Langage (LLM) intégré

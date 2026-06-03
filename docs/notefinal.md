@@ -922,6 +922,38 @@ pipeline_pro.sh}` (démo versionnée).
 
 ---
 
+### 2026-06-03 — Reasoner = agent séparé visible + affichage UI temps-réel + fix pct
+
+**Décision :** Le sauvetage de routage (`PCBReasoningAgent` + Claude) devient un
+**agent à part entière** `call_agent_reason` (`⑥b`), visible et piloté par
+l'orchestrateur — plus un sous-appel caché dans `call_agent_routing`. L'orchestrateur
+l'appelle UNIQUEMENT si `call_agent_routing` renvoie `routed_percent < 100`.
+
+**Visibilité UI (commit d7a0f07) :** chaque tour du raisonneur remonte
+`reasoning_steps` → `orchestrator.ts` émet un event `reasoning` → `orchestrator-bridge`
+→ SSE → `ChatRail` affiche les actions IA en direct (« 🤖 Reasoner IA — déblocage du
+routage : déplace C12 près de U1… »). `tools.ts` renvoie désormais le `routed_percent`
+réel (fini le hardcode 100).
+
+**Bug corrigé (TDD, commit 34be8ae) :** `PCBReasoningAgent` écrit les pistes dans
+l'éditeur mais ne resynchronise pas `PCBState.nets[*].traces` ; `NetState.is_routed`
+(= traces présentes) reste False en session → `route_with_llm` renvoyait **0 % sur un
+board réellement routé à 100 %** et ne voyait jamais `is_complete` (boucle jusqu'à
+`max_steps`, ~15 appels Claude gaspillés + escalade Freerouting inutile). Fix :
+`_refresh_agent()` recharge l'état après chaque commande réussie (history préservé) ;
+`_claude_decider()` rend la boucle testable sans `ANTHROPIC_API_KEY`. **Découvert en
+testant le reasoner « moi = le LLM »** → routé 0 %→100 %.
+
+**Écarté :** patcher la lib vendorée kicad_tools — le fix tient entièrement dans
+`tools/reasoning.py`.
+
+**Fichiers concernés :** `services/kicad/{tools/reasoning.py, tests/test_reasoning.py}`
+· `packages/agents/src/{orchestrator.ts, tools.ts, engines/reasoning-service.ts}` ·
+`apps/web/src/{app/api/agent/lib/{orchestrator-bridge.ts, sse.ts},
+features/workspace/{lib/agent-client.ts, ui/ChatRail.tsx}}`.
+
+---
+
 ## Template pour la prochaine décision
 
 ```
