@@ -66,17 +66,66 @@ def _extract_json(text: str) -> dict | None:
         return None
 
 
+def _claude_decider(model: str):
+    """Décideur par défaut : un appel Claude (Haiku) → une commande JSON dict.
+
+    Isolé pour permettre l'injection d'un décideur déterministe dans les tests
+    (sans ANTHROPIC_API_KEY).
+    """
+    import anthropic
+
+    client = anthropic.Anthropic()  # lit ANTHROPIC_API_KEY
+
+    def decide(prompt: str) -> dict | None:
+        resp = client.messages.create(
+            model=model,
+            max_tokens=512,
+            system=[{"type": "text", "text": _SYSTEM_PROMPT,
+                     "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+        return _extract_json(text)
+
+    return decide
+
+
+def _refresh_agent(agent, board: Path):
+    """Resynchronise l'état de l'agent depuis le board sauvegardé.
+
+    L'interpréteur écrit les pistes routées dans l'éditeur mais NE remet PAS à
+    jour ``PCBState.nets[*].traces`` ; ``NetState.is_routed`` (= traces présentes)
+    reste donc False en session → ``get_progress``/``is_complete``/``unrouted_nets``
+    périmés (pct sous-évalué, boucle qui ne s'arrête jamais). Recharger re-dérive
+    ces champs depuis le board. ``history`` est préservé pour que le LLM garde son
+    journal d'actions au prompt suivant. Coût négligeable : reasoner = ~10% corner
+    cases, max_steps bornés, parsing < appel Claude.
+    """
+    from kicad_tools.reasoning import PCBReasoningAgent
+
+    agent.save(str(board))
+    fresh = PCBReasoningAgent.from_pcb(str(board))
+    fresh.history = agent.history
+    fresh.step_count = agent.step_count
+    fresh.initial_unrouted = agent.initial_unrouted
+    fresh.initial_violations = agent.initial_violations
+    return fresh
+
+
 def route_with_llm(pcb_bytes: bytes, max_steps: int = _MAX_STEPS,
-                   model: str = _MODEL) -> tuple[bytes, int, list[str]]:
+                   model: str = _MODEL, *,
+                   decide=None) -> tuple[bytes, int, list[str]]:
     """Sauvetage de routage par le reasoner LLM (Claude + PCBReasoningAgent).
 
     Retourne (pcb_bytes, routed_percent, steps_log). ``steps_log`` décrit chaque
-    action IA en français pour l'affichage UI/SSE. Lève si anthropic/clé absents.
+    action IA en français pour l'affichage UI/SSE. ``decide`` est le décideur
+    (prompt → commande dict) ; par défaut Claude Haiku (nécessite la clé).
     """
-    import anthropic
     from kicad_tools.reasoning import PCBReasoningAgent
 
     steps_log: list[str] = []
+    if decide is None:
+        decide = _claude_decider(model)
 
     with tempfile.TemporaryDirectory() as tmp:
         board = Path(tmp) / "board.kicad_pcb"
@@ -84,7 +133,6 @@ def route_with_llm(pcb_bytes: bytes, max_steps: int = _MAX_STEPS,
         board.write_bytes(pcb_bytes)
 
         agent = PCBReasoningAgent.from_pcb(str(board))
-        client = anthropic.Anthropic()  # lit ANTHROPIC_API_KEY
 
         for step in range(max_steps):
             if agent.is_complete():
@@ -93,33 +141,31 @@ def route_with_llm(pcb_bytes: bytes, max_steps: int = _MAX_STEPS,
 
             prompt = agent.get_prompt()
             try:
-                resp = client.messages.create(
-                    model=model,
-                    max_tokens=512,
-                    system=[{"type": "text", "text": _SYSTEM_PROMPT,
-                             "cache_control": {"type": "ephemeral"}}],
-                    messages=[{"role": "user", "content": prompt}],
-                )
+                command = decide(prompt)
             except Exception as exc:
-                logger.warning("reasoner LLM: appel Claude échoué (%s) — stop", exc)
+                logger.warning("reasoner LLM: décision échouée (%s) — stop", exc)
                 steps_log.append(f"⚠ Appel IA échoué : {exc}")
                 break
 
-            text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
-            command = _extract_json(text)
             if not command:
                 steps_log.append("⚠ Pas de commande exploitable — arrêt")
                 break
 
             try:
-                result, diagnosis = agent.execute_dict(command)
-                ok = "✓" if result.success else "✗"
-                desc = _describe(command)
-                steps_log.append(f"{ok} {desc}")
-                logger.info("reasoner LLM étape %d: %s", step + 1, desc)
-            except Exception as exc:
+                result, _diagnosis = agent.execute_dict(command)
+            except Exception:
                 steps_log.append(f"⚠ Commande invalide ({command.get('type')}) — ignorée")
                 continue
+
+            ok = "✓" if result.success else "✗"
+            desc = _describe(command)
+            steps_log.append(f"{ok} {desc}")
+            logger.info("reasoner LLM étape %d: %s", step + 1, desc)
+
+            if result.success:
+                # Resynchronise l'état (cf. _refresh_agent) : sans ça is_complete
+                # reste False et le pct final est sous-évalué malgré un board routé.
+                agent = _refresh_agent(agent, board)
 
         agent.save(str(out))
         prog = agent.get_progress()
