@@ -1,10 +1,38 @@
 """
 Layrix KiCad Service — FastAPI headless
-Routes : /health, /place, /route, /drc, /drc/fix, /export/gerbers, /export/step, /export/bom, /simulate
-         /schematic/generate (JSON schema → .kicad_sch + .kicad_pcb — custom Layrix generator, see routers/kicad_gen.py)
+Endpoints actifs (tous via routers/) :
+  /health
+  /schematic/execute · /schematic/generate · /schematic/validate-symbols
+  /pcb/generate
+  /place/auto · /erc · /route/auto · /drc/auto · /export/all · /simulate/auto
 """
 
 import os
+import sys as _sys
+
+# Use Layrix-patched copies of circuit_synth and kicad_tools (in services/kicad/).
+# These contain bug fixes and extensions not in the original packages.
+# Priority: local patched copy → installed package.
+# PYTHONPATH is updated too so CLI subprocesses (`python -m kicad_tools.cli route`
+# in routers/routing.py and tools/placement.py) inherit the patched copies — an
+# in-process sys.path insert does not propagate to child processes. In Docker
+# kicad_tools is pip-installed (editable), so subprocesses already resolve it;
+# prepending the same source dir here is redundant but harmless.
+_here = os.path.dirname(__file__)
+_patched_dirs: list[str] = []
+for _lib in ["circuit_synth/src", "kicad-tools/src"]:
+    _lib_path = os.path.join(_here, _lib)
+    if os.path.isdir(_lib_path):
+        if _lib_path not in _sys.path:
+            _sys.path.insert(0, _lib_path)
+        _patched_dirs.append(_lib_path)
+
+if _patched_dirs:
+    _existing_pp = os.environ.get("PYTHONPATH", "")
+    _pp_parts = [p for p in (_existing_pp.split(os.pathsep) if _existing_pp else []) if p]
+    os.environ["PYTHONPATH"] = os.pathsep.join(
+        _patched_dirs + [p for p in _pp_parts if p not in _patched_dirs]
+    )
 
 # Ensure KiCad symbol library path is set BEFORE importing any router that probes it.
 # Priority: env var → repo-local kicad-symbols/ → Windows KiCad install.
@@ -21,10 +49,40 @@ if not os.environ.get("KICAD_SYMBOL_DIR"):
             os.environ["KICAD_SYMBOL_DIR"] = _dir
             break
 
-from fastapi import FastAPI, HTTPException
+if not os.environ.get("KICAD_FOOTPRINT_DIR"):
+    _fp_candidates = [
+        r"C:\Program Files\KiCad\10.99\share\kicad\footprints",
+        r"C:\Program Files\KiCad\9.0\share\kicad\footprints",
+        r"C:\Program Files\KiCad\8.0\share\kicad\footprints",
+        "/usr/share/kicad/footprints",  # Linux/Docker
+    ]
+    for _dir in _fp_candidates:
+        if os.path.isdir(_dir):
+            os.environ["KICAD_FOOTPRINT_DIR"] = _dir
+            break
+
+# Ensure kicad-cli is in PATH so PCBFromSchematic uses it for netlist export.
+# Without kicad-cli, export_netlist falls back to pure Python extraction which
+# does NOT resolve hierarchical labels from circuit_synth schematics — causing
+# R1.pin2 to become Net-(R1-2) instead of DHT_DATA.
+import shutil as _shutil
+if not _shutil.which("kicad-cli"):
+    _cli_candidates = [
+        r"C:\Program Files\KiCad\10.99\bin",
+        r"C:\Program Files\KiCad\9.0\bin",
+        r"C:\Program Files\KiCad\8.0\bin",
+        "/usr/bin",        # Linux/Docker (kicad-cli in PATH by default)
+        "/usr/local/bin",
+    ]
+    import os as _os
+    for _bin in _cli_candidates:
+        if _os.path.isfile(_os.path.join(_bin, "kicad-cli")) or \
+           _os.path.isfile(_os.path.join(_bin, "kicad-cli.exe")):
+            _os.environ["PATH"] = _bin + _os.pathsep + _os.environ.get("PATH", "")
+            break
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from typing import Optional
 import os
 import logging
 
@@ -49,40 +107,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ============================================================
-# Modèles Pydantic
-# ============================================================
+# Schematic router — /schematic/execute · /schematic/generate · /schematic/validate-symbols
+from routers.schematic import router as schematic_router  # noqa: E402
+app.include_router(schematic_router)
 
-class RoutingRequest(BaseModel):
-    pcb_path: str
-    output_path: str
-    timeout: int = Field(default=300, ge=30, le=600)
-
-class DRCRequest(BaseModel):
-    pcb_path: str
-
-class DRCFix(BaseModel):
-    type: str  # "widen_track" | "add_via" | "refill_zones" | "apply_teardrops"
-    params: dict = {}
-
-class DRCFixRequest(BaseModel):
-    pcb_path: str
-    fixes: list[DRCFix]
-    output_path: str
-
-class ExportRequest(BaseModel):
-    pcb_path: str
-    output_dir: str
-    project_id: str
-
-class SimulationRequest(BaseModel):
-    netlist_path: str
-    sim_type: str = "transient"  # "dc" | "transient" | "ac" | "noise"
-    output_dir: str
-
-# KiCad file generator router — JSON schema → .kicad_sch (circuit_synth) + .kicad_pcb (Python S-expr)
-from routers.kicad_gen import router as kicad_gen_router  # noqa: E402
-app.include_router(kicad_gen_router)
+# PCB router — /pcb/generate
+from routers.pcb import router as pcb_router  # noqa: E402
+app.include_router(pcb_router)
 
 # Placement router — /place (explicit) + /place/auto (grid algorithm, base64 I/O)
 from routers.placement import router as placement_router  # noqa: E402
@@ -96,6 +127,9 @@ app.include_router(erc_router)
 from routers.routing import router as routing_router  # noqa: E402
 app.include_router(routing_router)
 
+from routers.reasoning import router as reasoning_router  # noqa: E402
+app.include_router(reasoning_router)
+
 # DRC router — /drc/auto (base64 I/O, kicad-cli pcb drc with auto-fix loop)
 from routers.drc import router as drc_router  # noqa: E402
 app.include_router(drc_router)
@@ -108,10 +142,6 @@ app.include_router(export_router)
 from routers.simulate import router as simulate_router  # noqa: E402
 app.include_router(simulate_router)
 
-# ============================================================
-# Routes
-# ============================================================
-
 @app.get("/health")
 def health():
     return {
@@ -120,49 +150,3 @@ def health():
         "version": "1.0.0",
     }
 
-@app.post("/route")
-def route(req: RoutingRequest):
-    if not PCBNEW_AVAILABLE:
-        raise HTTPException(status_code=503, detail="pcbnew non disponible")
-    from tools.routing import route_with_freerouting
-    return route_with_freerouting(req.pcb_path, req.output_path, req.timeout)
-
-@app.post("/drc")
-def drc(req: DRCRequest):
-    if not PCBNEW_AVAILABLE:
-        raise HTTPException(status_code=503, detail="pcbnew non disponible")
-    from tools.drc import run_drc
-    return run_drc(req.pcb_path)
-
-@app.post("/drc/fix")
-def drc_fix(req: DRCFixRequest):
-    if not PCBNEW_AVAILABLE:
-        raise HTTPException(status_code=503, detail="pcbnew non disponible")
-    from tools.drc import apply_drc_fixes
-    return apply_drc_fixes(req.pcb_path, [f.model_dump() for f in req.fixes], req.output_path)
-
-@app.post("/export/gerbers")
-def export_gerbers(req: ExportRequest):
-    if not PCBNEW_AVAILABLE:
-        raise HTTPException(status_code=503, detail="pcbnew non disponible")
-    from tools.export import export_gerbers as _export
-    return _export(req.pcb_path, req.output_dir)
-
-@app.post("/export/step")
-def export_step(req: ExportRequest):
-    if not PCBNEW_AVAILABLE:
-        raise HTTPException(status_code=503, detail="pcbnew non disponible")
-    from tools.export import export_step as _export
-    return _export(req.pcb_path, req.output_dir)
-
-@app.post("/export/bom")
-def export_bom(req: ExportRequest):
-    if not PCBNEW_AVAILABLE:
-        raise HTTPException(status_code=503, detail="pcbnew non disponible")
-    from tools.export import export_bom as _export
-    return _export(req.pcb_path, req.output_dir)
-
-@app.post("/simulate")
-def simulate(req: SimulationRequest):
-    from tools.simulation import run_simulation
-    return run_simulation(req.netlist_path, req.sim_type, req.output_dir)

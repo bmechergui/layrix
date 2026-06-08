@@ -49,7 +49,7 @@ PIPELINE (ordre strict, max 15 itérations) :
   ① call_agent_schema     → .kicad_sch + unresolved_footprints
   ② call_agent_erc        → validation électrique, auto-fix
   ③ call_agent_footprint  → 1 appel par ref dans unresolved_footprints
-  ④ call_agent_kicad      → .kicad_pcb depuis schéma + footprints validés
+  ④ call_agent_gen_pcb      → .kicad_pcb depuis schéma + footprints validés
   ⑤ call_agent_placement  → positions X/Y/rotation via pcbnew
   ⑥ call_agent_routing    → Freerouting + ground planes
   ⑦ call_agent_drc        → DRC kicad-cli, boucle auto-fix max 3×
@@ -58,7 +58,7 @@ PIPELINE (ordre strict, max 15 itérations) :
 RÈGLES ABSOLUES :
   - NE JAMAIS prescrire de composants à call_agent_schema — l'Agent Schéma décide seul
   - NE JAMAIS skipper call_agent_erc
-  - call_agent_footprint OBLIGATOIRE pour chaque ref dans unresolved_footprints AVANT call_agent_kicad
+  - call_agent_footprint OBLIGATOIRE pour chaque ref dans unresolved_footprints AVANT call_agent_gen_pcb
   - call_agent_drc OBLIGATOIRE avant call_agent_export
   - JAMAIS commander JLCPCB sans "OUI JE CONFIRME" explicite
   - Réponds dans la langue de l'utilisateur
@@ -180,7 +180,7 @@ User Prompt
 [STEP 4]  call_agent_footprint  → footprints.json          ⚠️ Partiel (1 appel par ref unresolved)
               ↓ Met à jour _pcbStateCache[projectId].schema.components
     ↓
-[STEP 5]  call_agent_kicad      → .kicad_pcb initial       ✅ Validé (NOUVEAU)
+[STEP 5]  call_agent_gen_pcb      → .kicad_pcb initial       ✅ Validé (NOUVEAU)
               ↓ Engine: kicad_gen.py _generate_pcb_sexpr() depuis cache schéma + footprints
     ↓
 [STEP 6]  call_agent_placement  → .kicad_pcb placé         ✅ Validé
@@ -1158,7 +1158,7 @@ DRC_CLEAN  →  PCB_LIVRÉ  (après "OUI JE CONFIRME")
 | `call_agent_schema` | `claude-haiku-4-5-20251001` | kicad_gen.py (circuit_synth) → `.kicad_sch` seulement | `POST /circuit-synth/generate` | ✅ |
 | `call_agent_erc` | `claude-haiku-4-5-20251001` | kicad-cli sch erc, auto-fix | `POST /erc` | ✅ |
 | `call_agent_footprint` | `claude-haiku-4-5-20251001` | pgvector + cascade 4 étapes | `POST /footprint` | ⚠️ Partiel |
-| `call_agent_kicad` | `claude-haiku-4-5-20251001` | kicad_gen.py → `.kicad_pcb` depuis cache | `POST /circuit-synth/generate` | ✅ |
+| `call_agent_gen_pcb` | `claude-haiku-4-5-20251001` | kicad_gen.py → `.kicad_pcb` depuis cache | `POST /circuit-synth/generate` | ✅ |
 | `call_agent_placement` | `claude-haiku-4-5-20251001` | pcbnew | `POST /place/auto` | ✅ |
 | `call_agent_routing` | `claude-haiku-4-5-20251001` | Freerouting | `POST /route/auto` | ✅ |
 | `call_agent_drc` | `claude-haiku-4-5-20251001` | kicad-cli DRC natif | `POST /drc/auto` | ✅ |
@@ -1187,7 +1187,7 @@ DRC_CLEAN  →  PCB_LIVRÉ  (après "OUI JE CONFIRME")
 
 ---
 
-## État final — Phase 4 (2026-05-26)
+## État final — Phase 4 (2026-05-29)
 
 **Pipeline complet validé :** Design ✅ → Schema ✅ → ERC ✅ → Footprint ⚠️ → KiCad ✅ → Placement ✅ → Routing ✅ → DRC ✅ → Export ✅ → JLCPCB ✅
 
@@ -1206,12 +1206,12 @@ DRC_CLEAN  →  PCB_LIVRÉ  (après "OUI JE CONFIRME")
 
 | Changement | Détail |
 |---|---|
-| `call_agent_kicad` créé (NOUVEAU) | Sépare génération `.kicad_pcb` de la génération `.kicad_sch` |
+| `call_agent_gen_pcb` créé (NOUVEAU) | Sépare génération `.kicad_pcb` de la génération `.kicad_sch` |
 | `call_agent_erc` obligatoire | Intégré entre schéma et footprint dans le pipeline |
 | `call_agent_footprint` mis à jour | Met à jour `_pcbStateCache` avec footprint résolu par composant |
 | `prompts.ts` réécrit intégralement | Orchestrateur = "Chef de Projet PCB Senior 15 ans d'expérience", règles absolues, pipeline ① à ⑧ |
 | `tools.ts` refactorisé | 8 descriptions expertes par agent (Ingénieur Schéma / ERC / Composants / Layout / Placement / Routage / Qualité / Fabrication) |
-| `orchestrator.ts` mis à jour | `stepMap` : `call_agent_kicad → 'KICAD'`, `pcbStateTools` étendu |
+| `orchestrator.ts` mis à jour | `stepMap` : `call_agent_gen_pcb → 'KICAD'`, `pcbStateTools` étendu |
 | Bug `_resolve_pin` Python 3 corrigé | `UnboundLocalError` : variable `first_err` hors scope après `except` — capturée dans `_first_err` |
 | Stratégie connecteurs Path B | ESP32-WROOM → `Conn_02x19_Odd_Even`, Arduino → `Conn_02x15_Odd_Even`, BME280 → `Conn_01x06` |
 | Validation Python Path A | Rejet si `circuit_synth_code` ne contient pas `cs_circuit` / `circuit_synth` imports |

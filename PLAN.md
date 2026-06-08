@@ -60,15 +60,38 @@ layrix/
 
 Pipeline 8 agents (ordre strict) :
 ① `call_agent_schema` → Ingénieur Schéma — génère `.kicad_sch` + `unresolved_footprints`
+   Path A : Haiku → Python circuit_synth → Docker /schematic/execute → .kicad_sch
+   Path B : Haiku → JSON → POST /schematic/generate :
+     ① circuit_synth pip · ② kicad-tools Schematic · ③ TypeScript S-expr inline
 ② `call_agent_erc` → Ingénieur ERC — valide connexions électriques, auto-fix
+   ① kicad-tools Schematic.validate() — pur Python · ② kicad-cli sch erc · ③ TS fallback
 ③ `call_agent_footprint` → Ingénieur Composants — 1 appel par ref dans `unresolved_footprints`
-④ `call_agent_kicad` → Ingénieur Layout — génère `.kicad_pcb` depuis schéma + footprints validés
-⑤ `call_agent_placement` → Ingénieur Placement — pcbnew `SetPosition()` blocs fonctionnels
-⑥ `call_agent_routing` → Ingénieur Routage — Freerouting `.dsn → .ses → .kicad_pcb`
-⑦ `call_agent_drc` → Ingénieur Qualité — kicad-cli DRC, boucle auto-fix max 3×
-⑧ `call_agent_export` → Ingénieur Fabrication — Gerbers RS-274X + BOM JLCPCB + CPL
+④ `call_agent_gen_pcb` → Ingénieur Layout — génère `.kicad_pcb`
+   Netlist 3 niveaux : ① kicad-tools Python pur · ② kicad-cli · ③ .kicad_net injecté
+   PCB 3 niveaux : ① kicad-tools PCBFromSchematic · ② pcbnew direct · ③ TypeScript S-expr
+⑤ `call_agent_placement` → Ingénieur Placement  [OFFICIEL kicad-tools]
+   Le PCB arrive déjà placé (call_agent_gen_pcb ne déplace plus à -1000).
+   `PlacementOptimizer.from_pcb(pcb, fixed_refs=<J*/P*>, enable_clustering=True)`
+   + run() + snap_rotations_to_90() + write_to_pcb() — clustering regroupe les grappes
+   (caps/quartz près du MCU). Filet : place_unplaced si footprints hors-carte.
+⑥ `call_agent_routing` → Ingénieur Routage  [OFFICIEL kicad-tools]
+   ① kct route --strategy negotiated --auto-layers --auto-fix --seed (zones power + signaux)
+   ② Freerouting REST API / subprocess (fallback historique, port 37864)
+   → renvoie routed_percent réel (plus de hardcode 100)
+⑥b Reasoner IA  [SOUS-ÉTAPE DÉTERMINISTE — déclenchée par orchestrator.ts, PAS par Sonnet]
+   Trigger : SI routed_percent < 100 → l'orchestrateur lance call_agent_reason (shouldRescueRouting).
+   Retiré de ACTIVE_PCB_TOOLS (Sonnet ne le voit plus → zéro double-appel). Résultat fusionné
+   dans le tool_result routage (mergeRescueIntoRouting — ne peut qu'améliorer, jamais régresser).
+   ① PCBReasoningAgent + Claude Haiku (si ANTHROPIC_API_KEY) — boucle get_prompt→Claude→execute
+   ② sinon kct reason --auto-route (heuristique sans LLM)
+   → reasoning_steps → event SSE `reasoning` → ChatRail affiche les actions IA temps-réel
+   Fix 34be8ae : _refresh_agent resync l'état · Trigger déterministe : commit 13b919c (TDD)
+⑦ `call_agent_drc` → Ingénieur Qualité
+   ① kicad-tools 27 règles JLCPCB · ② kicad-cli auto-fix max 3× · ③ skipped
+⑧ `call_agent_export` → Ingénieur Fabrication
+   ① kicad-tools --mfr jlcpcb (GTL/GBL/BOM LCSC/CPL) · ② kicad-cli standard · ③ BOM CSV
 
-- **Circuit-Synth** (Python pip) → génère `.kicad_sch` ; `.kicad_pcb` généré séparément par `call_agent_kicad`
+- **Circuit-Synth** (Python pip) → génère `.kicad_sch` ; `.kicad_pcb` généré séparément par `call_agent_gen_pcb`
 - Fallback TypeScript : `schematic-engine.ts` si Docker absent
 - Viewer : **KiCanvas** charge les fichiers natifs depuis Supabase Storage
 
@@ -704,7 +727,8 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 2. `validateAndCorrectSchema()` → POST `/circuit-synth/validate-symbols` → corrections auto
 3. `_safe_symbol()` dans FastAPI — 2ème filet de sécurité
 4. Dual-mode génération :
-   - Docker actif → `kicad_gen.py` : `_generate_with_cs_lib()` (circuit_synth pip local) → `.kicad_sch` + `_generate_pcb_sexpr()` → `.kicad_pcb`
+   - `routers/schematic.py` + `tools/schematic.py` : circuit_synth pip → kicad-tools Schematic → TypeScript S-expr
+   - `routers/pcb.py` + `tools/pcb.py` : `_generate_pcb_sexpr()` → `.kicad_pcb`
    - Docker absent → fallback TS inline (`schematic-engine.ts`)
 5. Upload Supabase Storage → `pcb_state.kicad_sch_url` / `kicad_pcb_url` → KiCanvas
 6. Fallback S-expression inline TS si service indisponible
@@ -821,13 +845,26 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 ## Phase 5 — Polish + Launch (Semaine 10)
 
-> **Amélioration placement future (Post-Phase 5) : RL_PCB**
+> **Amélioration placement future (Post-Phase 5 / Phase 6) : RL_PCB**
 > Architecture hybride LLM + Reinforcement Learning pour le placement PCB :
 > - LLM (Sonnet) → analyse schéma, comprend contraintes, suggère stratégie (groupes fonctionnels, faces Top/Bottom, zones sensibles)
 > - RL_PCB → prend les suggestions LLM et optimise mathématiquement les positions X/Y
 > - pcbnew → importe le résultat pour validation DRC
 > Pipeline : `call_agent_schema → LLM strategy → RL_PCB optimizer → pcbnew SetPosition → Freerouting`
-> Actuellement : `placement_layout.py` (algo déterministe pur Python) — RL_PCB serait l'upgrade Phase 6+.
+> Actuellement : kicad-tools CMA-ES → fallback pcbnew grille — RL_PCB serait l'upgrade Phase 6+.
+>
+> **Placement compact courtyard-aware — reporté ici (décision 2026-06-02).**
+> État actuel : `auto_place` garantit 0 chevauchement (gate courtyard + sélection),
+> mais pour les circuits avec **module à corps décalé** (Arduino/STM32) il retombe
+> sur `place_unplaced` (grille étalée, fils longs) car le CMA-ES kicad_tools modélise
+> chaque composant comme une **AABB centrée sur l'origine** et ignore l'offset du
+> corps (Arduino : courtyard 75×54mm centré à +24mm en y vs origine). Le rendre
+> vraiment compact (composants serrés autour du corps) exige un **modèle géométrique
+> avec offset** touchant 6 fichiers du cœur kicad_tools (vector/geometry/priors/seed/
+> slide_off/visualization) — risqué sans leur suite de tests. Décision : ne PAS
+> patcher l'optimiseur en force ; traiter la compacité proprement via RL_PCB en
+> Phase 6 (RL_PCB devient simplement un candidat de plus dans la sélection
+> `auto_place` existante). Détails : `docs/notefinal.md` (2026-06-02).
 
 ### Étape 5.1 — Sécurité
 

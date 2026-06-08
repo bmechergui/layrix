@@ -1,17 +1,16 @@
-"""FastAPI router for Electrical Rules Check (ERC) via kicad-cli.
+"""FastAPI router — Electrical Rules Check (ERC).
 
-POST /erc takes a base64-encoded .kicad_sch + auto_fix flag and runs
-``kicad-cli sch erc`` in a loop (max 3 iterations) until the schematic is
-clean or violations persist. Auto-fix only adds ``(no_connect ...)`` markers —
-NEVER modifies connectivity.
+POST /erc — 3-level pipeline:
+  1. kicad-tools Schematic.validate()   — pur Python, toujours disponible
+  2. kicad-cli sch erc                  — ERC officiel KiCad (si disponible)
+  3. skipped=true                       → TypeScript runErcFallback() prend le relais
 
-If ``kicad-cli`` is not available on the host PATH, the endpoint returns
-``erc_clean=true, skipped=true`` so the agentic pipeline continues unblocked.
+Auto-fix uniquement : (no_connect ...) markers + corrections off-grid.
+JAMAIS modifier la connectivité.
 """
 from __future__ import annotations
 
 import base64
-import json
 import logging
 import os
 import shutil
@@ -27,7 +26,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["erc"])
 
-# Maximum auto-fix iterations before giving up
 _MAX_ITERATIONS: int = 3
 _KICAD_CLI_TIMEOUT_S: int = 30
 
@@ -38,18 +36,7 @@ _KICAD_CLI_TIMEOUT_S: int = 30
 
 class ERCRequest(BaseModel):
     kicad_sch_b64: str = Field(..., description="Contenu .kicad_sch encodé base64")
-    auto_fix: bool = Field(default=True, description="Add no_connect markers for pin_not_connected")
-
-
-class ERCViolationDTO(BaseModel):
-    id: str
-    severity: str  # 'error' | 'warning'
-    message: str
-    type: Optional[str] = None
-    ref: Optional[str] = None
-    pin: Optional[str] = None
-    x_mm: Optional[float] = None
-    y_mm: Optional[float] = None
+    auto_fix: bool = Field(default=True)
 
 
 class ERCResponse(BaseModel):
@@ -59,22 +46,21 @@ class ERCResponse(BaseModel):
     kicad_sch_b64: Optional[str] = None
     skipped: bool = False
     warning: Optional[str] = None
+    engine: str = "kicad-tools"
 
 
 # ----------------------------------------------------------------------------
-# Internal helpers (mocked in tests)
+# Helpers
 # ----------------------------------------------------------------------------
 
 def _find_kicad_cli() -> Optional[str]:
-    """Locate the ``kicad-cli`` binary, honoring KICAD_CLI_PATH env override."""
     override = os.environ.get("KICAD_CLI_PATH")
     if override and Path(override).exists():
         return override
     return shutil.which("kicad-cli")
 
 
-def _run_kicad_erc(cli_path: str, sch_path: Path) -> str:
-    """Run kicad-cli sch erc on the given file, return the JSON report content."""
+def _run_kicad_cli_erc(cli_path: str, sch_path: Path) -> str:
     report_path = sch_path.with_suffix(".erc.json")
     cmd = [
         cli_path, "sch", "erc",
@@ -87,12 +73,10 @@ def _run_kicad_erc(cli_path: str, sch_path: Path) -> str:
         cmd, capture_output=True, text=True, timeout=_KICAD_CLI_TIMEOUT_S, check=False,
     )
     if result.returncode != 0 and not report_path.exists():
-        # ERC may exit non-zero when violations are present but still write the report
         raise RuntimeError(
             f"kicad-cli sch erc failed (rc={result.returncode}): {result.stderr[:500]}"
         )
     if not report_path.exists():
-        # Some KiCad versions emit to stdout
         return result.stdout or "{}"
     return report_path.read_text(encoding="utf-8")
 
@@ -103,70 +87,87 @@ def _run_kicad_erc(cli_path: str, sch_path: Path) -> str:
 
 @router.post("/erc", response_model=ERCResponse)
 def run_erc(req: ERCRequest) -> ERCResponse:
-    """Run ERC on the provided .kicad_sch and return violations + (optionally) fixed file."""
-    cli_path = _find_kicad_cli()
-    if cli_path is None:
-        logger.info("kicad-cli not on PATH — skipping ERC")
-        return ERCResponse(
-            erc_clean=True,
-            violations=[],
-            fixed_count=0,
-            kicad_sch_b64=None,
-            skipped=True,
-            warning="kicad-cli not available",
-        )
-
-    # Lazy import to keep router import cheap when pcbnew-only tests run
-    from tools.erc import apply_no_connect_fixes, parse_erc_report
+    from tools.erc import apply_no_connect_fixes, parse_erc_report, run_kicad_tools_erc
 
     try:
         sch_bytes = base64.b64decode(req.kicad_sch_b64)
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=f"invalid base64: {exc}") from exc
 
+    current_content = sch_bytes.decode("utf-8", errors="replace")
+
+    # ── Step 1 : kicad-tools validate (pur Python, toujours disponible) ──────
+    kt_violations: list[dict] = []
+    kt_fixed = 0
+    try:
+        kt_violations, current_content, kt_fixed = run_kicad_tools_erc(
+            current_content, req.auto_fix
+        )
+        if kt_fixed > 0:
+            logger.info("kicad-tools ERC: %d auto-fix(es) applied", kt_fixed)
+    except Exception as exc:
+        logger.warning("kicad-tools ERC failed (%s) — continuing to kicad-cli", exc)
+
+    # ── Step 2 : kicad-cli (si disponible) ────────────────────────────────────
+    cli_path = _find_kicad_cli()
+    if cli_path is None:
+        # kicad-cli absent → retourner résultat kicad-tools
+        # (TypeScript runErcFallback prend le relais si skipped=True)
+        blocking = [v for v in kt_violations if v.get("severity") == "error"]
+        erc_clean = len(blocking) == 0
+        updated_b64 = (
+            base64.b64encode(current_content.encode("utf-8")).decode("ascii")
+            if kt_fixed > 0 else None
+        )
+        skipped = not kt_violations and kt_fixed == 0  # rien fait → déléguer au TS
+        return ERCResponse(
+            erc_clean=erc_clean,
+            violations=kt_violations,
+            fixed_count=kt_fixed,
+            kicad_sch_b64=updated_b64,
+            skipped=skipped,
+            warning="kicad-cli unavailable — kicad-tools basic validation only" if not skipped else "kicad-cli unavailable",
+            engine="kicad-tools",
+        )
+
     try:
         with tempfile.TemporaryDirectory() as tmp:
             sch_path = Path(tmp) / "schematic.kicad_sch"
-            sch_path.write_bytes(sch_bytes)
-
-            violations: list[dict[str, Any]] = []
-            total_fixed = 0
-            current_content = sch_bytes.decode("utf-8", errors="replace")
-
-            # Create a dummy .kicad_pro file to satisfy KiCad 8 requirements
             pro_path = Path(tmp) / "schematic.kicad_pro"
             pro_path.write_text("{}", encoding="utf-8")
 
+            violations: list[dict[str, Any]] = []
+            total_fixed = kt_fixed  # inclut les fixes kicad-tools
+
             for iteration in range(_MAX_ITERATIONS):
                 sch_path.write_text(current_content, encoding="utf-8")
-                report_json = _run_kicad_erc(cli_path, sch_path)
+                report_json = _run_kicad_cli_erc(cli_path, sch_path)
                 violations = parse_erc_report(report_json)
 
                 if not violations:
-                    break  # clean
+                    break
 
                 if not req.auto_fix:
-                    break  # stop without attempting fixes
+                    break
 
                 fixable = [v for v in violations if v.get("type") == "pin_not_connected"]
                 if not fixable:
-                    break  # nothing we can auto-fix
+                    break
 
                 new_content, fixed_this_iter = apply_no_connect_fixes(current_content, fixable)
                 total_fixed += fixed_this_iter
                 if fixed_this_iter == 0:
-                    break  # no progress, exit
+                    break
                 current_content = new_content
                 logger.info(
-                    "ERC iter %d: fixed %d pin_not_connected (total=%d)",
+                    "kicad-cli ERC iter %d: fixed %d pin_not_connected (total=%d)",
                     iteration + 1, fixed_this_iter, total_fixed,
                 )
 
             erc_clean = len(violations) == 0
             updated_b64 = (
                 base64.b64encode(current_content.encode("utf-8")).decode("ascii")
-                if total_fixed > 0
-                else None
+                if total_fixed > 0 else None
             )
             return ERCResponse(
                 erc_clean=erc_clean,
@@ -174,12 +175,10 @@ def run_erc(req: ERCRequest) -> ERCResponse:
                 fixed_count=total_fixed,
                 kicad_sch_b64=updated_b64,
                 skipped=False,
-                warning=None,
+                engine="kicad-cli",
             )
     except HTTPException:
         raise
     except Exception as exc:
-        # Log the full exception server-side; never leak filesystem paths or
-        # kicad-cli stderr to the HTTP client.
-        logger.exception("ERC execution failed: %s", exc)
+        logger.exception("kicad-cli ERC failed: %s", exc)
         raise HTTPException(status_code=500, detail="ERC execution failed") from exc

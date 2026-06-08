@@ -29,7 +29,8 @@ jusqu'à DRC propre + Gerbers exportés + commande JLCPCB ✅
 
 - Concept : SaaS web 100% cloud de conception PCB via langage naturel
 - Moteur PCB : Circuit-Synth (Python, génère .kicad_sch + .kicad_pcb natifs) + KiCad (pro multi-couches)
-- Routage auto : Freerouting (Java, dockerisé)
+- Placement auto : kct optimize-placement CMA-ES (circuits discrets) → fallback place_unplaced cluster-by-net (shields/modules Arduino/STM32) — board fitté automatiquement
+- Routage auto : kicad-tools A* Python (≤30 nets routables) → Freerouting REST API 1 JVM (circuits complexes) → subprocess → GND plane
 - Couches : 2 à 8 couches selon le plan
 - Exports : .kicad_pcb + .kicad_sch + Gerber + BOM + PDF + STEP 3D
 - Viewer Schéma + PCB : KiCanvas (rendu natif KiCad dans le navigateur)
@@ -38,16 +39,54 @@ jusqu'à DRC propre + Gerbers exportés + commande JLCPCB ✅
 
 ---
 
-## STRATÉGIE CIRCUIT-SYNTH + KICAD — 100% INVISIBLE
+## PIPELINE 8 AGENTS — 100% INVISIBLE (mis à jour 2026-05-30)
 
 L'utilisateur ne sait jamais quel moteur tourne derrière.
-Le pipeline génère des fichiers KiCad natifs :
+Orchestrateur Sonnet 4.6 · 8 agents Haiku 4.5 · max 15 itérations · SSE streaming
 
-- **Circuit-Synth** → Claude génère du code Python → KiCad Docker exécute → `.kicad_sch` + `.kicad_pcb` réels
-- Routage différentiel, 4+ couches, plan Pro → **KiCad + Freerouting + pcbnew** natif
-- **Viewer** : KiCanvas charge les fichiers `.kicad_sch` / `.kicad_pcb` depuis Supabase Storage
+```
+① call_agent_schema    → .kicad_sch (schéma électrique uniquement)
+     Path A : Haiku → Python circuit_synth → Docker /schematic/execute → .kicad_sch
+     Path B : Haiku → JSON → POST /schematic/generate :
+       ① circuit_synth pip · ② kicad-tools Schematic · ③ TypeScript S-expr
+     Erreur  : status:'error' si les deux échouent (jamais de faux schéma)
 
-Résultat : fichiers KiCad natifs + Gerbers standard ✅
+② call_agent_erc       → validation électrique
+     ① kicad-tools validate (pur Python) · ② kicad-cli sch erc · ③ TS fallback
+
+③ call_agent_footprint → 1 appel par composant non résolu
+     Cascade : KiCad libs → pgvector cache → LCSC → Haiku IA
+
+④ call_agent_gen_pcb   → .kicad_pcb (généré après footprints résolus)
+     ① kicad-tools PCBFromSchematic · ② pcbnew direct · ③ TypeScript S-expr
+     Primaire : Docker kicad_gen.py → .kicad_pcb
+     Fallback : runCircuitSynthEngine() TypeScript inline
+
+⑤ call_agent_placement → positions X/Y/rotation
+     ① kct optimize-placement CMA-ES (si feasible — circuits discrets)
+     ② place_unplaced(cluster=True) fallback shields/modules + board fitté
+     ② pcbnew grille simple (si kicad-tools échoue)
+     ③ error si Docker down
+     Fallback : pcbnew grille (fallback) Python (dans le service Docker)
+
+⑥ call_agent_routing   → traces + plans de masse (5 niveaux)
+     ① kicad-tools A* negotiated (≤30 nets, 60s) · zones GND+VCC injectées
+     ② Freerouting REST API (1 JVM persistante port 37864, RAM 400MB fixe)
+     ③ Freerouting subprocess (1 JVM par job, fallback)
+     ④ kicad-tools A* negotiated SANS LIMITE (tous circuits, Freerouting absent)
+     ⑤ GND plane seulement (dernier recours)
+
+⑦ call_agent_drc       → DRC_CLEAN (boucle max 3×)
+     ① kicad-tools 27 règles JLCPCB (pur Python)
+     ② kicad-cli pcb drc auto-fix max 3× (si erreurs persistent)
+
+⑧ call_agent_export    → Gerbers + BOM JLCPCB + CPL → Supabase Storage
+     ① kicad-tools --mfr jlcpcb (GTL/GBL/GKO + BOM LCSC + CPL rotations)
+     ② kicad-cli pcb export standard (fallback)
+     ③ BOM CSV seulement (kicad-cli absent)
+```
+
+Résultat : fichiers KiCad natifs + Gerbers RS-274X + JLCPCB-ready ✅
 
 ---
 
@@ -444,3 +483,136 @@ Pour un vrai SaaS Layrix avec plusieurs templates, utilisateurs payants, et agen
 
 
 pour protypage on utulise claude SDK
+
+
+Important pour ton RL (Layrix)
+
+Oui, c’est crucial :
+
+👉 FreeRouting = heuristique déterministe
+👉 PPO = apprentissage intelligent
+
+
+Oui tu peux utiliser FreeRouting + RL
+✔ C’est même la meilleure stratégie pour Layrix aujourd’hui
+✔ RL seul = trop difficile
+✔ FreeRouting seul = pas intelligent
+✔ ensemble = solution réaliste startup
+
+🧠 1. FreeRouting + RL = bonne idée ?
+
+Oui, parce que :
+
+FreeRouting = solveur heuristique puissant (autorouteur classique)
+RL (PPO) = apprend à améliorer / guider / optimiser
+
+👉 Donc tu ne remplaces pas FreeRouting, tu le boostes
+
+2. 3 façons de les combiner
+🥇 Option 1 — RL → FreeRouting (RECOMMANDÉ)
+
+Le RL fait :
+
+placement des composants
+choix des contraintes
+ordre de routing
+
+Puis :
+👉 FreeRouting fait le routage final
+
+✔ très stable
+✔ facile à entraîner
+✔ bon pour MVP Layrix
+
+Option 2 — FreeRouting → RL
+FreeRouting fait un routage initial
+RL améliore :
+réduction des vias
+réduction longueur pistes
+optimisation congestion
+
+✔ plus avancé
+❌ plus dur à modéliser
+
+Option 3 — RL + FreeRouting en boucle (advanced)
+RL propose placement
+FreeRouting route
+RL reçoit reward basé sur résultat
+RL apprend à améliorer FreeRouting
+
+👉 c’est le plus puissant mais aussi le plus complexe
+
+3. Pourquoi c’est très puissant pour Layrix
+
+FreeRouting te donne :
+
+un baseline correct
+une solution faisable même si RL est mauvais
+
+RL apporte :
+
+optimisation intelligente
+adaptation PCB complexe
+réduction coût / longueur / vias
+
+👉 ensemble = système industriel réel
+
+
+Pipeline :
+RL (PPO)
+placement composants
+orientation
+clustering
+FreeRouting
+routage complet automatique
+Reward RL
+wire length
+vias count
+overlap penalty
+success/failure routing
+
+
+
+Il existe plusieurs plateformes pour utiliser des GPU pour l’IA et le machine learning : Google Colab/Googe Cloab pro, Kaggle Notebooks, Lightning AI et Hugging Face Spaces (ZeroGPU), qui permettent de tester et apprendre gratuitement avec des limites de ressources. Pour des besoins plus avancés, des solutions comme RunPod, Vast.ai et Modal offrent des GPU à bas coût avec des modèles pay-as-you-go.
+
+Pour aller plus loin en production ou en startup, Google Cloud propose des crédits gratuits et des programmes startups donnant accès à des GPU/TPU puissants et scalables. En résumé, le gratuit suffit pour apprendre et prototyper, mais les solutions cloud deviennent nécessaires dès que tu veux entraîner des modèles lourds ou scaler ton projet.
+
+Colab Pro (~10€ / mois) : La meilleure option confort.
+Les Avantages :
+Intégration Google Drive parfaite : C'est l'argument numéro 1 pour l'Apprentissage par Renforcement (RL). L'entraînement RL prend du temps. Avec Colab, vous pouvez sauvegarder votre modèle (model.pt ou model.onnx) directement sur votre Google Drive à chaque itération. Si ça crashe, vous ne perdez rien.
+Accès à des GPU surpuissants (comme les fameux A100 ou V100) qui accéléreront drastiquement la simulation de votre environnement KiCad virtuel.
+Les sessions peuvent durer jusqu'à 24 heures
+
+
+## Agent Raisonneur (`call_agent_reason`) — sauvetage de routage par IA
+
+`kct route` (A*) route ~90 % automatiquement. Les ~10 % de corner cases (pin
+enterré, canal bloqué par un composant) sont confiés à un **8ᵉ agent séparé,
+visible et piloté par l'orchestrateur** : `call_agent_reason`.
+
+Pipeline réel = **workflow OFFICIEL kicad-tools, API Python** (⚠️ PAS les flags
+`--thermal / --grouping / --anchor-weight` : ils N'EXISTENT PAS dans le dépôt) :
+
+```
+① call_agent_gen_pcb   → PCB "unrouted" = footprints PLACÉS (pas de -1000)
+② call_agent_placement → PlacementOptimizer.from_pcb(pcb, fixed_refs=<J*/P*>,
+     enable_clustering=True).run().snap_rotations_to_90().write_to_pcb()
+③ call_agent_routing   → kct route --strategy negotiated --auto-layers --auto-fix
+                         → renvoie routed_percent réel
+④ call_agent_reason    → SI routing < 100 % : PCBReasoningAgent + Claude Haiku
+     boucle get_prompt → Claude décide une commande JSON (route_net /
+     place_component / add_via / delete_trace / define_zone) → execute_dict.
+     Sinon `kct reason --auto-route` (heuristique sans LLM).
+⑤ call_agent_drc → 27 règles JLCPCB · ⑥ call_agent_export → Gerbers + BOM + CPL
+```
+
+**Visibilité temps-réel :** l'orchestrateur émet un event SSE `reasoning` après
+chaque tour du raisonneur → le ChatRail affiche les actions IA en direct
+(« 🤖 Reasoner IA — déblocage du routage : déplace C12 près de U1… »).
+
+**Gotcha corrigé (TDD, commit 34be8ae) :** `PCBReasoningAgent` ne resynchronise
+pas `PCBState` en session → `route_with_llm` rapportait 0 % sur un board routé à
+100 %. Fix : `_refresh_agent()` recharge l'état après chaque commande réussie.
+
+La solution du futur : L'Agent IA Raisonneur (`call_agent_reason`)
+C'est la fonctionnalité la plus innovante de kicad-tools. Au lieu d'utiliser des mathématiques pures ou des règles strictes, vous confiez la carte à un Modèle de Langage (LLM) intégré

@@ -95,14 +95,12 @@ function WaveformChart({ vectors, isAC }: { vectors: SimulationVector[]; isAC: b
           />
           <Tooltip
             contentStyle={{ background: '#0d0d0d', border: '1px solid #222', fontSize: 11 }}
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            formatter={(value: any, name: any) => {
+            formatter={(value: unknown, name: unknown) => {
               const vec = vectors.find((v) => v.name === String(name));
               const numVal = typeof value === 'number' ? value : 0;
               return [fmtVal(numVal, vec?.unit ?? ''), String(name)];
             }}
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            labelFormatter={(label: any) => xFormatter(typeof label === 'number' ? label : 0)}
+            labelFormatter={(label: unknown) => xFormatter(typeof label === 'number' ? label : 0)}
           />
           <Legend wrapperStyle={{ fontSize: 10, color: '#888' }} />
           {vectors.map((vec, i) => (

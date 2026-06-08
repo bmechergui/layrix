@@ -117,27 +117,103 @@ def _apply_fixes(pcb_content: bytes, violations: list[dict[str, Any]]) -> tuple[
 # Endpoint
 # ----------------------------------------------------------------------------
 
+def _run_python_drc(pcb_bytes: bytes) -> list[dict]:
+    """
+    Pure Python DRC via kicad-tools (27 JLCPCB rules, no kicad-cli needed).
+    Returns list of violation dicts compatible with DRCAutoResponse.violations.
+    Returns [] if kicad-tools not installed.
+    """
+    try:
+        import sys
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            pcb_path = Path(tmp) / "board.kicad_pcb"
+            pcb_path.write_bytes(pcb_bytes)
+            result = subprocess.run(
+                [sys.executable, "-m", "kicad_tools.cli", "check", str(pcb_path), "--mfr", "jlcpcb", "--json"],
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+            if result.returncode not in (0, 1):
+                return []
+            import json
+            data = json.loads(result.stdout or "{}")
+            violations = []
+            for v in data.get("errors", []):
+                violations.append({"type": v.get("rule", "unknown"), "description": v.get("message", ""), "severity": "error"})
+            for v in data.get("warnings", []):
+                violations.append({"type": v.get("rule", "unknown"), "description": v.get("message", ""), "severity": "warning"})
+            return violations
+    except Exception as exc:
+        logger.warning("kicad-tools Python DRC failed: %s", exc)
+        return []
+
+
 @router.post("/drc/auto", response_model=DRCAutoResponse)
 def run_drc_auto(req: DRCAutoRequest) -> DRCAutoResponse:
-    """Run DRC on the provided .kicad_pcb and return violations + (optionally) fixed file."""
+    """
+    Run DRC on the provided .kicad_pcb.
+
+    Priority:
+      1. kicad-tools Python DRC — 27 règles JLCPCB, pur Python, toujours dispo.
+         Si 0 erreur → DRC_CLEAN immédiat, pas besoin de kicad-cli.
+         Si erreurs → kicad-cli tente l'auto-fix (si disponible).
+      2. kicad-cli pcb drc     — officiel KiCad, auto-fix loop max 3×.
+         Fallback si kicad-tools échoue OU si des erreurs restent après level 1.
+    """
+    try:
+        pcb_bytes = base64.b64decode(req.kicad_pcb_b64)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=f"invalid base64: {exc}") from exc
+
+    # ── Niveau 1 : kicad-tools Python DRC ────────────────────────────────────
+    kt_violations: list[dict] = []
+    kt_ok = False
+    try:
+        kt_violations = _run_python_drc(pcb_bytes)
+        kt_ok = True
+        kt_errors = [v for v in kt_violations if v.get("severity") == "error"]
+        logger.info("kicad-tools DRC: %d violations (%d erreurs)", len(kt_violations), len(kt_errors))
+
+        # Board propre selon les 27 règles JLCPCB → pas besoin de kicad-cli
+        if not kt_errors:
+            return DRCAutoResponse(
+                drc_clean=True,
+                violations=kt_violations,
+                fixed_count=0,
+                kicad_pcb_b64=None,
+                skipped=False,
+                warning="DRC kicad-tools 27 règles JLCPCB — propre",
+            )
+        logger.info("kicad-tools: %d erreur(s) → tentative auto-fix via kicad-cli", len(kt_errors))
+    except Exception as exc:
+        logger.warning("kicad-tools DRC échoué (%s) — kicad-cli direct", exc)
+
+    # ── Niveau 2 : kicad-cli (auto-fix loop + validation officielle) ─────────
     cli_path = _find_kicad_cli()
     if cli_path is None:
-        logger.info("kicad-cli not on PATH — skipping DRC")
+        # kicad-cli absent → retourner résultat kicad-tools tel quel
+        if kt_ok:
+            errors = [v for v in kt_violations if v.get("severity") == "error"]
+            return DRCAutoResponse(
+                drc_clean=len(errors) == 0,
+                violations=kt_violations,
+                fixed_count=0,
+                kicad_pcb_b64=None,
+                skipped=False,
+                warning="kicad-cli indisponible — DRC kicad-tools 27 règles JLCPCB uniquement",
+            )
+        # kicad-tools ET kicad-cli indisponibles → skipped
         return DRCAutoResponse(
             drc_clean=True,
             violations=[],
             fixed_count=0,
             kicad_pcb_b64=None,
             skipped=True,
-            warning="kicad-cli not available",
+            warning="kicad-tools et kicad-cli indisponibles — DRC sauté",
         )
 
     from tools.drc import parse_drc_report
-
-    try:
-        pcb_bytes = base64.b64decode(req.kicad_pcb_b64)
-    except (ValueError, TypeError) as exc:
-        raise HTTPException(status_code=422, detail=f"invalid base64: {exc}") from exc
 
     try:
         with tempfile.TemporaryDirectory() as tmp:

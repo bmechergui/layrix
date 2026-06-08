@@ -98,6 +98,48 @@ def parse_erc_report(report_json: str) -> list[dict[str, Any]]:
     return out
 
 
+def run_kicad_tools_erc(
+    sch_content: str,
+    auto_fix: bool = True,
+) -> tuple[list[dict], str, int]:
+    """kicad-tools Schematic.validate() — pure Python, no kicad-cli subprocess.
+
+    Returns (violations, updated_sch_content, fixed_count).
+    Fixes off-grid symbols and duplicate refs automatically when auto_fix=True.
+    """
+    import tempfile
+    from pathlib import Path as _Path
+
+    from kicad_tools.schematic.models.schematic import Schematic
+
+    with tempfile.TemporaryDirectory() as tmp:
+        sch_path = _Path(tmp) / "schematic.kicad_sch"
+        sch_path.write_text(sch_content, encoding="utf-8")
+
+        sch = Schematic.load(sch_path)
+        issues = sch.validate(fix_auto=auto_fix)
+
+        if auto_fix:
+            sch.write(sch_path)
+            fixed_content = sch_path.read_text(encoding="utf-8")
+        else:
+            fixed_content = sch_content
+
+        violations: list[dict] = []
+        fixed_count = 0
+        for issue in issues:
+            if issue.get("fix_applied"):
+                fixed_count += 1
+            violations.append({
+                "id": str(uuid.uuid4()),
+                "severity": issue.get("severity", "warning"),
+                "message": issue.get("message", ""),
+                "type": issue.get("type"),
+            })
+
+        return violations, fixed_content, fixed_count
+
+
 def apply_no_connect_fixes(
     sch_content: str,
     violations: list[dict[str, Any]],

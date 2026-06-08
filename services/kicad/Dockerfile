@@ -40,6 +40,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
                openjdk-21-jre-headless \
                zip \
                unzip \
+               cmake \
+               g++ \
+               ninja-build \
            && break || sleep 30; \
        done \
     && rm -rf /var/lib/apt/lists/*
@@ -49,34 +52,55 @@ ENV KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints
 ENV PYTHONUNBUFFERED=1
 ENV DISPLAY=:99
 
-# Add KiCad system Python path so pcbnew is importable by pip-installed uvicorn
 # /app/circuit_synth/src — real circuit_synth package (src layout)
-ENV PYTHONPATH=/app/circuit_synth/src:/usr/lib/python3/dist-packages:${PYTHONPATH}
+# NOTE: do NOT add /usr/lib/python3/dist-packages here — it would put numpy 1.21.5 before
+# pip-installed numpy 2.x, breaking kicad-tools type annotations. pcbnew is found via default sys.path.
+ENV PYTHONPATH=/app/circuit_synth/src:${PYTHONPATH}
 
 WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 
-# Freerouting JAR v2.2.4
+# Freerouting JAR v2.1.0 — started as REST API server at port 37864
 RUN mkdir -p /opt/freerouting && \
     for i in 1 2 3; do \
         curl -fL https://github.com/freerouting/freerouting/releases/download/v2.1.0/freerouting-2.1.0.jar \
             -o /opt/freerouting/freerouting.jar && break || sleep 15; \
     done
 
+ENV FREEROUTING_API_URL=http://127.0.0.1:37864
+
 COPY . .
 
 # Install circuit_synth from local source (services/kicad/circuit_synth/)
 RUN pip3 install --no-cache-dir ./circuit_synth
 
+# Install kicad-tools (official repo, vendored at services/kicad/kicad-tools/) EDITABLE.
+# Moved to /opt/kicad-tools (out of /app to avoid namespace-package shadowing, AND a
+# stable path used as the docker-compose bind-mount target → code éditable live en dev).
+# extras: placement=CMA-ES/optim, drc=rtree, geometry=shapely, native=C++ build deps.
+RUN mv /app/kicad-tools /opt/kicad-tools && \
+    pip3 install --no-cache-dir -e "/opt/kicad-tools[placement,drc,geometry,native]"
+
+# Build the C++ router + placement extensions (10-100x faster A*) into the IMAGE so
+# production (no bind-mount) starts fast. In dev the bind-mount hides this .so → the
+# entrypoint rebuilds it. Non-fatal: pure-Python fallback at runtime if the build fails.
+RUN cd /opt/kicad-tools && (kct build-native --force || \
+    echo "WARNING: kct build-native failed — using pure-Python router")
+
+# Entrypoint: (re)build native backend if missing (bind-mount case) then start services.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 RUN mkdir -p /tmp/kicad-jobs
 
 EXPOSE 8766
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+# start-period long : en dev le 1er démarrage rebuild le backend natif (cmake+g++).
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
   CMD curl -f http://localhost:8766/health || exit 1
 
-# Start Xvfb (headless display for kicad-cli) then uvicorn on port 8766
-CMD ["sh", "-c", "Xvfb :99 -screen 0 1024x768x24 -ac &\
-     uvicorn main:app --host 0.0.0.0 --port 8766 --workers 4"]
+# Xvfb + Freerouting (JVM persistante) + uvicorn — orchestré par l'entrypoint
+# (qui garantit aussi le backend natif C++ avant de servir).
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

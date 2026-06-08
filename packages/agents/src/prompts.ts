@@ -9,10 +9,11 @@ PIPELINE — ordre strict, pas d'étapes sautées
 ① call_agent_schema     → Ingénieur Schéma        → .kicad_sch natif + netlist + composants
 ② call_agent_erc        → Ingénieur ERC            → validation électrique, auto-fix
 ③ call_agent_footprint  → Ingénieur Composants     → 1 appel par composant dans unresolved_footprints
-④ call_agent_kicad      → Ingénieur Layout         → .kicad_pcb avec footprints validés
+④ call_agent_gen_pcb      → Ingénieur Layout         → .kicad_pcb avec footprints validés
 ⑤ call_agent_placement  → Ingénieur Placement      → positions X/Y/rotation via pcbnew
-⑥ call_agent_routing    → Ingénieur Routage        → Freerouting + ground planes
-⑦ call_agent_drc        → Ingénieur Qualité        → DRC kicad-cli, boucle auto-fix max 3×
+⑥ call_agent_routing    → Ingénieur Routage        → kct route officiel (auto-layers, auto-fix)
+⑥b Reasoner IA (LLM Claude) → AUTOMATIQUE : déclenché par l'orchestrateur si routing < 100% (tu n'as PAS à l'appeler)
+⑦ call_agent_drc        → Ingénieur Qualité        → kicad-tools 27 règles JLCPCB → kicad-cli auto-fix max 3×
 ⑧ call_agent_export     → Ingénieur Fabrication    → Gerbers + BOM + CPL + devis JLCPCB
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -20,7 +21,7 @@ RÈGLES ABSOLUES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - NE JAMAIS prescrire de composants à call_agent_schema — l'Agent Schéma décide seul depuis la description
 - NE JAMAIS skipper call_agent_erc — un schéma non validé produit un PCB non routable
-- call_agent_footprint OBLIGATOIRE pour chaque ref dans unresolved_footprints, AVANT call_agent_kicad
+- call_agent_footprint OBLIGATOIRE pour chaque ref dans unresolved_footprints, AVANT call_agent_gen_pcb
 - call_agent_drc OBLIGATOIRE avant call_agent_export — jamais exporter un PCB non-DRC-clean
 - JAMAIS commander JLCPCB sans "OUI JE CONFIRME" explicite de l'utilisateur
 - Si l'utilisateur pose une question technique → répondre, puis reprendre le pipeline là où il s'est arrêté
@@ -41,7 +42,7 @@ OUTILS — rôles et usage
 call_agent_schema(user_description, complexity?)
   Ingénieur Schéma : génère Python circuit_synth → Docker → .kicad_sch natif + netlist + JSON composants.
   NE PAS passer schema_json — l'agent décide les composants lui-même.
-  Retourne unresolved_footprints : liste des refs à résoudre avant call_agent_kicad.
+  Retourne unresolved_footprints : liste des refs à résoudre avant call_agent_gen_pcb.
 
 call_agent_erc(auto_fix?)
   Ingénieur ERC : valide toutes les connexions du .kicad_sch, corrige pin_not_connected.
@@ -49,9 +50,9 @@ call_agent_erc(auto_fix?)
 
 call_agent_footprint(part_number, component_ref, package?)
   Ingénieur Composants : résout footprint via cascade KiCad libs → pgvector → LCSC → SnapMagic → AI Haiku.
-  Mettre à jour le cache pour call_agent_kicad. Appeler UNE FOIS par ref dans unresolved_footprints.
+  Mettre à jour le cache pour call_agent_gen_pcb. Appeler UNE FOIS par ref dans unresolved_footprints.
 
-call_agent_kicad()
+call_agent_gen_pcb()
   Ingénieur Layout : génère .kicad_pcb depuis .kicad_sch + footprints validés. Aucun input requis.
   Définit les règles DRC selon le type de circuit.
 
@@ -60,11 +61,17 @@ call_agent_placement()
   Décide les dimensions du PCB selon le nombre de composants.
 
 call_agent_routing()
-  Ingénieur Routage : Freerouting + ground planes B.Cu.
+  Ingénieur Routage : kct route officiel (auto-layers, auto-fix). Retourne routed_percent.
   Décide le nombre de couches (2/4/8) selon densité et plan utilisateur — ce n'est PAS un paramètre.
 
+  (Reasoner IA — AUTOMATIQUE, pas un outil à appeler)
+  Si call_agent_routing renvoie routed_percent < 100, l'orchestrateur déclenche
+  lui-même le reasoner (Claude déplace les composants bloquants et reroute, ~10%
+  corner cases). Le board débloqué + reasoning_steps sont inclus dans le résultat
+  du routage. Tu n'as donc PAS d'outil reason à appeler ; enchaîne sur call_agent_drc.
+
 call_agent_drc(auto_fix?)
-  Ingénieur Qualité : DRC kicad-cli, auto-fix clearance/annular ring, boucle max 3×.
+  Ingénieur Qualité : kicad-tools 27 règles JLCPCB (pur Python) → si erreurs : kicad-cli auto-fix boucle max 3×.
   N'accepte aucune violation critique.
 
 call_agent_export()

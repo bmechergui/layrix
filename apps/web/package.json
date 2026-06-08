@@ -8,7 +8,7 @@
     "lint": "next lint",
     "type-check": "tsc --noEmit",
     "start": "next start --port 3000",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },

@@ -1,11 +1,16 @@
 """FastAPI router for PCB export — Gerbers + drill + pick-and-place.
 
-POST /export/all takes a base64-encoded .kicad_pcb and returns a zip containing
-all manufacturing files plus a basic JLCPCB-style quote (no automatic order —
-the user must explicitly confirm with "OUI JE CONFIRME" before any purchase).
+POST /export/all prend un .kicad_pcb base64 et retourne un ZIP de fichiers
+de fabrication + devis JLCPCB estimé.
 
-Pipeline: pcb_b64 → temp file → kicad-cli pcb export {gerbers,drill,pos} →
-ZIP → base64. Fallback skip when kicad-cli is absent.
+Pipeline :
+  1. kicad-tools kct export --mfr jlcpcb
+     → noms couches JLCPCB (GTL/GBL/GKO), BOM LCSC, CPL rotation corrections
+  2. kicad-cli pcb export {gerbers,drill,pos}
+     → export standard si kicad-tools échoue
+  3. skipped=True → BOM CSV uniquement (kicad-cli absent)
+
+JAMAIS commander JLCPCB sans "OUI JE CONFIRME" explicite.
 """
 from __future__ import annotations
 
@@ -57,6 +62,32 @@ def _find_kicad_cli() -> Optional[str]:
     if override and Path(override).exists():
         return override
     return shutil.which("kicad-cli")
+
+
+def _export_with_kicad_tools(pcb_path: Path, out_dir: Path) -> list[str]:
+    """kicad-tools kct export --mfr jlcpcb.
+    JLCPCB layer names, BOM LCSC, CPL rotation corrections.
+    Returns list of generated files. Raises on failure.
+    """
+    import sys as _sys
+    out_dir.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        [
+            _sys.executable, "-m", "kicad_tools.cli", "export",
+            str(pcb_path),
+            "--mfr", "jlcpcb",
+            "--output", str(out_dir),
+            "--skip-preflight",   # DRC already done by call_agent_drc
+        ],
+        capture_output=True, text=True,
+        timeout=_KICAD_CLI_TIMEOUT_S + 30,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"kicad-tools export failed (rc={result.returncode}): {result.stderr[:300]}"
+        )
+    return sorted(p.name for p in out_dir.rglob("*") if p.is_file())
 
 
 def _kicad_export_all(cli_path: str, pcb_path: Path, out_dir: Path) -> list[str]:
@@ -115,8 +146,13 @@ def _estimate_quote(file_count: int) -> tuple[float, int]:
 
 @router.post("/export/all", response_model=ExportAllResponse)
 def export_all(req: ExportAllRequest) -> ExportAllResponse:
-    """Generate manufacturing files (Gerbers + drill + CPL) and return as zip."""
-    # Validate input BEFORE the skip check so malformed requests always 422.
+    """Generate manufacturing files (Gerbers + drill + CPL) and return as zip.
+
+    Priority:
+      1. kicad-tools kct export --mfr jlcpcb  (JLCPCB-optimisé)
+      2. kicad-cli pcb export {gerbers,drill,pos}  (fallback standard)
+      3. skipped=True  (kicad-cli absent)
+    """
     try:
         pcb_bytes = base64.b64decode(req.kicad_pcb_b64, validate=True)
     except (ValueError, TypeError) as exc:
@@ -124,14 +160,10 @@ def export_all(req: ExportAllRequest) -> ExportAllResponse:
 
     cli_path = _find_kicad_cli()
     if cli_path is None:
-        logger.info("kicad-cli not on PATH — skipping export")
+        logger.info("kicad-cli absent — export ignoré")
         return ExportAllResponse(
-            files=[],
-            zip_b64=None,
-            quote_usd=0.0,
-            lead_time_days=0,
-            skipped=True,
-            warning="kicad-cli not available",
+            files=[], zip_b64=None, quote_usd=0.0, lead_time_days=0,
+            skipped=True, warning="kicad-cli not available",
         )
 
     try:
@@ -139,22 +171,36 @@ def export_all(req: ExportAllRequest) -> ExportAllResponse:
             tmp_dir = Path(tmp)
             pcb_path = tmp_dir / f"{req.project_id}.kicad_pcb"
             pcb_path.write_bytes(pcb_bytes)
-            out_dir = tmp_dir / "manufacturing"
 
-            files = _kicad_export_all(cli_path, pcb_path, out_dir)
+            # ── Niveau 1 : kicad-tools (JLCPCB-optimisé) ─────────────────────
+            files: list[str] = []
+            out_dir = tmp_dir / "manufacturing"
+            used_kicad_tools = False
+            try:
+                files = _export_with_kicad_tools(pcb_path, out_dir)
+                used_kicad_tools = True
+                logger.info("kicad-tools export: %d fichiers", len(files))
+            except Exception as exc:
+                logger.warning("kicad-tools export échoué (%s) — kicad-cli direct", exc)
+
+            # ── Niveau 2 : kicad-cli standard ────────────────────────────────
+            if not files:
+                out_dir.mkdir(parents=True, exist_ok=True)
+                files = _kicad_export_all(cli_path, pcb_path, out_dir)
+                logger.info("kicad-cli export: %d fichiers", len(files))
+
             zip_bytes = _make_zip(out_dir, files)
             quote_usd, lead_time_days = _estimate_quote(len(files))
-
             return ExportAllResponse(
                 files=files,
                 zip_b64=base64.b64encode(zip_bytes).decode("ascii"),
                 quote_usd=quote_usd,
                 lead_time_days=lead_time_days,
                 skipped=False,
-                warning=None,
+                warning=None if used_kicad_tools else "kicad-tools unavailable — kicad-cli export",
             )
     except HTTPException:
         raise
     except Exception as exc:
-        logger.exception("Export failed: %s", exc)
+        logger.exception("Export échoué: %s", exc)
         raise HTTPException(status_code=500, detail="export failed") from exc
