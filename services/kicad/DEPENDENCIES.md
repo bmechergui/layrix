@@ -45,8 +45,21 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
     Fix : remplacés par ASCII (`[!]`, `[#]`, `[X]`, `[ok]`, `[OK]`) dans
     `router/fine_pitch.py`, `router/core.py`, `router/algorithms/two_phase.py`,
     `router/algorithms/monte_carlo.py`, `cli/route_cmd.py`.
-    Ceinture : exporter `PYTHONIOENCODING=utf-8` avant `kct route` en local Windows.
+    Ceinture : exporter `PYTHONUTF8=1` avant `kct ...` en local Windows
+    (PYTHONIOENCODING seul désynchronise parent cp1252 / enfant UTF-8 dans `kct build`).
     **En Docker (Linux, UTF-8) ce bug n'existe pas** — patch inoffensif là-bas.
+  - `src/kicad_tools/reasoning/state.py` + `reasoning/interpreter.py` — **fix net
+    name-only KiCad 9+ (2026-06-09)**
+    → après routage, `kct route` lance `kicad-cli pcb fill-zones` ; **kicad-cli 9/10
+    réécrit les nets au format name-only** `(net "+5V")` (sans id numérique).
+    Le parser du reasoner faisait `int(atoms[0])` → `kct reason` / PCBReasoningAgent
+    crashait : `invalid literal for int() with base 10: '+5V'`.
+    Fix : helper `_resolve_net_node()` (state.py) — accepte `(net 1 "GND")`,
+    `(net 1)` et `(net "GND")` avec résolution inverse nom→id ; appliqué aux
+    parsers pad/segment/via/zone + comparaison défensive dans interpreter.py.
+    ⚠️ **Critique pour l'agent reasoner Layrix en prod** : Docker a kicad-cli →
+    zone fill systématique ; passage de l'image à KiCad 9/10 = crash garanti
+    du `/reason/auto` sur tout PCB avec zones, sans ce patch.
 
 > Note : le pad-collapse de l'ancienne version (`optimize_placement_cmd._write_placements_to_pcb`)
 > n'existe **plus** dans cette version officielle — on délègue le placement à l'API
