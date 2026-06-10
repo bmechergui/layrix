@@ -82,10 +82,52 @@ enchaînement est : **reasoner déplace les composants → on relance `kct route
    le driver retire les zones avant routage et les redéfinit après (`define_zone`),
    même ordre que `kct route` (route d'abord, pour ensuite).
 
+## Rejouer la chaîne agents de PROD (`run_agent_chain.py`)
+
+> Session 2026-06-10 : la même validation, mais via les **fonctions de production**
+> (`tools/placement.py`, `tools/kct_route.py`, `tools/reasoning.py`) — celles
+> qu'exécutent les endpoints `/place/auto`, `/route/auto`, `/reason/auto`.
+
+```bash
+# Étapes 1→3 : gen → placement optimiseur → kct route (s'arrête sur l'analyse d'échec)
+python run_agent_chain.py <gen.kicad_pcb> output/chain
+# Le driver LLM (Claude Code) lit output/chain/3_routing_analysis.txt,
+# écrit decisions.json (place_component/delete_trace), puis :
+python run_agent_chain.py <gen.kicad_pcb> output/chain --rescue decisions.json
+```
+
+`run_feedback_loop.py` teste la boucle `rescue_with_placement_feedback` seule,
+même pattern « moi = le LLM » (décisions servies depuis un JSON, sans clé API).
+
+### Bug #5 trouvé par cette validation — kct route ne rippe pas l'existant
+
+Re-router un board **déjà partiellement routé** le dégrade : les anciennes
+pistes/vias sont des obstacles durs pour la passe from-scratch du routeur
+(pads côté J1 tous stranded). Mesures (même placement, mêmes options, seed 42) :
+
+| Board d'entrée | Nets routés |
+|----------------|-------------|
+| avec routage résiduel (53 segs + 3 zones) | 3/9 (33 %) — malgré escalade 4 couches |
+| zones retirées, pistes gardées | 3/9 — identique (zones hors de cause) |
+| **entièrement dé-routé** | **8/9 (89 %) sur 2 couches** |
+
+**Fix prod (`tools/reasoning.py`)** : `_strip_routing()` — la boucle
+placement-feedback dé-route TOUT (segments/vias/zones) avant chaque passe
+`route_fn` ; kct route re-coule les zones power lui-même. Le nettoyage
+« traces orphelines » est supprimé (subsumé). Tests TDD :
+`tests/test_reasoning_feedback.py`.
+
+Résultat boucle complète sur ce cas : 33 % (dégradé, avant fix) → 56 % conservé
+(après fix, déplacements C10/C11 près de Y1 + D1/R2 hors du couloir U2→J1).
+⚠ Le routeur reste non-reproductible d'un run à l'autre sur board identique
+(56 –89 % observés ; stagnation/deadline wall-clock, issues upstream #2673/#2802) —
+la garde anti-régression de la boucle conserve toujours le meilleur board vu.
+
 ## `expected/`
 
 - `stm32_final.kicad_pcb` — board final après driver LLM (référence)
 - `render_top.png` — rendu `kicad-cli pcb render` du résultat
 
-Les fichiers intermédiaires (`_optimised`, `_routed`, `step1/2/3`…) sont
-régénérables et **ne doivent jamais être committés** (règle CLAUDE.md).
+Les fichiers intermédiaires (`_optimised`, `_routed`, `step1/2/3`…) et tout
+`output/` sont régénérables et **ne doivent jamais être committés** (règle
+CLAUDE.md — `.gitignore` : `services/kicad/examples/*/output/`).

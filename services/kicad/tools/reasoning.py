@@ -206,12 +206,58 @@ petits composants (R, C, D) hors des couloirs bloqués, de quelques mm seulement
 n'empile jamais deux composants. Si plus rien d'utile à déplacer, réponds null."""
 
 
-def _nets_of_ref(agent, ref: str) -> list[str]:
-    """Nets connectés aux pads d'un composant (pour le nettoyage déterministe)."""
-    comp = agent.state.components.get(ref)
-    if not comp:
-        return []
-    return sorted({p.net for p in comp.pads if p.net})
+_ROUTING_BLOCK_RE = re.compile(r'\n\s*\((segment|via|zone)[\s\n]')
+
+
+def _strip_routing(pcb_bytes: bytes) -> tuple[bytes, dict[str, int]]:
+    """Retire tous les blocs ``(segment|via|zone …)`` d'un .kicad_pcb.
+
+    kct route ne sait pas ripper le routage existant : les anciennes pistes,
+    vias et zones deviennent des obstacles durs pour sa passe from-scratch
+    (mesuré le 2026-06-10 sur stm32-validation : 33 % avec routage résiduel,
+    89 % une fois dé-routé, placement identique). La boucle placement-feedback
+    dé-route donc TOUT avant chaque re-route ; kct route re-coule les zones
+    power lui-même.
+
+    Scan à parenthèses équilibrées, insensible aux parenthèses dans les
+    chaînes quotées (net names KiCad type ``"Net-(U1-X)"``).
+    Renvoie (nouveau board, comptes par type) — l'entrée n'est jamais modifiée.
+    """
+    text = pcb_bytes.decode("utf-8")
+    counts = {"segment": 0, "via": 0, "zone": 0}
+    out: list[str] = []
+    i = 0
+    while True:
+        m = _ROUTING_BLOCK_RE.search(text, i)
+        if not m:
+            out.append(text[i:])
+            break
+        out.append(text[i:m.start()])
+        j = text.index("(", m.start())
+        depth, in_str = 0, False
+        while True:
+            if j >= len(text):
+                raise ValueError(
+                    f"_strip_routing: parenthèses non équilibrées dans le bloc "
+                    f"({m.group(1)} à l'offset {m.start()} — .kicad_pcb malformé")
+            c = text[j]
+            if in_str:
+                if c == "\\":
+                    j += 1
+                elif c == '"':
+                    in_str = False
+            elif c == '"':
+                in_str = True
+            elif c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        counts[m.group(1)] += 1
+        i = j + 1
+    return "".join(out).encode("utf-8"), counts
 
 
 def rescue_with_placement_feedback(
@@ -226,16 +272,18 @@ def rescue_with_placement_feedback(
     """Sauvetage de routage : le LLM DÉPLACE, le vrai routeur ROUTE.
 
     Boucle (max ``max_iterations``) :
-      1. ``route_fn(pcb) -> (routed_bytes, pct, failure_analysis)`` — routeur
-         négocié complet (kct route) ;
-      2. si pct = 100 → terminé ; sinon le LLM décide jusqu'à
+      1. dé-routage COMPLET du board (``_strip_routing`` — kct route ne rippe
+         pas l'existant : pistes/vias/zones résiduels = obstacles durs) ;
+      2. ``route_fn(pcb) -> (routed_bytes, pct, failure_analysis)`` — routeur
+         négocié complet (kct route), from scratch ;
+      3. si pct = 100 → terminé ; sinon le LLM décide jusqu'à
          ``max_moves_per_iter`` déplacements (place_component / delete_trace
          uniquement — jamais route_net) à partir de l'analyse d'échec ;
-      3. nettoyage DÉTERMINISTE des traces des nets du composant déplacé
-         (leçon stm32-validation : traces orphelines après déplacement) ;
       4. re-route au tour suivant.
 
-    Garde anti-régression : renvoie toujours le MEILLEUR (bytes, pct) rencontré.
+    Garde anti-régression : renvoie toujours le MEILLEUR (bytes, pct) rencontré
+    (les pct sont comparables entre itérations : chaque passe est un routage
+    from-scratch complet des nets signaux).
     """
     from kicad_tools.reasoning import PCBReasoningAgent
 
@@ -250,7 +298,12 @@ def rescue_with_placement_feedback(
         board = Path(tmp) / "board.kicad_pcb"
 
         for iteration in range(1, max_iterations + 1):
-            routed, pct, analysis = route_fn(current)
+            stripped, counts = _strip_routing(current)
+            if any(counts.values()):
+                steps_log.append(
+                    f"♻ Dé-routage complet avant routage ({counts['segment']} segments, "
+                    f"{counts['via']} vias, {counts['zone']} zones)")
+            routed, pct, analysis = route_fn(stripped)
             steps_log.append(f"Itération {iteration}/{max_iterations} : routage {pct}%")
             if pct > best_pct:
                 best_bytes, best_pct = routed, pct
@@ -298,18 +351,9 @@ def rescue_with_placement_feedback(
                 steps_log.append("Aucun déplacement utile — arrêt")
                 break
 
-            # --- Nettoyage déterministe des traces orphelines ---------------
-            for ref in moved_refs:
-                for net in _nets_of_ref(agent, ref):
-                    try:
-                        agent.execute_dict({"type": "delete_trace", "net": net,
-                                            "delete_all_routing": True})
-                        steps_log.append(
-                            f"♻ Nettoie les traces orphelines de {net} ({ref} déplacé)")
-                    except Exception:
-                        logger.warning("nettoyage orphelin %s/%s échoué", ref, net)
-
-            # Pas de _refresh_agent ici : save() sérialise le board interne de
+            # Pas de nettoyage des traces orphelines ici : le dé-routage complet
+            # en tête d'itération (_strip_routing) les retire de toute façon.
+            # Pas de _refresh_agent non plus : save() sérialise le board interne de
             # l'interpréteur (toujours juste), pas agent.state — et cette boucle
             # n'appelle jamais is_complete()/get_progress() sur l'agent, contrairement
             # à route_with_llm. Si on ajoute un tel check un jour : resync d'abord.
