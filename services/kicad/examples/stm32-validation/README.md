@@ -1,9 +1,11 @@
 # Exemple de référence — Validation pipeline STM32 (input → output)
 
 > Cas d'étude complet exécuté le 2026-06-09 sur Windows (local, sans Docker) :
-> **pipeline_pro.sh → optimiseur_pro.py → kct route → driver LLM** sur un
-> devboard STM32F103C8T6 (Blue Pill, LQFP-48 0.5mm — le cas de stress du routage).
-> 4 bugs upstream kicad-tools trouvés et patchés pendant cette validation.
+> **placement optimiseur → kct route → driver LLM** sur un devboard
+> STM32F103C8T6 (Blue Pill, LQFP-48 0.5mm — le cas de stress du routage).
+> 4 bugs upstream kicad-tools trouvés et patchés pendant cette validation
+> (+ un 5e le 2026-06-10, voir plus bas). Workflow actuel : `run_agent_chain.py`
+> (les scripts historiques `pipeline_pro.sh`/`optimiseur_pro.py` ont été supprimés).
 
 ---
 
@@ -27,8 +29,8 @@ export PATH="$PATH:/c/Program Files/KiCad/<ver>/bin"   # kicad-cli pour DRC/Gerb
 # 1. Générer schéma + PCB initial
 python -m kicad_tools.cli build <dossier_board> --step schematic
 
-# 2. Pipeline complet : sync → placement → route → reason → check
-bash services/kicad/scripts/pipeline_pro.sh <dossier_board>
+# 2. Chaîne agents prod : placement optimiseur → kct route (→ --rescue, voir plus bas)
+python services/kicad/examples/stm32-validation/run_agent_chain.py <gen.kicad_pcb> <out_dir>
 
 # 3. Driver LLM (Claude joue le LLM) : état → décision → exécution → diagnostic
 python services/kicad/scripts/driver_llm.py state  <board_routé.kicad_pcb>

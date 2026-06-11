@@ -371,14 +371,15 @@ services/kicad/kicad-tools/      ← INTERDIT — jamais ajouter de tests ici (l
 
 ```
 services/kicad/scripts/
-├── pipeline_pro.sh       ← pipeline bout-en-bout local (validation manuelle, pas prod)
-└── optimiseur_pro.py     ← démo PlacementOptimizer (référence, pas prod)
+└── driver_llm.py     ← driver manuel du PCBReasoningAgent (state → décision LLM → exec batches JSON)
 ```
 
 **Ces scripts ne sont PAS appelés par les agents en production.** Les agents appellent directement les endpoints FastAPI (`/place/auto`, `/route/auto`, `/drc/auto`...) via `tools/placement.py`, `tools/routing.py`, etc.
 **NEVER** ajouter des scripts de validation dans `services/kicad/kicad-tools/scripts/` — réserver à `services/kicad/scripts/`.
 
-`driver_llm.py` = driver manuel du PCBReasoningAgent (`state` → décision LLM → `exec` batches JSON) — référence d'usage : `services/kicad/examples/stm32-validation/`.
+Référence d'usage de `driver_llm.py` : `services/kicad/examples/stm32-validation/`.
+(`pipeline_pro.sh` et `optimiseur_pro.py` supprimés le 2026-06-11 — remplacés par
+`examples/*/run_agent_chain.py`, qui rejoue la chaîne agents via les fonctions de prod.)
 
 ## Exemples de référence (services/kicad/examples/)
 
