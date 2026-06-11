@@ -19,11 +19,11 @@ export KICAD_SYMBOL_DIR="C:\Program Files\KiCad\<ver>\share\kicad\symbols"
 export KICAD_FOOTPRINT_DIR="C:\Program Files\KiCad\<ver>\share\kicad\footprints"
 
 # Étapes ①→⑥ (s'arrête sur l'analyse d'échec si le routage < 100 %)
-python run_full_pipeline.py input/circuit_full.json output/full
+python run_full_pipeline.py input/circuit_full.json output
 
-# Le driver LLM (rôle 2) lit output/full/5_routing_analysis.txt,
+# Le driver LLM (rôle 2) lit output/5_routing_analysis.txt,
 # écrit decisions.json (déplacements), puis ⑥b→⑧ :
-python run_full_pipeline.py input/circuit_full.json output/full --rescue output/full/decisions.json
+python run_full_pipeline.py input/circuit_full.json output --rescue output/decisions.json
 ```
 
 Chaque étape appelle la **fonction de production** (celle des endpoints FastAPI)
