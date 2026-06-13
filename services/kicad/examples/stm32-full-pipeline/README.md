@@ -63,8 +63,9 @@ sur ce board — prochaine cible d'amélioration.
 2. **`auto_place` ancre les connecteurs sans vérifier le contour** — la
    génération a posé J1 à y=135 (hors carte 60×40) et l'optimiseur l'a ancré
    là (`fixed_refs=J*`) → SWDIO/SWO physiquement inroutables. Le filet
-   `place_unplaced` ne couvre que les composants très loin (-1000). Candidat à
-   un fix dans `tools/placement.py` (valider l'outline avant d'ancrer).
+   `place_unplaced` ne couvre que les composants très loin (-1000). **Corrigé**
+   : `_clamp_fixed_refs_to_outline()` ramène les `fixed_refs` dans le contour
+   Edge.Cuts avant `PlacementOptimizer.from_pcb()` + tests `tests/test_placement.py`.
 3. circuit_synth **timeout 20 s** sur 17 composants en local — la cascade joue
    son rôle (fallback), mais budget à surveiller en Docker.
 
