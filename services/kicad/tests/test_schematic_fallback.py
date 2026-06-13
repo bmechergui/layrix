@@ -44,3 +44,28 @@ def test_kicad_tools_fallback_has_title():
     content = _generate_with_kicad_tools(comps, nets)
 
     assert content and "(title_block" in content
+
+
+def test_kicad_tools_fallback_labels_at_pin_positions(tmp_path):
+    """Les labels de net sont placés AUX positions exactes des pins.
+
+    Sinon ``extract_netlist()`` ne relie pas les labels aux pins (positions
+    différentes) et chaque pin finit dans son propre ``Net-(REF-PinN)``
+    isolé — c'est la cause racine de la fragmentation du netlist PCB
+    (83 nets au lieu de 12, routage bloqué à 0%, Leçon #4).
+    """
+    from kicad_tools.schematic.models.schematic import Schematic
+
+    comps, nets = _minimal_circuit()
+
+    content = _generate_with_kicad_tools(comps, nets)
+    assert content
+
+    sch_path = tmp_path / "schematic.kicad_sch"
+    sch_path.write_text(content, encoding="utf-8")
+
+    net_map = Schematic.load(str(sch_path)).extract_netlist()
+
+    assert "GND" in net_map, f"GND absent — labels non reliés aux pins: {sorted(net_map)}"
+    gnd_refs = {(p.symbol_ref, p.pin) for p in net_map["GND"]}
+    assert gnd_refs == {("R1", "2"), ("C1", "2")}

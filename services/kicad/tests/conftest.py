@@ -6,6 +6,7 @@ Ajoute au sys.path :
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -17,6 +18,21 @@ _KICAD_TOOLS_SRC = _SERVICE_ROOT / "kicad-tools" / "src"
 for p in (str(_SERVICE_ROOT), str(_KICAD_TOOLS_SRC)):
     if p not in sys.path:
         sys.path.insert(0, p)
+
+# kicad_tools.add_symbol() résout les .kicad_sym via KICAD_SYMBOL_DIR (cf. main.py
+# au démarrage du service). Sans cette variable, add_symbol() échoue silencieusement
+# (warning loggué) pour Device:R/Device:C et les tests ne testent rien de réel.
+if not os.environ.get("KICAD_SYMBOL_DIR"):
+    for _dir in (
+        str(_SERVICE_ROOT / "kicad-symbols"),
+        r"C:\Program Files\KiCad\10.99\share\kicad\symbols",
+        r"C:\Program Files\KiCad\9.0\share\kicad\symbols",
+        r"C:\Program Files\KiCad\8.0\share\kicad\symbols",
+        "/usr/share/kicad/symbols",
+    ):
+        if os.path.isdir(_dir):
+            os.environ["KICAD_SYMBOL_DIR"] = _dir
+            break
 
 
 @pytest.fixture(scope="session")
