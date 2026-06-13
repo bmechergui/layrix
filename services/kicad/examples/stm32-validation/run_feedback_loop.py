@@ -40,8 +40,16 @@ def main() -> int:
         """Driver Claude Code : sert les décisions pré-établies dans l'ordre."""
         return queue.pop(0) if queue else None
 
+    iter_count = 0
+
     def route_fn(pcb_bytes: bytes):
-        return kct_route.route_kct(pcb_bytes, timeout_s=300)
+        # Sauvegarde le board de CHAQUE itération (iter1_22pct.kicad_pcb, …)
+        # pour comparaison — la boucle prod ne rend que le meilleur.
+        nonlocal iter_count
+        iter_count += 1
+        result, pct, analysis = kct_route.route_kct(pcb_bytes, timeout_s=300)
+        (out_dir / f"iter{iter_count}_{pct}pct.kicad_pcb").write_bytes(result)
+        return result, pct, analysis
 
     pcb_bytes = Path(board_in).read_bytes()
     out_bytes, pct, steps = rescue_with_placement_feedback(
