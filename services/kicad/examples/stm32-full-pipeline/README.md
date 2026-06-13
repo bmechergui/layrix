@@ -50,8 +50,27 @@ et sauvegarde son artefact numéroté `1_schema.kicad_sch` … `8_export/gerbers
 | ⑧ export | **24 fichiers, gerbers.zip, devis $17** |
 
 Le pipeline est **structurellement validé** (8/8 étapes produisent leurs
-artefacts). La qualité du routage reste limitée par le placement de l'étape ④
-sur ce board — prochaine cible d'amélioration.
+artefacts). La qualité du routage est limitée par un netlist PCB fragmenté
+(83 nets au lieu de 12, voir Leçon #4) — **pas par le placement de l'étape
+④**, qui est corrigé (voir run de validation 2026-06-13 ci-dessous).
+
+## Run de validation (2026-06-13) — fix placement `_clamp_fixed_refs_to_outline`
+
+Re-jeu des étapes ①③④⑤ (script inline, sans ERC/DRC/export) avec le fix
+`_clamp_fixed_refs_to_outline()` (commit d849774) pour valider que J1 reste
+dans le contour Edge.Cuts dès le placement :
+
+| Étape | Résultat |
+|-------|----------|
+| ④ placement | **J1 corrigé** : généré hors-carte à (35.0, 50.0) sur un board 60×40mm → clampé à (35.0, 38.0), dans `[0,60]×[0,40]` (marge 2mm). Fix `_clamp_fixed_refs_to_outline` **CONFIRMÉ** ✅ |
+| ⑤ routage | **0 %** — `Routed: 0/1 nets (0%)`. Cause : **pas le placement** — voir Leçon #4 (netlist niveau 1 cassé) |
+
+Le fix placement (Leçon #2) fonctionne : J1 ne sort plus du contour. Le 0 %
+de ce run n'est **pas comparable** au 22 % du run de référence 2026-06-11 —
+les deux runs régénèrent le schéma (étape ①, fallback kicad-tools sans seed
+fixe), avec un placement de labels différent à chaque fois, ce qui fait
+varier la sévérité du bug de Leçon #4 (22 % vs 0 %) ; la **cause racine est
+la même** dans les deux cas.
 
 ## Leçons (bugs prod trouvés par ce cas)
 
@@ -66,8 +85,23 @@ sur ce board — prochaine cible d'amélioration.
    `place_unplaced` ne couvre que les composants très loin (-1000). **Corrigé**
    : `_clamp_fixed_refs_to_outline()` ramène les `fixed_refs` dans le contour
    Edge.Cuts avant `PlacementOptimizer.from_pcb()` + tests `tests/test_placement.py`.
+   **Confirmé** par le run de validation 2026-06-13 : J1 (35,50) hors-carte
+   → clampé (35,38), dans `[0,60]×[0,40]`.
 3. circuit_synth **timeout 20 s** sur 17 composants en local — la cascade joue
    son rôle (fallback), mais budget à surveiller en Docker.
+4. **Netlist niveau 1 cassé → fallback kicad-cli fragmente le netlist (83
+   nets au lieu de 12) → routage structurellement bloqué** — `_generate_with_kicad_tools`
+   (tools/pcb.py:415) importe `kicad_tools.workflow._netlist.build_netlist_from_schematic`,
+   module **inexistant** dans le dépôt officiel vendoré (2026-06-03) →
+   `ModuleNotFoundError` systématique → fallback niveau 2 (kicad-cli
+   `export_netlist`), qui ne résout pas les hierarchical labels du schéma
+   régénéré par le fallback kicad-tools de l'étape ① (labels pas aux pins
+   exacts — cf. commentaire tools/pcb.py:376-379). Résultat : chaque pad sur
+   son propre net `unconnected-(REF-PadN)` (83 nets pour 12 attendus). `kct
+   route` ne voit alors **qu'1 net** à router (`Net-(U2-VSS-Pad23)`, 3 pads
+   GND du MCU) → `Routed: 0/1 (0%)`. **Non corrigé** — piste : remplacer
+   l'import niveau 1 par `Schematic.load(sch_path).extract_netlist()`, déjà
+   utilisé avec succès dans `_generate_with_pcbnew` (tools/pcb.py:498-508).
 
 ## Gestion des fichiers
 
@@ -75,4 +109,5 @@ sur ce board — prochaine cible d'amélioration.
 - `output/` — **jetable, gitignoré** : tous les artefacts d'un run, y compris
   `decisions.json` (chaque run peut donner une analyse différente).
 - `expected/` — à promouvoir depuis `output/` quand un run atteint la qualité
-  cible (board final + rendu) ; pas encore créé pour ce cas (routage 33 %).
+  cible (board final + rendu) ; pas encore créé pour ce cas — bloqué par
+  Leçon #4 (netlist fragmenté → routage 0-33 % selon le run).
