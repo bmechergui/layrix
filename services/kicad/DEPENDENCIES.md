@@ -18,10 +18,17 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
   - `src/circuit_synth/kicad/schematic/geometry_utils.py` — fallback index-based
     → `get_actual_pin_position`: si pin.number absent, utiliser l'index (défensif).
 
-## kicad-tools (dossier officiel complet — 2026-06-02)
+## kicad-tools (dossier officiel complet — mis à jour main HEAD 2026-06-14)
 
 - **Source :** https://github.com/rjwalters/kicad-tools (dépôt officiel complet, avec
   src/, docs/, examples/, boards/, MCP, build C++).
+- **Snapshot vendoré actuel :** branche `main`, commit `fda275d` (2026-06-13,
+  « fix(router): 45-align length-tuning meander emitter »). Version pyproject
+  affichée `0.13.0` (le tag publié v0.13.0 est d'avril — `main` est très en avance,
+  surtout côté routeur, mais non re-taggé). Update du 2026-06-14 : ~718 fichiers
+  routeur récupérés depuis le snapshot de début juin ; 4 patches Layrix réappliqués
+  (cf. ci-dessous). Validé localement : 20/20 tests + smoke route 100% (compat API).
+  Qualité de routage à valider en Docker (backend C++ requis, indispo en local).
 - **Chemin :** `services/kicad/kicad-tools/` (tiret ; le package Python reste `kicad_tools`).
 - **Import Python :** ajouter `kicad-tools/src` au sys.path → `import kicad_tools`.
 - **Install Docker :** `pip3 install -e "/tmp/kicad-tools[placement,drc,geometry,native]"`
@@ -38,16 +45,17 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
     best‑effort (`try/except OSError`). Sans ce fix : `kct build`/`kct route`
     échouent sur Windows (preuve : board 01 du repo échouait 0/1, passe 13/13 après).
     **En Docker (Linux) ce bug n'existe pas** — le patch est inoffensif là-bas.
-  - Sortie console routeur — **fix charmap Windows (2026-06-09)**
+  - Sortie console routeur — **fix charmap Windows — DÉPLACÉ DANS NOTRE WRAPPER (2026-06-14)**
     → les emojis (`⚠️`, `🔶`, `🔴`, `✓`, `✅`, `❌`) dans les logs du routeur crashaient
     le routage en plein milieu sur Windows (console cp1252) :
     `'charmap' codec can't encode character '⚠'` → attempts interrompus à ~66-77%.
-    Fix : remplacés par ASCII (`[!]`, `[#]`, `[X]`, `[ok]`, `[OK]`) dans
-    `router/fine_pitch.py`, `router/core.py`, `router/algorithms/two_phase.py`,
-    `router/algorithms/monte_carlo.py`, `cli/route_cmd.py`.
-    Ceinture : exporter `PYTHONUTF8=1` avant `kct ...` en local Windows
-    (PYTHONIOENCODING seul désynchronise parent cp1252 / enfant UTF-8 dans `kct build`).
-    **En Docker (Linux, UTF-8) ce bug n'existe pas** — patch inoffensif là-bas.
+    **Ancienne approche (≤ 2026-06-09)** : remplacer les emojis par ASCII dans ~5
+    fichiers `router/*` — fragile, reperdu à chaque update upstream (whack-a-mole).
+    **Nouvelle approche (2026-06-14)** : forcer `PYTHONUTF8=1` + `PYTHONIOENCODING=utf-8`
+    dans l'**env du subprocess kct** depuis `tools/kct_route.py` (NOTRE code, tracké).
+    L'enfant kct écrit alors en UTF-8 quel que soit le codepage console → plus aucun
+    crash, **et le fix survit aux updates** de kicad-tools (plus rien à réappliquer
+    dans la lib pour les emojis). **En Docker (Linux, UTF-8) inoffensif.**
   - `src/kicad_tools/reasoning/state.py` + `reasoning/interpreter.py` — **fix net
     name-only KiCad 9+ (2026-06-09)**
     → après routage, `kct route` lance `kicad-cli pcb fill-zones` ; **kicad-cli 9/10
@@ -81,8 +89,12 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
 # circuit_synth
 cd services/kicad/circuit_synth && git pull && pip install -e .
 
-# kicad-tools (ré-appliquer les patches fsync + charmap après pull — voir ci-dessus)
-cd services/kicad/kicad-tools && git pull && pip install -e ".[placement,drc,geometry,native]" && kct build-native
+# kicad-tools — après un nouveau snapshot upstream, ré-appliquer les 3 patches LIB :
+#   1. fsync Windows        (cli/route_cmd.py _write_routed_pcb)
+#   2. reasoning name-only  (reasoning/state.py helper _resolve_net_node + 4 sites)
+#   3. layer_count 4/6c     (reasoning/interpreter.py promotion depuis PCBState.layers)
+# Le patch charmap n'est PLUS dans la lib (déplacé dans tools/kct_route.py — durable).
+cd services/kicad/kicad-tools && pip install -e ".[placement,drc,geometry,native]" && kct build-native
 ```
 
 Puis mettre à jour ce fichier avec la nouvelle version.

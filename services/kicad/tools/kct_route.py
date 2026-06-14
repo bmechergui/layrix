@@ -87,9 +87,16 @@ def route_kct(pcb_bytes: bytes, timeout_s: int = _ROUTE_TIMEOUT_S) -> tuple[byte
             "--seed", "42",
             "--timeout", str(timeout_s),
         ]
+        # Force UTF-8 stdout dans l'ENFANT kct : ses logs contiennent des emojis
+        # (⚠ ✓ …). Sur une console Windows cp1252, l'enfant crashe en plein
+        # routage (`'charmap' codec can't encode '⚠'`) → attempts coupés à ~66%.
+        # PYTHONUTF8=1 dans l'env subprocess règle ça durablement, sans patcher
+        # la lib vendorée (re-perdu à chaque update). Inoffensif en Docker/Linux.
+        import os as _os
+        _env = {**_os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
         result = subprocess.run(
             cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=timeout_s + 60, check=False,
+            timeout=timeout_s + 60, check=False, env=_env,
         )
 
         if not dst.exists():
