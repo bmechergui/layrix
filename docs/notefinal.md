@@ -988,6 +988,69 @@ prompts.ts (reasoner = automatique), tests/orchestrator-reason.test.ts}`. Commit
 
 ---
 
+### 2026-06-14 — Netlist PCB fragmenté → RÉSOLU à la racine
+
+**Décision :** corriger la fragmentation du netlist (83 nets au lieu de ~12, routage
+bloqué ~0%) à deux endroits : (1) `tools/schematic.py` pose les labels de net À LA
+POSITION EXACTE de la pin via `sym.pin_position()` (au lieu d'un offset arbitraire
+`symbol_x+8`) ; (2) `tools/pcb.py` niveau-1 importe `kicad_tools.operations.netlist`
+(le bon module) au lieu de `kicad_tools.workflow._netlist` (inexistant).
+
+**Pourquoi :** les labels hors-pin → `extract_netlist()` isolait chaque pin dans son
+propre `Net-(REF-PinN)`. ET l'import niveau-1 cassé → fallback kicad-cli systématique
+qui fragmentait aussi. Les deux causes empêchaient tout routage réel.
+
+**Écarté :** patcher kicad-cli ; le vrai fix est en amont (schéma + import).
+
+**Fichiers concernés :** `services/kicad/tools/{schematic.py, pcb.py}` +
+`tests/{test_schematic_fallback.py, test_pcb_netlist.py}`. PR #35, commit ef64e4f.
+
+---
+
+### 2026-06-14 — Update kicad-tools → main HEAD + patch charmap déplacé hors lib
+
+**Décision :** mettre à jour le snapshot vendoré kicad-tools (gitignoré) vers
+`main` HEAD (commit upstream fda275d, ~718 fichiers routeur). Le patch charmap
+Windows est DÉPLACÉ de la lib vers notre wrapper `tools/kct_route.py` (force
+`PYTHONUTF8=1` dans l'env du subprocess kct) — durable, survit aux updates.
+
+**Pourquoi :** récupérer les correctifs routeur upstream ; éviter de re-scrubber les
+emojis dans ~5 fichiers `router/*` à chaque update (whack-a-mole).
+
+**Écarté :** rester sur le tag v0.13.0 (avril) = plus ancien que notre snapshot
+(downgrade). Mesure de qualité routage en local impossible (pas de backend C++).
+
+**Fichiers concernés :** `services/kicad/{tools/kct_route.py, DEPENDENCIES.md}` +
+kicad-tools/ (gitignoré). PR #35, commit 73129f8.
+
+---
+
+### 2026-06-15 — Placement en 2 phases dans l'agent (PlacementOptimizer → CMA-ES)
+
+**Décision :** l'agent placement (⑤) fait DEUX phases. Phase 1 = `PlacementOptimizer`
+(outil physique : clustering + connecteurs J*/P* ancrés et clampés dans le contour)
+prépare le terrain. Phase 2 = `kct optimize-placement --strategy cmaes` (500 itérations,
+`seed_method="current"`) raffine DEPUIS la Phase 1. Connecteurs restaurés (re-ancrage)
+après la Phase 2. gen_pcb ne fait plus qu'une grille de départ.
+
+**Pourquoi :** combiner placement physique (groupes + contraintes mécaniques) et
+optimisation génétique (wirelength). 2 bugs lib bloquaient ce flux, corrigés :
+- **patch #5** `_write_placements_to_pcb` 2-pass : le writer officiel n'écrivait
+  JAMAIS les positions CMA-ES (`(at)` précède `(property Reference)` en KiCad 8/9
+  → ref inconnue au moment du `(at)`) → CMA-ES tournait en no-op silencieux.
+- **patch #6** `seed_method="current"` : le seed officiel ne connaît que
+  force-directed/random → CMA-ES re-seedait et JETAIT la Phase 1. Ajout d'un seed
+  construit depuis `fp.position` (board-relative) → Phase 1 nourrit Phase 2.
+
+**Écarté :** force-directed dans gen_pcb (redondant, CMA-ES re-seede) ; CMA-ES seul
+sans Phase 1 (perd le clustering + l'ancrage mécanique des connecteurs).
+
+**Fichiers concernés :** `services/kicad/tools/{placement.py, pcb.py}` +
+`tests/test_placement.py` + 2 patches kicad-tools (gitignoré, doc DEPENDENCIES.md
+#5/#6). PR #36, commits 9919f54 + a300283. ⚠️ kicad-tools a désormais **5 patches lib**.
+
+---
+
 ## Template pour la prochaine décision
 
 ```

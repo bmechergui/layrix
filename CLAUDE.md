@@ -198,15 +198,18 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      ② pcbnew direct : BOARD() + FootprintLoad() + SetNet() → .kicad_pcb natif
      ③ TypeScript S-expr → fallback final (success=False)
      fallback : runCircuitSynthEngine() TypeScript
-  ⑤ call_agent_placement  → Ingénieur Placement   [workflow OFFICIEL kicad-tools]
-     POST /place/auto (kicad_pcb_b64) — le PCB arrive DÉJÀ PLACÉ (call_agent_gen_pcb)
-     PlacementOptimizer.from_pcb(pcb, fixed_refs=<connecteurs J*/P*>,
-                                 enable_clustering=True)  ← API Python réelle
-       · fixed_refs        → connecteurs ancrés
-       · enable_clustering → regroupe les grappes (caps/quartz près du MCU = "grouping")
-       · run() + snap_rotations_to_90() + write_to_pcb()
+  ⑤ call_agent_placement  → Ingénieur Placement   [2 PHASES dans l'agent]
+     POST /place/auto (kicad_pcb_b64) — gen_pcb fournit une grille de départ
+     Phase 1 (outil physique) : PlacementOptimizer.from_pcb(pcb,
+         fixed_refs=<J*/P*>, enable_clustering=True).run().snap_rotations_to_90()
+         .write_to_pcb() → regroupe les grappes + ancre/clampe les connecteurs
+     Phase 2 (génétique) : kct optimize-placement --strategy cmaes (500 itér,
+         seed_method="current") → raffine DEPUIS la Phase 1 (patch lib #6 ; sans
+         ça CMA-ES re-seede force-directed et jette la Phase 1)
+     Re-ancrage : positions connecteurs restaurées post-CMA-ES (ne fige pas dur)
      Filet : place_unplaced() si footprints hors-carte (vieux PCB à -1000)
-     ⚠️ set_weights/add_group/lock/optimize/save de la doc N'EXISTENT PAS — vraie API ci-dessus
+     ⚠️ patch lib #5 (_write_placements_to_pcb 2-pass) requis : sinon CMA-ES
+        n'écrit JAMAIS les positions ((at) précède Reference en KiCad 8/9)
   ⑥ call_agent_routing    → Ingénieur Routage   [workflow OFFICIEL kicad-tools]
      POST /route/auto
      ① kct route --strategy negotiated --auto-layers --auto-fix --seed (officiel,
@@ -253,13 +256,16 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
   - Fallback final : `schematic-engine.ts generateSchematic()` (TypeScript S-expr, 0 Docker)
 - **Orchestrateur optimisé :** blobs KiCad (`kicad_sch_content`, `kicad_pcb_content`, `gerber_zip_b64`) strippés des `tool_result` Sonnet → économie ~70% tokens input
 
-**Placement actuel (workflow OFFICIEL kicad-tools, depuis 2026-06-03) :** le PCB arrive
-déjà placé (call_agent_gen_pcb ne déplace plus à -1000) ; `PlacementOptimizer.from_pcb(
-pcb, fixed_refs=<J*/P*>, enable_clustering=True).run().snap_rotations_to_90().write_to_pcb()`.
-Le clustering regroupe les grappes électriques (caps/quartz près du MCU). **Aucun algo
-custom** (pin-adjacent/gate/HPWL supprimés). ⚠️ L'API doc `set_weights/add_group/optimize`
-n'existe PAS — utiliser la vraie API. Routage rapide (gros boards) = backend C++
-`kct build-native` (Docker). Voir `docs/notefinal.md` (décision 2026-06-03).
+**Placement actuel (2 phases dans l'agent, depuis 2026-06-15) :** gen_pcb fournit une
+grille de départ ; l'agent placement fait **Phase 1** `PlacementOptimizer.from_pcb(pcb,
+fixed_refs=<J*/P*>, enable_clustering=True).run().snap_rotations_to_90().write_to_pcb()`
+(clustering + connecteurs ancrés/clampés) **puis Phase 2** `kct optimize-placement
+--strategy cmaes` (500 itér, `seed_method="current"` → raffine DEPUIS la Phase 1), suivi
+d'un **re-ancrage** des connecteurs. **2 patches lib requis** : #5 writer 2-pass (sinon
+CMA-ES n'écrit jamais les positions) + #6 `seed_method="current"` (sinon Phase 1 jetée).
+**Aucun algo custom** (pin-adjacent/gate/HPWL supprimés). Routage rapide (gros boards) =
+backend C++ `kct build-native` (Docker). Voir `docs/notefinal.md` (décision 2026-06-15)
++ `services/kicad/DEPENDENCIES.md` (patches #5/#6).
 **Placement futur (Phase 6+) : RL_PCB** — hybride LLM + Reinforcement Learning :
   - Sonnet analyse le schéma et suggère une stratégie (groupes fonctionnels, zones sensibles)
   - RL_PCB optimise mathématiquement les positions X/Y
@@ -519,18 +525,25 @@ Ces deux librairies sont dans `services/kicad/` (gitignorées, documentées dans
     Sans ce fix : Device:R et Device:C → tous labels au même pin (pin 1) → R1.pin2=unconnected
   - `kicad/schematic/geometry_utils.py` — fallback index-based pour pin.number absent (défensif)
 
-### kicad-tools (dépôt officiel complet, depuis 2026-06-03)
+### kicad-tools (dépôt officiel complet — snapshot main HEAD, depuis 2026-06-14)
 - **Source :** github.com/rjwalters/kicad-tools — **dépôt entier vendoré** dans
   `services/kicad/kicad-tools/` (tiret ; le package Python reste `kicad_tools`).
+  Snapshot actuel = branche `main` (commit fda275d, 2026-06-13). Gitignoré →
+  atteint Docker via `COPY . .`.
 - **Import :** `kicad-tools/src` sur le sys.path → `import kicad_tools`.
 - **Install Docker :** `pip install -e "/tmp/kicad-tools[placement,drc,geometry,native]"`
   puis `kct build-native` (backend C++ A*, 10-100× ; besoin cmake+g++).
-- **Workflow utilisé :** placement `PlacementOptimizer` (clustering + connecteurs ancrés) ·
-  routage `kct route --auto-layers --auto-fix` + `kct reason` (LLM/heuristique).
-- **Patch Layrix :** `src/.../cli/route_cmd.py` `_write_routed_pcb()` — **fix fsync Windows
-    (2026-06-02)** : `os.fsync` sur handle `"rb"` read-only → OSError [Errno 9] cassait
-    tout build/route sur Windows. Fix : write+fsync même handle writable, best-effort
-    (`try/except OSError`). Inoffensif en Docker/Linux. Voir `services/kicad/DEPENDENCIES.md`.
+- **Workflow utilisé :** placement 2 phases (`PlacementOptimizer` clustering+ancrage →
+  `kct optimize-placement --strategy cmaes` seed=current) · routage `kct route
+  --auto-layers --auto-fix` + `kct reason` (LLM/heuristique).
+- **5 patches Layrix** (gitignorés, à réappliquer après chaque update upstream —
+  détails dans `services/kicad/DEPENDENCIES.md`) :
+  1. fsync Windows (`cli/route_cmd.py _write_routed_pcb`)
+  2. reasoning name-only KiCad 9+ (`reasoning/state.py`)
+  3. layer_count 4/6 couches (`reasoning/interpreter.py`)
+  4. writer CMA-ES 2-pass (`cli/optimize_placement_cmd.py _write_placements_to_pcb`)
+  5. seed=current (`cli/optimize_placement_cmd.py _generate_seed`)
+  (le patch charmap Windows est désormais hors lib → `tools/kct_route.py`, durable)
 
 **Règle :** après `git pull` d'une de ces libs, ré-appliquer les patches et ré-installer en éditable.
 

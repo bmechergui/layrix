@@ -29,7 +29,7 @@ jusqu'à DRC propre + Gerbers exportés + commande JLCPCB ✅
 
 - Concept : SaaS web 100% cloud de conception PCB via langage naturel
 - Moteur PCB : Circuit-Synth (Python, génère .kicad_sch + .kicad_pcb natifs) + KiCad (pro multi-couches)
-- Placement auto : kct optimize-placement CMA-ES (circuits discrets) → fallback place_unplaced cluster-by-net (shields/modules Arduino/STM32) — board fitté automatiquement
+- Placement auto : 2 phases — Phase 1 PlacementOptimizer (clustering + connecteurs ancrés) → Phase 2 CMA-ES (kct optimize-placement --strategy cmaes, seed=current) → re-ancrage connecteurs
 - Routage auto : kicad-tools A* Python (≤30 nets routables) → Freerouting REST API 1 JVM (circuits complexes) → subprocess → GND plane
 - Couches : 2 à 8 couches selon le plan
 - Exports : .kicad_pcb + .kicad_sch + Gerber + BOM + PDF + STEP 3D
@@ -62,12 +62,12 @@ Orchestrateur Sonnet 4.6 · 8 agents Haiku 4.5 · max 15 itérations · SSE stre
      Primaire : Docker kicad_gen.py → .kicad_pcb
      Fallback : runCircuitSynthEngine() TypeScript inline
 
-⑤ call_agent_placement → positions X/Y/rotation
-     ① kct optimize-placement CMA-ES (si feasible — circuits discrets)
-     ② place_unplaced(cluster=True) fallback shields/modules + board fitté
-     ② pcbnew grille simple (si kicad-tools échoue)
-     ③ error si Docker down
-     Fallback : pcbnew grille (fallback) Python (dans le service Docker)
+⑤ call_agent_placement → positions X/Y/rotation — 2 PHASES dans l'agent :
+     Phase 1 : PlacementOptimizer (clustering + connecteurs J*/P* ancrés/clampés)
+     Phase 2 : kct optimize-placement --strategy cmaes (500 itér, seed=current)
+               → raffine DEPUIS la Phase 1 (patch lib #6)
+     Re-ancrage : positions connecteurs restaurées post-CMA-ES
+     Filet : place_unplaced(cluster=True) si footprints hors-carte (-1000)
 
 ⑥ call_agent_routing   → traces + plans de masse (5 niveaux)
      ① kicad-tools A* negotiated (≤30 nets, 60s) · zones GND+VCC injectées
@@ -594,9 +594,15 @@ Pipeline réel = **workflow OFFICIEL kicad-tools, API Python** (⚠️ PAS les f
 `--thermal / --grouping / --anchor-weight` : ils N'EXISTENT PAS dans le dépôt) :
 
 ```
-① call_agent_gen_pcb   → PCB "unrouted" = footprints PLACÉS (pas de -1000)
-② call_agent_placement → PlacementOptimizer.from_pcb(pcb, fixed_refs=<J*/P*>,
-     enable_clustering=True).run().snap_rotations_to_90().write_to_pcb()
+① call_agent_gen_pcb   → PCB "unrouted" = footprints placés par grille de départ
+② call_agent_placement → 2 PHASES dans l'agent :
+     Phase 1 (physique) : PlacementOptimizer.from_pcb(pcb, fixed_refs=<J*/P*>,
+        enable_clustering=True).run().snap_rotations_to_90().write_to_pcb()
+        → regroupe les grappes + ancre les connecteurs (prépare le terrain)
+     Phase 2 (génétique): kct optimize-placement --strategy cmaes (500 itér),
+        seed_method="current" → raffine DEPUIS la Phase 1 (patch lib #6 ; sans ça
+        CMA-ES re-seede force-directed et jette la Phase 1)
+     Re-ancrage : positions connecteurs restaurées post-CMA-ES (ne fige pas dur)
 ③ call_agent_routing   → kct route --strategy negotiated --auto-layers --auto-fix
                          → renvoie routed_percent réel
 ④ call_agent_reason    → SI routing < 100 % : PCBReasoningAgent + Claude Haiku
