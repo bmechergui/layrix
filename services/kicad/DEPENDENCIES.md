@@ -74,6 +74,16 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
     (`Layer value not in stack`, le grid ne modélisait que F.Cu/B.Cu).
     Fix : promotion automatique de `layer_count` depuis `PCBState.layers`
     (uniquement vers le haut — une restriction explicite de l'appelant reste honorée).
+  - `src/kicad_tools/cli/optimize_placement_cmd.py` `_write_placements_to_pcb` —
+    **fix writer CMA-ES (2026-06-15)**
+    → en KiCad 8/9, la ligne `(at X Y)` d'un footprint PRÉCÈDE sa
+    `(property "Reference" ...)`. Le writer single-pass officiel lisait la ref
+    APRÈS le `(at)` → `current_ref is None` au moment du `(at)` → **aucune
+    position jamais réécrite** : `kct optimize-placement --strategy cmaes` tournait
+    (convergeait) mais réécrivait le placement d'ENTRÉE inchangé (no-op silencieux).
+    Fix : writer 2 passes — passe 1 mappe chaque bloc footprint → (ref, index du
+    1er `(at)`), passe 2 réécrit ce `(at)`. **Critique pour l'agent placement
+    Layrix** (`tools/placement.auto_place`) qui délègue le raffinement à CMA-ES.
   - **Limitation connue (non patchée, contournée)** : le routeur A* du reasoner
     rasterise les zones cuivre en obstacles durs → 0 chemin pour les autres nets.
     Contournement : retirer les zones avant `route_net`, les redéfinir après via
@@ -89,10 +99,11 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
 # circuit_synth
 cd services/kicad/circuit_synth && git pull && pip install -e .
 
-# kicad-tools — après un nouveau snapshot upstream, ré-appliquer les 3 patches LIB :
+# kicad-tools — après un nouveau snapshot upstream, ré-appliquer les 4 patches LIB :
 #   1. fsync Windows        (cli/route_cmd.py _write_routed_pcb)
 #   2. reasoning name-only  (reasoning/state.py helper _resolve_net_node + 4 sites)
 #   3. layer_count 4/6c     (reasoning/interpreter.py promotion depuis PCBState.layers)
+#   4. writer CMA-ES        (cli/optimize_placement_cmd.py _write_placements_to_pcb 2-pass)
 # Le patch charmap n'est PLUS dans la lib (déplacé dans tools/kct_route.py — durable).
 cd services/kicad/kicad-tools && pip install -e ".[placement,drc,geometry,native]" && kct build-native
 ```
