@@ -146,30 +146,13 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
             logger.info("footprints hors-carte → place_unplaced appliqué")
 
         # ── Phase 1 : PlacementOptimizer (clustering + connecteurs ancrés) ──
+        # enable_clustering=True → detect_functional_clusters (natif) regroupe
+        # GÉNÉRIQUEMENT, sur N'IMPORTE QUEL board : quartz+caps de charge (TIMING),
+        # caps de découplage près de l'alim (POWER), interface, driver — par
+        # motif électronique, pas par références hardcodées.
         conn = _connector_refs(pcb)
         _clamp_fixed_refs_to_outline(pcb, conn)
         opt = PlacementOptimizer.from_pcb(pcb, fixed_refs=conn, enable_clustering=True)
-        
-        from kicad_tools.optim.constraints import GroupingConstraint, SpatialConstraint
-        
-        # Injection des groupes natifs stricts (15mm pour éviter l'écrasement physique)
-        gc_quartz = GroupingConstraint(
-            name="Quartz_MCU",
-            members=["U2", "Y1", "C10", "C11"],
-            constraints=[SpatialConstraint.max_distance("U2", 15.0)]
-        )
-        gc_alim = GroupingConstraint(
-            name="Decoupling_MCU",
-            members=["U2", "C12", "C13", "C14", "C15", "C16"],
-            constraints=[SpatialConstraint.max_distance("U2", 15.0)]
-        )
-        gc_ldo = GroupingConstraint(
-            name="LDO_Caps",
-            members=["U1", "C1", "C2", "C3"],
-            constraints=[SpatialConstraint.max_distance("U1", 15.0)]
-        )
-        opt.add_grouping_constraints([gc_quartz, gc_alim, gc_ldo])
-        
         opt.run(iterations=1000)
         opt.snap_rotations_to_90()
         opt.write_to_pcb(pcb)
