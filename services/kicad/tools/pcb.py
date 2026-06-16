@@ -455,7 +455,7 @@ def _generate_with_kicad_tools(
         # Place les footprints SUR la carte (fichier "unrouted" = placé, sans pistes).
         # Placement de départ par grille uniquement : l'agent placement (⑤) fait
         # le vrai placement en 2 phases — Phase 1 PlacementOptimizer (clustering +
-        # connecteurs ancrés) puis Phase 2 CMA-ES (raffinement seed=current).
+        # connecteurs ancrés) puis Phase 2 EvolutionaryPlacementOptimizer (GA).
         workflow.place_all_components(spacing=15.0, margin=5.0)
         workflow.assign_nets()
         workflow.save(pcb_path)

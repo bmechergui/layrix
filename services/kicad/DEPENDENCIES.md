@@ -34,7 +34,9 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
 - **Install Docker :** `pip3 install -e "/tmp/kicad-tools[placement,drc,geometry,native]"`
   puis `kct build-native --force` (backend C++ A* — 10-100× plus rapide ; non‑fatal).
 - **Workflow officiel utilisé par nos agents :**
-  - Placement : `kct create-pcb` (placement initial) → `kct placement optimize --fixed <connecteurs> --cluster`
+  - Placement (2 phases) : Phase 1 `PlacementOptimizer(fixed_refs, enable_clustering)`
+    (physique locale) → Phase 2 `EvolutionaryPlacementOptimizer.optimize_hybrid()`
+    (GA global, cluster-aware, fitness routabilité). API natives, zéro patch.
   - Routage   : `kct route --mfr jlcpcb --auto-layers --auto-fix --seed`
   - Voir `docs/guides/placement-optimization.md` + `docs/guides/routing.md`.
 - **Patches Layrix :**
@@ -74,28 +76,13 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
     (`Layer value not in stack`, le grid ne modélisait que F.Cu/B.Cu).
     Fix : promotion automatique de `layer_count` depuis `PCBState.layers`
     (uniquement vers le haut — une restriction explicite de l'appelant reste honorée).
-  - `src/kicad_tools/cli/optimize_placement_cmd.py` `_write_placements_to_pcb` —
-    **fix writer CMA-ES (2026-06-15)**
-    → en KiCad 8/9, la ligne `(at X Y)` d'un footprint PRÉCÈDE sa
-    `(property "Reference" ...)`. Le writer single-pass officiel lisait la ref
-    APRÈS le `(at)` → `current_ref is None` au moment du `(at)` → **aucune
-    position jamais réécrite** : `kct optimize-placement --strategy cmaes` tournait
-    (convergeait) mais réécrivait le placement d'ENTRÉE inchangé (no-op silencieux).
-    Fix : writer 2 passes — passe 1 mappe chaque bloc footprint → (ref, index du
-    1er `(at)`), passe 2 réécrit ce `(at)`. **Critique pour l'agent placement
-    Layrix** (`tools/placement.auto_place`) qui délègue le raffinement à CMA-ES.
-  - `src/kicad_tools/cli/optimize_placement_cmd.py` `_generate_seed` /
-    `_build_current_seed` — **fix seed=current (2026-06-15)**
-    → `seed_method` officiel ne connaît que `force-directed`/`random` → CMA-ES
-    re-génère TOUJOURS son seed et **ignore le placement d'entrée**. Pour notre
-    agent placement 2-phases (Phase 1 PlacementOptimizer clustering+ancrage →
-    Phase 2 CMA-ES), la Phase 1 serait jetée. Fix : ajout de
-    `seed_method="current"` (+ helper `_build_current_seed`) qui construit le
-    vecteur seed `[x,y,rot,side]` depuis les positions courantes du PCB
-    (`fp.position` board-relative = repère optimiseur). **+ `cli/parser.py`** :
-    ajouter `"current"` aux `choices` du flag `--seed` (sinon argparse rejette
-    `kct optimize-placement --seed current`). Ainsi Phase 1 **nourrit** Phase 2.
-    `tools/placement.auto_place` invoque la CLI en subprocess (`--seed current`).
+  - **(retirés 2026-06-16)** — 2 patches CMA-ES `optimize-placement` (writer 2-pass
+    `_write_placements_to_pcb` + `seed=current` `_generate_seed`/`parser.py`) ont été
+    SUPPRIMÉS : l'agent placement Phase 2 utilise désormais
+    `EvolutionaryPlacementOptimizer` (API native, GA cluster-aware + routabilité),
+    qui n'appelle PLUS `kct optimize-placement`. `optimize_placement_cmd.py` et
+    `parser.py` sont donc **purs upstream** (rien à réappliquer). Voir
+    `tools/placement.auto_place`.
   - **Limitation connue (non patchée, contournée)** : le routeur A* du reasoner
     rasterise les zones cuivre en obstacles durs → 0 chemin pour les autres nets.
     Contournement : retirer les zones avant `route_net`, les redéfinir après via
@@ -111,14 +98,13 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
 # circuit_synth
 cd services/kicad/circuit_synth && git pull && pip install -e .
 
-# kicad-tools — après un nouveau snapshot upstream, ré-appliquer les 5 patches LIB :
+# kicad-tools — après un nouveau snapshot upstream, ré-appliquer les 3 patches LIB :
 #   1. fsync Windows        (cli/route_cmd.py _write_routed_pcb)
 #   2. reasoning name-only  (reasoning/state.py helper _resolve_net_node + 4 sites)
 #   3. layer_count 4/6c     (reasoning/interpreter.py promotion depuis PCBState.layers)
-#   4. writer CMA-ES        (cli/optimize_placement_cmd.py _write_placements_to_pcb 2-pass)
-#   5. seed=current         (cli/optimize_placement_cmd.py _generate_seed + _build_current_seed
-#                            ET cli/parser.py : "current" dans les choices de --seed)
 # Le patch charmap n'est PLUS dans la lib (déplacé dans tools/kct_route.py — durable).
+# Les 2 patches CMA-ES optimize-placement (#4/#5) ont été retirés le 2026-06-16
+# (Phase 2 = EvolutionaryPlacementOptimizer natif, n'appelle plus optimize-placement).
 cd services/kicad/kicad-tools && pip install -e ".[placement,drc,geometry,native]" && kct build-native
 ```
 

@@ -1,15 +1,15 @@
 """Tests — auto_place() (tools/placement.py), TDD.
 
-Architecture 2 phases (2026-06-15) :
-  - Phase 1 : PlacementOptimizer (clustering + connecteurs J*/P* ANCRÉS, clampés
-    dans le contour) prépare le terrain.
-  - Phase 2 : CMA-ES (kct optimize-placement --strategy cmaes, seed=current —
-    patch Layrix #6) raffine DEPUIS la Phase 1.
+Architecture 2 phases COMPLÉMENTAIRES (2026-06-16) :
+  - Phase 1 : PlacementOptimizer (clustering natif + connecteurs J*/P* ANCRÉS,
+    clampés dans le contour) — physique locale, pose la structure.
+  - Phase 2 : EvolutionaryPlacementOptimizer (GA global, fitness routabilité,
+    enable_clustering) — complète la Phase 1 sans casser les groupes ni tasser.
   - Re-ancrage : les connecteurs sont restaurés à leurs positions de Phase 1
-    après la Phase 2 (CMA-ES ne fige pas dur).
+    après la Phase 2 (garde-fou).
 
 Invariants testés : un connecteur hors-carte est ramené dans le contour ; un
-connecteur déjà bien placé ne bouge pas (ancrage Phase 1 + re-ancrage post-CMA-ES).
+connecteur déjà bien placé ne bouge pas (ancrage Phase 1 + re-ancrage post-GA).
 
 Le board de test est construit avec PCB.create() (contour Edge.Cuts) + des
 footprints minimaux injectés en texte S-expr. ``center=True`` (défaut prod) : le

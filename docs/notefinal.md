@@ -1051,6 +1051,42 @@ sans Phase 1 (perd le clustering + l'ancrage mécanique des connecteurs).
 
 ---
 
+### 2026-06-16 — Phase 2 placement = EvolutionaryPlacementOptimizer (natif, retrait 2 patches)
+
+**Décision :** la Phase 2 de l'agent placement passe de CMA-ES
+(`kct optimize-placement --strategy cmaes --seed current`) à
+`EvolutionaryPlacementOptimizer.optimize_hybrid()` (API native kicad-tools).
+Phase 1 (PlacementOptimizer, physique locale, clustering générique +
+connecteurs ancrés) et Phase 2 (GA global, fitness ROUTABILITÉ, `enable_clustering`
+qui PRÉSERVE les clusters) sont désormais **complémentaires**. Hardcodes de
+groupes (U2/Y1/C10…) retirés → clustering natif générique sur tout board.
+
+**Pourquoi :** CMA-ES `optimize-placement` minimise le wirelength seul → tassait
+le board (cramped), dégradait la Phase 1 (l'utilisateur l'a vu visuellement) et
+n'améliorait pas le routage (Phase 1 et Phase 2 routaient pareil, 33%).
+`EvolutionaryPlacementOptimizer` a la routabilité dans sa fitness (récompense
+l'espacement → pas de tassement) et préserve les clusters fonctionnels détectés
+(TIMING quartz+caps, POWER découplage…). **Bénéfice maintenance** : on n'appelle
+plus `kct optimize-placement` → les **2 patches lib CMA-ES (#4 writer 2-pass,
+#5 seed=current) sont SUPPRIMÉS** → kicad-tools repasse de 5 à **3 patches**.
+
+**Écarté :** patcher CMA-ES pour le rendre cluster-aware (block-groups) — risqué
+et inutile, l'EVO natif fait déjà mieux (routabilité incluse). Garder les 2
+patches CMA-ES « au cas où » — dette inutile, lib remise pure upstream.
+
+**Note clé (routage) :** le plafond 33%/75% en local n'est PAS le placement —
+c'est le **backend C++ non compilé** (pas de g++/cl en local). Prouvé : le board
+benchmark *facile* du dépôt (`charlieplex`, 100% attendu) tombe à 75% en Python
+pur. Le dépôt route à 100% car il compile le C++ (`kct build-native`). Layrix le
+compile en Docker (Dockerfile) → validation routage = Docker, pas local.
+
+**Fichiers concernés :** `services/kicad/tools/placement.py` +
+`tests/test_placement.py` + `tools/pcb.py` (commentaire) + reverts lib
+(`cli/optimize_placement_cmd.py`, `cli/parser.py` → purs upstream) +
+docs (`DEPENDENCIES.md`, `CLAUDE.md`). PR #36, commits 8b13e74 + 7676c4d + suiv.
+
+---
+
 ## Template pour la prochaine décision
 
 ```

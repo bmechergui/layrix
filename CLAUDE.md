@@ -203,13 +203,14 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      Phase 1 (outil physique) : PlacementOptimizer.from_pcb(pcb,
          fixed_refs=<J*/P*>, enable_clustering=True).run().snap_rotations_to_90()
          .write_to_pcb() → regroupe les grappes + ancre/clampe les connecteurs
-     Phase 2 (génétique) : kct optimize-placement --strategy cmaes (500 itér,
-         seed_method="current") → raffine DEPUIS la Phase 1 (patch lib #6 ; sans
-         ça CMA-ES re-seede force-directed et jette la Phase 1)
-     Re-ancrage : positions connecteurs restaurées post-CMA-ES (ne fige pas dur)
+     Phase 2 (génétique, COMPLÉMENTAIRE) : EvolutionaryPlacementOptimizer
+         .from_pcb(pcb, fixed_refs=<J*/P*>, enable_clustering=True)
+         .optimize_hybrid().write_to_pcb() → GA GLOBAL, fitness ROUTABILITÉ,
+         PRÉSERVE les clusters fonctionnels (quartz+caps, découplage). Complète
+         la Phase 1 (physique locale) sans casser les groupes ni tasser le board.
+     Re-ancrage : positions connecteurs restaurées post-GA (garde-fou)
      Filet : place_unplaced() si footprints hors-carte (vieux PCB à -1000)
-     ⚠️ patch lib #5 (_write_placements_to_pcb 2-pass) requis : sinon CMA-ES
-        n'écrit JAMAIS les positions ((at) précède Reference en KiCad 8/9)
+     ✅ API natives kicad-tools, ZÉRO patch lib (vs ancien CMA-ES qui en exigeait 2)
   ⑥ call_agent_routing    → Ingénieur Routage   [workflow OFFICIEL kicad-tools]
      POST /route/auto
      ① kct route --strategy negotiated --auto-layers --auto-fix --seed (officiel,
@@ -256,14 +257,15 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
   - Fallback final : `schematic-engine.ts generateSchematic()` (TypeScript S-expr, 0 Docker)
 - **Orchestrateur optimisé :** blobs KiCad (`kicad_sch_content`, `kicad_pcb_content`, `gerber_zip_b64`) strippés des `tool_result` Sonnet → économie ~70% tokens input
 
-**Placement actuel (2 phases dans l'agent, depuis 2026-06-15) :** gen_pcb fournit une
+**Placement actuel (2 phases COMPLÉMENTAIRES, depuis 2026-06-16) :** gen_pcb fournit une
 grille de départ ; l'agent placement fait **Phase 1** `PlacementOptimizer.from_pcb(pcb,
 fixed_refs=<J*/P*>, enable_clustering=True).run().snap_rotations_to_90().write_to_pcb()`
-(clustering + connecteurs ancrés/clampés) **puis Phase 2** `kct optimize-placement
---strategy cmaes` (500 itér, `seed_method="current"` → raffine DEPUIS la Phase 1), suivi
-d'un **re-ancrage** des connecteurs. **2 patches lib requis** : #5 writer 2-pass (sinon
-CMA-ES n'écrit jamais les positions) + #6 `seed_method="current"` (sinon Phase 1 jetée).
-**Aucun algo custom** (pin-adjacent/gate/HPWL supprimés). Routage rapide (gros boards) =
+(physique locale : clustering natif générique quartz+caps/découplage + connecteurs
+ancrés/clampés) **puis Phase 2** `EvolutionaryPlacementOptimizer.from_pcb(...,
+enable_clustering=True).optimize_hybrid().write_to_pcb()` (GA global, fitness routabilité,
+préserve les clusters), suivi d'un **re-ancrage** des connecteurs. **API natives, ZÉRO
+patch lib** (l'ancien CMA-ES `optimize-placement` + ses 2 patches ont été retirés le
+2026-06-16). **Aucun algo custom**. Routage rapide (gros boards) =
 backend C++ `kct build-native` (Docker). Voir `docs/notefinal.md` (décision 2026-06-15)
 + `services/kicad/DEPENDENCIES.md` (patches #5/#6).
 **Placement futur (Phase 6+) : RL_PCB** — hybride LLM + Reinforcement Learning :
@@ -534,16 +536,15 @@ Ces deux librairies sont dans `services/kicad/` (gitignorées, documentées dans
 - **Install Docker :** `pip install -e "/tmp/kicad-tools[placement,drc,geometry,native]"`
   puis `kct build-native` (backend C++ A*, 10-100× ; besoin cmake+g++).
 - **Workflow utilisé :** placement 2 phases (`PlacementOptimizer` clustering+ancrage →
-  `kct optimize-placement --strategy cmaes` seed=current) · routage `kct route
-  --auto-layers --auto-fix` + `kct reason` (LLM/heuristique).
-- **5 patches Layrix** (gitignorés, à réappliquer après chaque update upstream —
+  `EvolutionaryPlacementOptimizer.optimize_hybrid()` GA cluster-aware) · routage `kct route
+  --auto-layers --auto-fix` + `kct reason` (LLM/heuristique). **API natives, zéro patch placement.**
+- **3 patches Layrix** (gitignorés, à réappliquer après chaque update upstream —
   détails dans `services/kicad/DEPENDENCIES.md`) :
   1. fsync Windows (`cli/route_cmd.py _write_routed_pcb`)
   2. reasoning name-only KiCad 9+ (`reasoning/state.py`)
   3. layer_count 4/6 couches (`reasoning/interpreter.py`)
-  4. writer CMA-ES 2-pass (`cli/optimize_placement_cmd.py _write_placements_to_pcb`)
-  5. seed=current (`cli/optimize_placement_cmd.py _generate_seed`)
-  (le patch charmap Windows est désormais hors lib → `tools/kct_route.py`, durable)
+  (le patch charmap Windows est hors lib → `tools/kct_route.py`, durable ; les 2 patches
+  CMA-ES optimize-placement ont été retirés le 2026-06-16 — Phase 2 = EVO natif)
 
 **Règle :** après `git pull` d'une de ces libs, ré-appliquer les patches et ré-installer en éditable.
 
