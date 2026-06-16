@@ -1,15 +1,15 @@
 """Tests — auto_place() (tools/placement.py), TDD.
 
-Architecture 2 phases COMPLÉMENTAIRES (2026-06-16) :
+Architecture 2 phases COMPLÉMENTAIRES :
   - Phase 1 : PlacementOptimizer (clustering natif + connecteurs J*/P* ANCRÉS,
     clampés dans le contour) — physique locale, pose la structure.
-  - Phase 2 : EvolutionaryPlacementOptimizer (GA global, fitness routabilité,
-    enable_clustering) — complète la Phase 1 sans casser les groupes ni tasser.
+  - Phase 2 : CMA-ES via run_optimize_placement (seed_method="current") —
+    raffinement global seeded depuis Phase 1, minimise overlap+wirelength.
   - Re-ancrage : les connecteurs sont restaurés à leurs positions de Phase 1
     après la Phase 2 (garde-fou).
 
 Invariants testés : un connecteur hors-carte est ramené dans le contour ; un
-connecteur déjà bien placé ne bouge pas (ancrage Phase 1 + re-ancrage post-GA).
+connecteur déjà bien placé ne bouge pas (ancrage Phase 1 + re-ancrage post-CMA-ES).
 
 Le board de test est construit avec PCB.create() (contour Edge.Cuts) + des
 footprints minimaux injectés en texte S-expr. ``center=True`` (défaut prod) : le
@@ -80,7 +80,7 @@ def _board_with_connectors(
 
 def test_auto_place_clamps_connector_outside_outline(tmp_path):
     """J1 ancré hors du contour Edge.Cuts doit être ramené dedans (Phase 1 clamp),
-    et y rester après la Phase 2 CMA-ES (re-ancrage)."""
+    et y rester après la Phase 2 CMA-ES seed=current (re-ancrage)."""
     pcb_bytes = _board_with_connectors(tmp_path, j1_board_xy=(30.0, 135.0))
     b64 = base64.b64encode(pcb_bytes).decode()
 
@@ -93,7 +93,7 @@ def test_auto_place_clamps_connector_outside_outline(tmp_path):
 
 def test_auto_place_does_not_move_connector_inside_outline(tmp_path):
     """J2 déjà bien placé (30,20) reste à sa position : ancré en Phase 1
-    (fixed_refs) ET restauré après la Phase 2 CMA-ES (re-ancrage)."""
+    (fixed_refs) ET restauré post-CMA-ES Phase 2 seed=current (re-ancrage)."""
     pcb_bytes = _board_with_connectors(
         tmp_path, j1_board_xy=(30.0, 135.0), j2_board_xy=(30.0, 20.0),
     )

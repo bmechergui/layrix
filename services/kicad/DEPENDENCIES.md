@@ -76,13 +76,19 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
     (`Layer value not in stack`, le grid ne modélisait que F.Cu/B.Cu).
     Fix : promotion automatique de `layer_count` depuis `PCBState.layers`
     (uniquement vers le haut — une restriction explicite de l'appelant reste honorée).
-  - **(retirés 2026-06-16)** — 2 patches CMA-ES `optimize-placement` (writer 2-pass
-    `_write_placements_to_pcb` + `seed=current` `_generate_seed`/`parser.py`) ont été
-    SUPPRIMÉS : l'agent placement Phase 2 utilise désormais
-    `EvolutionaryPlacementOptimizer` (API native, GA cluster-aware + routabilité),
-    qui n'appelle PLUS `kct optimize-placement`. `optimize_placement_cmd.py` et
-    `parser.py` sont donc **purs upstream** (rien à réappliquer). Voir
-    `tools/placement.auto_place`.
+  - `src/kicad_tools/cli/optimize_placement_cmd.py` — **2 patches CMA-ES (ré-ajoutés 2026-06-16)**
+    Phase 2 = CMA-ES via `run_optimize_placement(seed_method="current")` →
+    2 correctifs requis :
+    1. **Writer 2-pass** `_write_placements_to_pcb` — KiCad 8/9 : `(at ...)` apparaît
+       AVANT `(property "Reference" ...)` → le writer single-pass upstream ne met
+       jamais à jour les positions (current_ref=None au moment de (at ...)). Fix :
+       Pass 1 scanne les footprint blocks pour collecter (at_line_idx, ref) ;
+       Pass 2 patch ces lignes en sortie.
+    2. **Seed "current"** `_generate_seed` — ajoute `seed_method='current'` : encode
+       les positions actuelles du PCB (Phase 1) comme vecteur initial CMA-ES, via
+       `PCB.load(pcb_path)` + `encode(PlacedComponent list)`. Sans ce patch, CMA-ES
+       repart d'un seed force-directed → ignore Phase 1 et re-place tout de zéro.
+       `run_optimize_placement` passe `pcb_path` + `board_origin` à `_generate_seed`.
   - **Limitation connue (non patchée, contournée)** : le routeur A* du reasoner
     rasterise les zones cuivre en obstacles durs → 0 chemin pour les autres nets.
     Contournement : retirer les zones avant `route_net`, les redéfinir après via

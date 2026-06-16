@@ -3,9 +3,10 @@ Layrix — Placement (tools/placement.py)
 
 Délègue au workflow officiel kicad-tools (aucun algo custom) :
   1. place_components()  — positions explicites fournies par l'agent
-  2. auto_place()        — placement auto via l'API/CLI officielle :
-       a. place_unplaced()          → placement initial (grille cluster-by-net)
-       b. kct placement optimize    → raffinement (force-directed, connecteurs fixés)
+  2. auto_place()        — placement auto 2 phases COMPLÉMENTAIRES :
+       Phase 1 : PlacementOptimizer (physique locale, clustering, connecteurs ancrés)
+       Phase 2 : run_optimize_placement --strategy cmaes --seed current
+                 CMA-ES (CMAwM) seeded depuis Phase 1 → raffinement global
 """
 
 from __future__ import annotations
@@ -59,14 +60,12 @@ def place_components(pcb_path: str, components: list[dict], output_path: str) ->
 # ---------------------------------------------------------------------------
 # Mode 2 : auto-placement — 2 phases COMPLÉMENTAIRES
 #   Phase 1 : PlacementOptimizer (physique locale, clustering, connecteurs ancrés)
-#   Phase 2 : EvolutionaryPlacementOptimizer (GA global, fitness routabilité,
-#             préserve les clusters) — complète Phase 1, ne la refait pas.
+#   Phase 2 : CMA-ES (CMAwM) via run_optimize_placement, seedé depuis Phase 1
 # ---------------------------------------------------------------------------
 
-# Phase 2 GA évolutionnaire (recherche globale + raffinement physique hybride).
-_EVO_GENERATIONS: int = 40
-_EVO_POPULATION: int = 30
-_EVO_PHYSICS_ITERS: int = 300
+# Phase 2 CMA-ES — nombre max d'itérations (budget mural en secondes)
+_CMAES_MAX_ITER: int = 300
+_CMAES_TIME_BUDGET: float = 60.0  # secondes max pour Phase 2
 
 
 def _connector_refs(pcb) -> list[str]:
@@ -116,14 +115,14 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
     Phase 1 — PlacementOptimizer (physique LOCALE) : regroupe les composants
       (``enable_clustering`` → quartz+caps, découplage) et ANCRE les connecteurs
       (``fixed_refs``, clampés dans le contour). Pose la structure.
-    Phase 2 — EvolutionaryPlacementOptimizer (GA GLOBAL) : complète la Phase 1
-      par une recherche globale dont la fitness inclut la ROUTABILITÉ et qui
-      PRÉSERVE les clusters fonctionnels (``enable_clustering``). Échappe les
-      minima locaux de Phase 1 sans casser les groupes ni tasser le board.
-      Connecteurs ancrés (``fixed_refs``). API native kicad-tools, zéro patch.
+    Phase 2 — CMA-ES (CMAwM, ``run_optimize_placement --strategy cmaes``) :
+      seeded depuis les positions de Phase 1 (``seed_method="current"``).
+      Raffinement global : minimise overlap + wirelength + boundary violation.
+      CMAwM gère nativement x/y continus + rotation/side discrets. Complète
+      Phase 1 sans repartir de zéro (≠ force-directed seed).
 
     Re-ancrage : positions connecteurs restaurées à celles de Phase 1 après la
-    Phase 2 (garde-fou — le GA pourrait micro-déplacer un connecteur ancré).
+    Phase 2 (garde-fou — CMA-ES pourrait micro-déplacer un connecteur).
     """
     pcb_bytes = base64.b64decode(kicad_pcb_b64)
 
@@ -162,32 +161,30 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                           if fp.reference in conn}
         logger.info("Phase 1 - PlacementOptimizer: clustering + %d connecteurs ancrés", len(conn))
 
-        # ── Phase 2 (COMPLÉMENTAIRE) : GA évolutionnaire cluster-aware ──────
-        # Complète la Phase 1 (physique LOCALE) par une recherche GLOBALE :
-        # EvolutionaryPlacementOptimizer (GA) dont la fitness inclut la
-        # ROUTABILITÉ (espacement) et qui PRÉSERVE les clusters fonctionnels
-        # détectés (quartz+caps TIMING, découplage POWER…) via enable_clustering.
-        # Connecteurs ancrés (fixed_refs). Échappe les minima locaux de Phase 1
-        # SANS casser les groupes ni tasser le board (≠ CMA-ES wirelength-only).
+        # ── Phase 2 (COMPLÉMENTAIRE) : CMA-ES seedé depuis Phase 1 ──────────
+        # run_optimize_placement avec seed_method="current" : encode les positions
+        # de Phase 1 comme moyenne initiale CMA-ES → raffinement global autour
+        # de la structure de Phase 1 (quartz groupé, connecteurs clampés).
+        # CMAwM gère nativement x/y continus + rotation/side discrets.
+        # Connecteurs verrouillés via locked flag ou fixed par Phase 1 clamp.
         try:
-            from kicad_tools.optim.evolutionary import EvolutionaryPlacementOptimizer
+            from kicad_tools.cli.optimize_placement_cmd import run_optimize_placement
 
-            evo = EvolutionaryPlacementOptimizer.from_pcb(
-                PCB.load(str(interm)), fixed_refs=conn, enable_clustering=True,
+            rc = run_optimize_placement(
+                str(interm),
+                strategy_name="cmaes",
+                max_iterations=_CMAES_MAX_ITER,
+                output_path=str(out),
+                seed_method="current",
+                quiet=True,
+                allow_infeasible=True,
+                time_budget=_CMAES_TIME_BUDGET,
             )
-            refined = evo.optimize_hybrid(
-                evolutionary_generations=_EVO_GENERATIONS,
-                population_size=_EVO_POPULATION,
-                physics_iterations=_EVO_PHYSICS_ITERS,
-            )
-            final_pcb = PCB.load(str(interm))
-            refined.write_to_pcb(final_pcb)
-            final_pcb.save(str(out))
-            logger.info("Phase 2 - EvolutionaryPlacementOptimizer (cluster-aware, routabilité) terminé")
             if not out.exists():
-                raise RuntimeError("optimize_hybrid n'a produit aucun output")
+                raise RuntimeError(f"CMA-ES n'a produit aucun output (rc={rc})")
+            logger.info("Phase 2 - CMA-ES terminé (rc=%d)", rc)
         except Exception as exc:
-            logger.warning("Phase 2 - GA échoué (%s) — placement Phase 1 conservé", exc)
+            logger.warning("Phase 2 - CMA-ES échoué (%s) — placement Phase 1 conservé", exc)
             out.write_bytes(interm.read_bytes())
 
         # ── Re-ancrage : restaurer les positions connecteurs de Phase 1 ──
