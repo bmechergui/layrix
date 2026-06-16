@@ -5,6 +5,7 @@ Délègue au workflow officiel kicad-tools (aucun algo custom) :
   1. place_components()  — positions explicites fournies par l'agent
   2. auto_place()        — placement auto 2 phases COMPLÉMENTAIRES :
        Phase 1 : PlacementOptimizer (physique locale, clustering, connecteurs ancrés)
+       Bridge  : bypass caps repositionnés près du MCU (seed CMA-ES)
        Phase 2 : run_optimize_placement --strategy cmaes --seed current
                  CMA-ES (CMAwM) seeded depuis Phase 1 → raffinement global
 """
@@ -13,10 +14,14 @@ from __future__ import annotations
 
 import base64
 import logging
+import math
 import tempfile
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Seuil en mm : cap à plus de X mm du MCU après Phase 1 → repositionné pour Phase 2
+_BYPASS_CAP_DIST_THRESHOLD_MM: float = 12.0
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +71,149 @@ def place_components(pcb_path: str, components: list[dict], output_path: str) ->
 # Phase 2 CMA-ES — nombre max d'itérations (budget mural en secondes)
 _CMAES_MAX_ITER: int = 300
 _CMAES_TIME_BUDGET: float = 60.0  # secondes max pour Phase 2
+
+
+def _find_mcu_footprint(pcb) -> object | None:
+    """Retourne le footprint avec le plus de pads (>10) — le MCU."""
+    if not pcb.footprints:
+        return None
+    best = max(pcb.footprints, key=lambda fp: len(fp.pads) if fp.pads else 0)
+    return best if best.pads and len(best.pads) > 10 else None
+
+
+def _restore_bypass_caps_near_mcu(
+    phase1_pcb,
+    initial_positions: dict[str, tuple[float, float]],
+    *,
+    dist_threshold_mm: float = _BYPASS_CAP_DIST_THRESHOLD_MM,
+) -> bool:
+    """Repositionne les condensateurs de découplage qui ont dérivé loin du MCU.
+
+    Phase 1 (force-directed) optimise globalement sans notion de groupe fonctionnel :
+    les bypass caps MCU peuvent se retrouver à 25+ mm de leur IC, dégradant la seed
+    CMA-ES Phase 2. On les restaure à la position initiale (générateur PCB) — proche
+    du MCU — pour que Phase 2 raffine depuis un point de départ de qualité.
+
+    Critères : 2 pads + partage ≥1 net avec le MCU + distance > dist_threshold_mm.
+    """
+    mcu = _find_mcu_footprint(phase1_pcb)
+    if mcu is None:
+        return False
+
+    mcu_x, mcu_y = mcu.position
+    mcu_nets: set[str] = {str(p.net) for p in (mcu.pads or []) if p.net}
+
+    changed = False
+    for fp in phase1_pcb.footprints:
+        if not fp.pads or len(fp.pads) != 2:
+            continue
+        fp_nets = {str(p.net) for p in fp.pads if p.net}
+        if not (fp_nets & mcu_nets):
+            continue  # pas connecté au MCU
+        dist = math.sqrt((fp.position[0] - mcu_x) ** 2 + (fp.position[1] - mcu_y) ** 2)
+        if dist > dist_threshold_mm and fp.reference in initial_positions:
+            new_pos = initial_positions[fp.reference]
+            logger.info(
+                "bypass %s repositionné vers MCU: (%.1f,%.1f) Δ=%.1fmm → init (%.1f,%.1f)",
+                fp.reference, fp.position[0], fp.position[1], dist, new_pos[0], new_pos[1],
+            )
+            fp.position = new_pos
+            changed = True
+    return changed
+
+
+def _snap_bypass_caps_to_ics(
+    pcb,
+    initial_positions: dict[str, tuple[float, float]],
+    *,
+    max_dist_mm: float = 10.0,
+    snap_offset_mm: float = 3.5,
+    col_spacing_mm: float = 2.5,
+    row_spacing_mm: float = 2.5,
+    max_initial_dist_mm: float = 20.0,
+) -> bool:
+    """Snappe les condensateurs de découplage encore loin de leur IC owner après Phase 2.
+
+    Seuls les caps (ref[0]=='C') sont traités — résistances, diodes, cristaux
+    ont des contraintes de placement fonctionnelles spécifiques.
+
+    IC owner = IC (≥3 pads) partageant ≥1 net avec le cap ET le plus proche de la
+    position INITIALE du cap (positions Phase 2 des ICs exclues — elles ont bougé).
+    Si le cap était déjà loin de tout IC initialement (>max_initial_dist_mm), on ne
+    snapp pas (placement délibéré hors-cluster par le générateur).
+
+    Résultat : grille compacte autour de l'IC owner.
+    """
+    # ICs = tout composant avec ≥3 pads (MCU, LDO, connecteurs)
+    ics = [fp for fp in pcb.footprints if fp.pads and len(fp.pads) >= 3]
+    if not ics:
+        return False
+
+    ic_nets: dict[str, set[str]] = {
+        ic.reference: {str(p.net) for p in ic.pads if p.net}
+        for ic in ics
+    }
+
+    changed = False
+    ic_snap_idx: dict[str, int] = {}
+
+    for fp in pcb.footprints:
+        # Seulement les condensateurs (convention KiCad : ref commence par C)
+        if not fp.reference or fp.reference[0] != 'C':
+            continue
+        if not fp.pads or len(fp.pads) != 2:
+            continue
+
+        fp_nets = {str(p.net) for p in fp.pads if p.net}
+        init_pos = initial_positions.get(fp.reference)
+        if init_pos is None:
+            continue
+
+        # ICs partageant ≥1 net avec ce cap
+        connected_ics = [ic for ic in ics if fp_nets & ic_nets.get(ic.reference, set())]
+        if not connected_ics:
+            continue
+
+        # IC owner = IC le plus proche de la position INITIALE du cap (intent générateur)
+        # On utilise initial_positions des ICs pour ne pas être biaisé par Phase 2
+        owner = min(
+            connected_ics,
+            key=lambda ic: math.sqrt(
+                (initial_positions.get(ic.reference, ic.position)[0] - init_pos[0]) ** 2
+                + (initial_positions.get(ic.reference, ic.position)[1] - init_pos[1]) ** 2
+            ),
+        )
+
+        # Vérifier que le cap était initialement proche de son owner (intent générateur)
+        owner_init = initial_positions.get(owner.reference, owner.position)
+        initial_dist_to_owner = math.sqrt(
+            (owner_init[0] - init_pos[0]) ** 2 + (owner_init[1] - init_pos[1]) ** 2
+        )
+        if initial_dist_to_owner > max_initial_dist_mm:
+            continue  # cap jamais prévu près de cet IC → ne pas forcer
+
+        ic_x, ic_y = owner.position
+        dist = math.sqrt((fp.position[0] - ic_x) ** 2 + (fp.position[1] - ic_y) ** 2)
+        if dist <= max_dist_mm:
+            continue
+
+        # Placement en grille sous l'IC owner
+        idx = ic_snap_idx.get(owner.reference, 0)
+        col = idx % 4
+        row = idx // 4
+        new_x = ic_x - (col_spacing_mm * 1.5) + col * col_spacing_mm
+        new_y = ic_y + snap_offset_mm + row * row_spacing_mm
+
+        logger.info(
+            "snap bypass %s → %s: (%.1f,%.1f) Δ=%.1fmm → (%.1f,%.1f)",
+            fp.reference, owner.reference,
+            fp.position[0], fp.position[1], dist, new_x, new_y,
+        )
+        fp.position = (new_x, new_y)
+        ic_snap_idx[owner.reference] = idx + 1
+        changed = True
+
+    return changed
 
 
 def _connector_refs(pcb) -> list[str]:
@@ -144,6 +292,11 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
             pcb = PCB.load(str(src))
             logger.info("footprints hors-carte → place_unplaced appliqué")
 
+        # Sauvegarder les positions initiales (avant Phase 1) — seed bridge Phase 1→2
+        initial_positions: dict[str, tuple[float, float]] = {
+            fp.reference: fp.position for fp in pcb.footprints
+        }
+
         # ── Phase 1 : PlacementOptimizer (clustering + connecteurs ancrés) ──
         # enable_clustering=True → detect_functional_clusters (natif) regroupe
         # GÉNÉRIQUEMENT, sur N'IMPORTE QUEL board : quartz+caps de charge (TIMING),
@@ -160,6 +313,16 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                           for fp in PCB.load(str(interm)).footprints
                           if fp.reference in conn}
         logger.info("Phase 1 - PlacementOptimizer: clustering + %d connecteurs ancrés", len(conn))
+
+        # ── Bridge Phase 1→2 : bypass caps repositionnés près du MCU ─────────
+        # Phase 1 (force-directed) peut éloigner les caps de découplage du MCU car
+        # il optimise globalement sans notion de groupe fonctionnel. On les restaure
+        # à leurs positions initiales (proches du MCU selon le générateur) pour que
+        # CMA-ES Phase 2 commence depuis une seed de qualité.
+        phase1_pcb = PCB.load(str(interm))
+        if _restore_bypass_caps_near_mcu(phase1_pcb, initial_positions):
+            phase1_pcb.save(str(interm))
+            logger.info("Bridge Phase 1→2: bypass caps repositionnés près du MCU pour seed CMA-ES")
 
         # ── Phase 2 (COMPLÉMENTAIRE) : CMA-ES seedé depuis Phase 1 ──────────
         # run_optimize_placement avec seed_method="current" : encode les positions
@@ -196,9 +359,16 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                 fp.position = anchor
                 restored += 1
         if restored:
-            final.save(str(out))
             logger.info("Re-ancrage : %d connecteur(s) restauré(s) post-CMA-ES", restored)
 
+        # ── Snap final : bypass caps → grille proche de leur IC owner ────────
+        # CMA-ES optimise la wirelength globale sur les rails power : les bypass
+        # caps peuvent encore dériver malgré le bridge Phase 1→2. Ce snap
+        # déterministe les force près de leur IC owner (détecté via position initiale).
+        if _snap_bypass_caps_to_ics(final, initial_positions):
+            logger.info("Snap final: bypass caps repositionnés près de leur IC owner")
+
+        final.save(str(out))
         footprints = PCB.load(str(out)).footprints
         return {
             "kicad_pcb_b64": base64.b64encode(out.read_bytes()).decode(),
