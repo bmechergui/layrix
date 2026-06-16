@@ -12,9 +12,6 @@ from __future__ import annotations
 
 import base64
 import logging
-import os
-import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
@@ -60,12 +57,16 @@ def place_components(pcb_path: str, components: list[dict], output_path: str) ->
 
 
 # ---------------------------------------------------------------------------
-# Mode 2 : auto-placement — 2 phases (PlacementOptimizer → CMA-ES)
+# Mode 2 : auto-placement — 2 phases COMPLÉMENTAIRES
+#   Phase 1 : PlacementOptimizer (physique locale, clustering, connecteurs ancrés)
+#   Phase 2 : EvolutionaryPlacementOptimizer (GA global, fitness routabilité,
+#             préserve les clusters) — complète Phase 1, ne la refait pas.
 # ---------------------------------------------------------------------------
 
-# CMA-ES (Phase 2) borné : la boucle sort dès ce budget wall-clock dépassé.
-_CMAES_MAX_ITERATIONS: int = 50
-_CMAES_TIME_BUDGET_S: float = 30.0
+# Phase 2 GA évolutionnaire (recherche globale + raffinement physique hybride).
+_EVO_GENERATIONS: int = 40
+_EVO_POPULATION: int = 30
+_EVO_PHYSICS_ITERS: int = 300
 
 
 def _connector_refs(pcb) -> list[str]:
@@ -110,19 +111,19 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
 
 
 def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float) -> dict:
-    """Placement en 2 phases (agent placement ⑤).
+    """Placement en 2 phases COMPLÉMENTAIRES (agent placement ⑤).
 
-    Phase 1 — PlacementOptimizer (outil physique) : regroupe les composants
-      (``enable_clustering``) et ANCRE les connecteurs (``fixed_refs``, clampés
-      dans le contour) pour préparer le terrain. Écrit le placement intermédiaire.
-    Phase 2 — CMA-ES (``kct optimize-placement --strategy cmaes``, 500 itér) :
-      raffine DEPUIS le placement de Phase 1 (``seed_method="current"`` — patch
-      Layrix #6 ; sans ça CMA-ES re-seede force-directed et jette la Phase 1) et
-      renvoie le meilleur placement absolu à l'orchestrateur.
+    Phase 1 — PlacementOptimizer (physique LOCALE) : regroupe les composants
+      (``enable_clustering`` → quartz+caps, découplage) et ANCRE les connecteurs
+      (``fixed_refs``, clampés dans le contour). Pose la structure.
+    Phase 2 — EvolutionaryPlacementOptimizer (GA GLOBAL) : complète la Phase 1
+      par une recherche globale dont la fitness inclut la ROUTABILITÉ et qui
+      PRÉSERVE les clusters fonctionnels (``enable_clustering``). Échappe les
+      minima locaux de Phase 1 sans casser les groupes ni tasser le board.
+      Connecteurs ancrés (``fixed_refs``). API native kicad-tools, zéro patch.
 
-    Re-ancrage : les connecteurs sont restaurés à leurs positions de Phase 1
-    après la Phase 2 (CMA-ES ne fige pas dur les ancrages). ``allow_infeasible``
-    garde le meilleur placement même légèrement infaisable (routeur/DRC en aval).
+    Re-ancrage : positions connecteurs restaurées à celles de Phase 1 après la
+    Phase 2 (garde-fou — le GA pourrait micro-déplacer un connecteur ancré).
     """
     pcb_bytes = base64.b64decode(kicad_pcb_b64)
 
@@ -178,52 +179,32 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                           if fp.reference in conn}
         logger.info("Phase 1 - PlacementOptimizer: clustering + %d connecteurs ancrés", len(conn))
 
-        # ── Phase 2 : CMA-ES via la CLI officielle (seed=current depuis Phase 1) ──
-        kct_cmd = [
-            "python", "-m", "kicad_tools.cli", "optimize-placement",
-            str(interm),
-            "--strategy", "cmaes",
-            "--max-iterations", str(_CMAES_MAX_ITERATIONS),
-            "--output", str(out),
-            "--seed", "current",
-            "--time-budget", str(_CMAES_TIME_BUDGET_S),
-            "--allow-infeasible",
-        ]
-        logger.info("Phase 2 - Lancement CMA-ES : %s", " ".join(kct_cmd))
+        # ── Phase 2 (COMPLÉMENTAIRE) : GA évolutionnaire cluster-aware ──────
+        # Complète la Phase 1 (physique LOCALE) par une recherche GLOBALE :
+        # EvolutionaryPlacementOptimizer (GA) dont la fitness inclut la
+        # ROUTABILITÉ (espacement) et qui PRÉSERVE les clusters fonctionnels
+        # détectés (quartz+caps TIMING, découplage POWER…) via enable_clustering.
+        # Connecteurs ancrés (fixed_refs). Échappe les minima locaux de Phase 1
+        # SANS casser les groupes ni tasser le board (≠ CMA-ES wirelength-only).
         try:
-            # kicad_tools est importable par le subprocess : pip-installé en
-            # Docker, sinon via kicad-tools/src ajouté au PYTHONPATH (inoffensif
-            # en Docker où ce chemin n'existe pas).
-            _kt_src = Path(__file__).resolve().parent.parent / "kicad-tools" / "src"
-            _pythonpath = os.pathsep.join(
-                p for p in (str(_kt_src), os.environ.get("PYTHONPATH", "")) if p
+            from kicad_tools.optim.evolutionary import EvolutionaryPlacementOptimizer
+
+            evo = EvolutionaryPlacementOptimizer.from_pcb(
+                PCB.load(str(interm)), fixed_refs=conn, enable_clustering=True,
             )
-            env = {
-                **os.environ,
-                "PYTHONUTF8": "1",
-                "PYTHONIOENCODING": "utf-8",
-                "PYTHONPATH": _pythonpath,
-            }
-            subprocess.run(
-                [
-                    sys.executable, "-m", "kicad_tools.cli", "optimize-placement",
-                    str(interm), "--output", str(out),
-                    "--strategy", "cmaes",
-                    "--max-iterations", str(_CMAES_MAX_ITERATIONS),
-                    "--time-budget", str(_CMAES_TIME_BUDGET_S),
-                    "--seed", "current",
-                    "--allow-infeasible", "--quiet",
-                ],
-                check=True, capture_output=True, text=True, env=env,
-                timeout=_CMAES_TIME_BUDGET_S + 60,
+            refined = evo.optimize_hybrid(
+                evolutionary_generations=_EVO_GENERATIONS,
+                population_size=_EVO_POPULATION,
+                physics_iterations=_EVO_PHYSICS_ITERS,
             )
-            logger.info("Phase 2 - CMA-ES (seed=current) terminé")
+            final_pcb = PCB.load(str(interm))
+            refined.write_to_pcb(final_pcb)
+            final_pcb.save(str(out))
+            logger.info("Phase 2 - EvolutionaryPlacementOptimizer (cluster-aware, routabilité) terminé")
             if not out.exists():
-                raise RuntimeError("optimize-placement n'a produit aucun output")
+                raise RuntimeError("optimize_hybrid n'a produit aucun output")
         except Exception as exc:
-            stderr = getattr(exc, "stderr", "") or ""
-            logger.warning("Phase 2 - CMA-ES échoué (%s) %s — placement Phase 1 conservé",
-                           exc, stderr[:300])
+            logger.warning("Phase 2 - GA échoué (%s) — placement Phase 1 conservé", exc)
             out.write_bytes(interm.read_bytes())
 
         # ── Re-ancrage : restaurer les positions connecteurs de Phase 1 ──
