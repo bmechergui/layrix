@@ -109,13 +109,15 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
 # circuit_synth
 cd services/kicad/circuit_synth && git pull && pip install -e .
 
-# kicad-tools — après un nouveau snapshot upstream, ré-appliquer les 3 patches LIB :
-#   1. fsync Windows        (cli/route_cmd.py _write_routed_pcb)
-#   2. reasoning name-only  (reasoning/state.py helper _resolve_net_node + 4 sites)
-#   3. layer_count 4/6c     (reasoning/interpreter.py promotion depuis PCBState.layers)
+# kicad-tools — après un nouveau snapshot upstream, ré-appliquer les 5 patches LIB :
+#   1. fsync Windows           (cli/route_cmd.py _write_routed_pcb)
+#   2. reasoning name-only     (reasoning/state.py helper _resolve_net_node + 4 sites)
+#   3. layer_count 4/6c        (reasoning/interpreter.py promotion depuis PCBState.layers)
+#   4. CMA-ES writer 2-pass    (cli/optimize_placement_cmd.py _write_placements_to_pcb)
+#   5. CMA-ES seed="current"   (cli/optimize_placement_cmd.py _generate_seed + appel)
 # Le patch charmap n'est PLUS dans la lib (déplacé dans tools/kct_route.py — durable).
-# Les 2 patches CMA-ES optimize-placement (#4/#5) ont été retirés le 2026-06-16
-# (Phase 2 = EvolutionaryPlacementOptimizer natif, n'appelle plus optimize-placement).
+# Phase 2 = CMA-ES via run_optimize_placement(seed_method="current") depuis 2026-06-16
+# (EvolutionaryPlacementOptimizer retiré — remplacé par CMA-ES CMAwM).
 cd services/kicad/kicad-tools && pip install -e ".[placement,drc,geometry,native]" && kct build-native
 ```
 
