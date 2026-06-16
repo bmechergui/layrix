@@ -64,8 +64,8 @@ def place_components(pcb_path: str, components: list[dict], output_path: str) ->
 # ---------------------------------------------------------------------------
 
 # CMA-ES (Phase 2) borné : la boucle sort dès ce budget wall-clock dépassé.
-_CMAES_MAX_ITERATIONS: int = 500
-_CMAES_TIME_BUDGET_S: float = 120.0
+_CMAES_MAX_ITERATIONS: int = 50
+_CMAES_TIME_BUDGET_S: float = 30.0
 
 
 def _connector_refs(pcb) -> list[str]:
@@ -148,6 +148,27 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         conn = _connector_refs(pcb)
         _clamp_fixed_refs_to_outline(pcb, conn)
         opt = PlacementOptimizer.from_pcb(pcb, fixed_refs=conn, enable_clustering=True)
+        
+        from kicad_tools.optim.constraints import GroupingConstraint, SpatialConstraint
+        
+        # Injection des groupes natifs stricts (15mm pour éviter l'écrasement physique)
+        gc_quartz = GroupingConstraint(
+            name="Quartz_MCU",
+            members=["U2", "Y1", "C10", "C11"],
+            constraints=[SpatialConstraint.max_distance("U2", 15.0)]
+        )
+        gc_alim = GroupingConstraint(
+            name="Decoupling_MCU",
+            members=["U2", "C12", "C13", "C14", "C15", "C16"],
+            constraints=[SpatialConstraint.max_distance("U2", 15.0)]
+        )
+        gc_ldo = GroupingConstraint(
+            name="LDO_Caps",
+            members=["U1", "C1", "C2", "C3"],
+            constraints=[SpatialConstraint.max_distance("U1", 15.0)]
+        )
+        opt.add_grouping_constraints([gc_quartz, gc_alim, gc_ldo])
+        
         opt.run(iterations=1000)
         opt.snap_rotations_to_90()
         opt.write_to_pcb(pcb)
@@ -158,11 +179,17 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         logger.info("Phase 1 - PlacementOptimizer: clustering + %d connecteurs ancrés", len(conn))
 
         # ── Phase 2 : CMA-ES via la CLI officielle (seed=current depuis Phase 1) ──
-        # « kct optimize-placement --strategy cmaes --seed current » : le génétique
-        # raffine DEPUIS la Phase 1 (--seed current = patch Layrix #6 ; sans ça
-        # CMA-ES re-seede force-directed et jette la Phase 1). PYTHONUTF8=1 évite
-        # un crash charmap des logs sur console Windows. --allow-infeasible : on
-        # garde le meilleur placement même légèrement infaisable (routeur/DRC aval).
+        kct_cmd = [
+            "python", "-m", "kicad_tools.cli", "optimize-placement",
+            str(interm),
+            "--strategy", "cmaes",
+            "--max-iterations", str(_CMAES_MAX_ITERATIONS),
+            "--output", str(out),
+            "--seed", "current",
+            "--time-budget", str(_CMAES_TIME_BUDGET_S),
+            "--allow-infeasible",
+        ]
+        logger.info("Phase 2 - Lancement CMA-ES : %s", " ".join(kct_cmd))
         try:
             # kicad_tools est importable par le subprocess : pip-installé en
             # Docker, sinon via kicad-tools/src ajouté au PYTHONPATH (inoffensif
@@ -214,6 +241,7 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         footprints = PCB.load(str(out)).footprints
         return {
             "kicad_pcb_b64": base64.b64encode(out.read_bytes()).decode(),
+            "kicad_pcb_phase1_b64": base64.b64encode(interm.read_bytes()).decode(),
             "placed_count": len(footprints),
             "positions": [
                 {"ref": fp.reference,
