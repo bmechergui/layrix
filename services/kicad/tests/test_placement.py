@@ -1,21 +1,23 @@
 """Tests — auto_place() + helpers (tools/placement.py), TDD.
 
-Architecture 2 phases COMPLÉMENTAIRES + bridge :
+Architecture 3 phases COMPLÉMENTAIRES + bridge :
   - Phase 1 : PlacementOptimizer (clustering natif + connecteurs J*/P* ANCRÉS,
     clampés dans le contour) — physique locale, pose la structure.
   - Bridge  : _restore_bypass_caps_near_mcu() — repositionne les caps de
     découplage qui ont dérivé loin du MCU (seed de qualité pour Phase 2).
-  - Phase 2 : PlaceRouteOptimizer (routing-aware) — itère placement+routage
-    jusqu'à convergence, nudge les composants bloquants si des nets échouent.
+  - Phase 2 : EvolutionaryPlacementOptimizer (GA, sans C++) — résout les
+    overlaps laissés par Phase 1, affine le wirelength.
+  - Phase 3 : PlaceRouteOptimizer (routing-aware, C++ requis) — itère
+    placement+routage jusqu'à convergence si kct build-native est disponible.
   - Re-ancrage : les connecteurs sont restaurés à leurs positions de Phase 1
-    après la Phase 2 (garde-fou).
+    après Phase 2/3 (garde-fou).
 
 Invariants testés :
   - _find_mcu_footprint : retourne le footprint avec le plus de pads (>10)
   - _restore_bypass_caps_near_mcu : repositionne les caps loin du MCU,
     ne touche pas les caps proches, ni les composants hors-réseau MCU
   - auto_place : connecteur hors-carte → ramené dans le contour ;
-    connecteur bien placé → position stable post-Phase 2 routing-aware.
+    connecteur bien placé → position stable post-Phase 2/3.
 """
 from __future__ import annotations
 

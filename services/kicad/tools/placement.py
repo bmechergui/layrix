@@ -3,11 +3,11 @@ Layrix — Placement (tools/placement.py)
 
 Délègue au workflow officiel kicad-tools (aucun algo custom) :
   1. place_components()  — positions explicites fournies par l'agent
-  2. auto_place()        — placement auto 2 phases COMPLÉMENTAIRES :
+  2. auto_place()        — placement auto 3 phases COMPLÉMENTAIRES :
        Phase 1 : PlacementOptimizer (physique locale, clustering, connecteurs ancrés)
        Bridge  : bypass caps repositionnés près du MCU (seed Phase 2)
-       Phase 2 : PlaceRouteOptimizer (routing-aware) — itère placement+routage
-                 jusqu'à convergence → placement 100% routable garanti
+       Phase 2 : EvolutionaryPlacementOptimizer (GA — résout overlaps + wirelength, sans C++)
+       Phase 3 : PlaceRouteOptimizer (routing-aware, C++ requis — bonus si disponible)
 """
 
 from __future__ import annotations
@@ -70,9 +70,13 @@ def place_components(pcb_path: str, components: list[dict], output_path: str) ->
 #   Phase 2 : CMA-ES (CMAwM) via run_optimize_placement, seedé depuis Phase 1
 # ---------------------------------------------------------------------------
 
-# Phase 2 routing-aware — nombre max d'itérations placement+routage
+# Phase 2 — EvolutionaryPlacementOptimizer (GA, sans C++, résout overlaps)
+_EVO_GENERATIONS: int = 50
+_EVO_POPULATION: int = 30
+
+# Phase 3 routing-aware — nombre max d'itérations placement+routage
 # Actif uniquement si le backend C++ est compilé (kct build-native) ;
-# sans C++, le routeur Python prend 4+ min/iter → Phase 2 ignorée.
+# sans C++, le routeur Python prend 4+ min/iter → Phase 3 ignorée.
 _ROUTING_AWARE_MAX_ITER: int = 5
 
 
@@ -242,6 +246,72 @@ def _snap_bypass_caps_to_ics(
     return changed
 
 
+def _add_bypass_cap_clusters(
+    opt,
+    pcb,
+    initial_positions: dict[str, tuple[float, float]],
+    conn_refs: list[str],
+    *,
+    max_distance_mm: float = 4.0,
+) -> int:
+    """Ajoute les clusters POWER manquants pour les bypass caps non détectés.
+
+    kicad-tools `detect_functional_clusters` ne détecte pas tous les bypass caps
+    quand ils sont connectés à un rail partagé (GND/+3.3V) : seul le 1er cap
+    détecté par rail est inclus dans le cluster POWER. Les autres reçoivent
+    uniquement des springs GND (stiffness=5 × 15 nets ≈ 75), qui dominent le
+    cluster_stiffness par défaut (50) et tirent tout vers U1 (LDO hub GND).
+
+    On ajoute explicitement un cluster POWER pour chaque bypass cap manquant,
+    en déterminant l'IC owner via la position initiale du générateur (intent).
+    L'IC owner est l'IC (≥4 pads, hors connecteur) le plus proche de la position
+    initiale du cap, parmi ceux partageant ≥1 net avec le cap.
+    """
+    from kicad_tools.optim import FunctionalCluster
+    from kicad_tools.optim.clustering import ClusterType
+
+    ics = [fp for fp in pcb.footprints
+           if fp.pads and len(fp.pads) >= 4 and fp.reference not in conn_refs]
+    if not ics:
+        return 0
+
+    ic_nets: dict[str, set[str]] = {
+        ic.reference: {str(p.net) for p in ic.pads if p.net}
+        for ic in ics
+    }
+
+    already_clustered: set[str] = {m for c in opt.clusters for m in c.members}
+
+    added = 0
+    for fp in pcb.footprints:
+        if not _is_bypass_cap(fp) or fp.reference in already_clustered:
+            continue
+        fp_nets = {str(p.net) for p in fp.pads if p.net}
+        connected_ics = [ic for ic in ics if fp_nets & ic_nets.get(ic.reference, set())]
+        if not connected_ics:
+            continue
+
+        init_pos = initial_positions.get(fp.reference, fp.position)
+        owner = min(
+            connected_ics,
+            key=lambda ic: math.sqrt(
+                (initial_positions.get(ic.reference, ic.position)[0] - init_pos[0]) ** 2
+                + (initial_positions.get(ic.reference, ic.position)[1] - init_pos[1]) ** 2
+            ),
+        )
+
+        opt.add_cluster(FunctionalCluster(
+            cluster_type=ClusterType.POWER,
+            anchor=owner.reference,
+            members=[fp.reference],
+            max_distance_mm=max_distance_mm,
+        ))
+        logger.debug("cluster POWER: %s → %s", fp.reference, owner.reference)
+        added += 1
+
+    return added
+
+
 def _connector_refs(pcb) -> list[str]:
     """Références des connecteurs (J*, P*) — ancrés en Phase 1 et protégés
     en Phase 2 routing-aware (fixed_refs → jamais nudgés)."""
@@ -284,18 +354,17 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
 
 
 def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float) -> dict:
-    """Placement en 2 phases COMPLÉMENTAIRES (agent placement ⑤).
+    """Placement en 3 phases COMPLÉMENTAIRES (agent placement ⑤).
 
     Phase 1 — PlacementOptimizer (physique LOCALE) : regroupe les composants
       (``enable_clustering`` → quartz+caps, découplage) et ANCRE les connecteurs
       (``fixed_refs``, clampés dans le contour). Pose la structure.
-    Phase 2 — PlaceRouteOptimizer (routing-aware) : itère placement+routage
-      jusqu'à convergence. À chaque itération : vérifie les conflits de placement,
-      route tous les nets via l'Autorouter, nudge les blockers si des nets échouent.
-      Garantit un placement 100% routable (Python A*). Les vraies traces KiCad
-      sont générées ensuite par Freerouting/kct dans call_agent_routing.
+    Phase 2 — EvolutionaryPlacementOptimizer (GA) : résout les overlaps laissés
+      par Phase 1 (force-directed) et affine le wirelength. Disponible sans C++.
+    Phase 3 — PlaceRouteOptimizer (routing-aware, C++ requis) : itère
+      placement+routage jusqu'à convergence si kct build-native est compilé.
 
-    Re-ancrage : positions connecteurs restaurées après Phase 2 (garde-fou).
+    Re-ancrage : positions connecteurs restaurées après Phase 2/3 (garde-fou).
     """
     pcb_bytes = base64.b64decode(kicad_pcb_b64)
 
@@ -328,7 +397,14 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         # motif électronique, pas par références hardcodées.
         conn = _connector_refs(pcb)
         _clamp_fixed_refs_to_outline(pcb, conn)
-        opt = PlacementOptimizer.from_pcb(pcb, fixed_refs=conn, enable_clustering=True)
+        # cluster_stiffness=150 > GND force totale (5×15=75) → clusters dominent
+        from kicad_tools.optim.config import PlacementConfig
+        config = PlacementConfig(cluster_stiffness=150.0)
+        opt = PlacementOptimizer.from_pcb(pcb, config=config, fixed_refs=conn, enable_clustering=True)
+        # Ajouter les clusters POWER manquants (bypass caps non détectés par kicad-tools)
+        n_clusters = _add_bypass_cap_clusters(opt, pcb, initial_positions, conn)
+        if n_clusters:
+            logger.info("Phase 1: %d clusters POWER ajoutés (bypass caps → IC owner)", n_clusters)
         opt.run(iterations=1000)
         opt.snap_rotations_to_90()
         opt.write_to_pcb(pcb)
@@ -360,13 +436,31 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         # Snapshot Phase 1 pour le retour (avant que Phase 2 modifie interm)
         phase1_snap_bytes = interm.read_bytes()
 
-        # ── Phase 2 : PlaceRouteOptimizer (routing-aware) ───────────────────
-        # Actif uniquement si le backend C++ (kct build-native) est compilé.
-        # Sans C++, le routeur Python prend 4+ min/itération → ignoré en local.
+        # ── Phase 2 : EvolutionaryPlacementOptimizer (GA — résout overlaps) ──
+        # Genetic algorithm natif kicad-tools, disponible sans C++. Résout les
+        # overlaps laissés par Phase 1 (force-directed) et affine le wirelength.
+        # fixed_refs=conn → connecteurs protégés, enable_clustering → clusters conservés.
+        try:
+            from kicad_tools.optim import EvolutionaryPlacementOptimizer, EvolutionaryConfig
+
+            evo_pcb = PCB.load(str(interm))
+            evo = EvolutionaryPlacementOptimizer.from_pcb(
+                evo_pcb,
+                config=EvolutionaryConfig(generations=_EVO_GENERATIONS, population_size=_EVO_POPULATION),
+                fixed_refs=conn,
+                enable_clustering=True,
+            )
+            evo.optimize(generations=_EVO_GENERATIONS, population_size=_EVO_POPULATION)
+            evo.write_to_pcb(evo_pcb)
+            evo_pcb.save(str(interm))
+            logger.info("Phase 2 - EVO: %d gen × %d pop, overlaps résolus", _EVO_GENERATIONS, _EVO_POPULATION)
+        except Exception as exc:
+            logger.warning("Phase 2 - EVO échoué (%s) — Phase 1 conservé", exc)
+
+        # ── Phase 3 (bonus) : PlaceRouteOptimizer (routing-aware, C++ requis) ─
         # En Docker, kct build-native est précompilé → 10-100× plus rapide.
-        if not _has_cpp_router():
-            logger.info("Phase 2 routing-aware ignorée — routeur C++ non compilé (kct build-native)")
-        else:
+        # Sans C++, le routeur Python prend 4+ min/itération → ignoré en local.
+        if _has_cpp_router():
             try:
                 from kicad_tools.optim.place_route import PlaceRouteOptimizer
 
@@ -384,14 +478,16 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                     skip_drc=False,
                 )
                 logger.info(
-                    "Phase 2 - routing-aware: success=%s, %d iter, %d routes",
+                    "Phase 3 - routing-aware: success=%s, %d iter, %d routes",
                     result.success, result.iterations, len(result.routes or []),
                 )
             except Exception as exc:
-                logger.warning("Phase 2 - routing-aware échoué (%s) — Phase 1 conservé", exc)
+                logger.warning("Phase 3 - routing-aware échoué (%s) — Phase 2 conservé", exc)
+        else:
+            logger.info("Phase 3 routing-aware ignorée — routeur C++ non compilé (kct build-native)")
 
         # ── Re-ancrage : restaurer les positions connecteurs de Phase 1 ──────
-        # Garde-fou : PlaceRouteOptimizer a fixed_refs=conn, mais on vérifie
+        # Garde-fou : EVO/PlaceRouteOptimizer ont fixed_refs=conn, mais on vérifie
         # qu'aucun connecteur n'a dérivé (ex. fixer bug ou nudge marginal).
         final = PCB.load(str(interm))
         restored = 0
@@ -403,9 +499,9 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         if restored:
             logger.info("Re-ancrage : %d connecteur(s) restauré(s) post-Phase 2", restored)
 
-        # ── Snap final : sécurité si Phase 2 a déplacé des caps ──────────────
+        # ── Snap final : sécurité si Phase 2/3 a déplacé des caps ─────────────
         if _snap_bypass_caps_to_ics(final, initial_positions):
-            logger.info("Snap final: bypass caps repositionnés post-Phase 2")
+            logger.info("Snap final: bypass caps repositionnés post-Phase 2/3")
 
         final.save(str(interm))
         footprints = PCB.load(str(interm)).footprints
