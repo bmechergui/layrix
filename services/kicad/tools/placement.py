@@ -71,7 +71,18 @@ def place_components(pcb_path: str, components: list[dict], output_path: str) ->
 # ---------------------------------------------------------------------------
 
 # Phase 2 routing-aware — nombre max d'itérations placement+routage
+# Actif uniquement si le backend C++ est compilé (kct build-native) ;
+# sans C++, le routeur Python prend 4+ min/iter → Phase 2 ignorée.
 _ROUTING_AWARE_MAX_ITER: int = 5
+
+
+def _has_cpp_router() -> bool:
+    """Vrai si le routeur C++ kicad-tools est compilé (kct build-native)."""
+    try:
+        from kicad_tools.router import router_cpp  # type: ignore  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 def _find_mcu_footprint(pcb) -> object | None:
@@ -350,34 +361,34 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         phase1_snap_bytes = interm.read_bytes()
 
         # ── Phase 2 : PlaceRouteOptimizer (routing-aware) ───────────────────
-        # Itère placement+routage jusqu'à convergence : vérifie conflits de
-        # placement, route tous les nets (Python A*), nudge les composants
-        # bloquants si des nets échouent, boucle. fixed_refs=conn → les
-        # connecteurs ne sont jamais nudgés.
-        # Modifie interm EN PLACE via fixer.apply_fixes() + _nudge_blockers().
-        # Les vraies traces KiCad sont générées par Freerouting dans call_agent_routing.
-        try:
-            from kicad_tools.optim.place_route import PlaceRouteOptimizer
+        # Actif uniquement si le backend C++ (kct build-native) est compilé.
+        # Sans C++, le routeur Python prend 4+ min/itération → ignoré en local.
+        # En Docker, kct build-native est précompilé → 10-100× plus rapide.
+        if not _has_cpp_router():
+            logger.info("Phase 2 routing-aware ignorée — routeur C++ non compilé (kct build-native)")
+        else:
+            try:
+                from kicad_tools.optim.place_route import PlaceRouteOptimizer
 
-            seed_pcb = PCB.load(str(interm))
-            pro = PlaceRouteOptimizer.from_pcb(
-                seed_pcb,
-                pcb_path=str(interm),
-                manufacturer="jlcpcb",
-                verbose=False,
-                fixed_refs=conn,
-            )
-            result = pro.optimize(
-                max_iterations=_ROUTING_AWARE_MAX_ITER,
-                allow_placement_changes=True,
-                skip_drc=False,
-            )
-            logger.info(
-                "Phase 2 - routing-aware: success=%s, %d iter, %d routes",
-                result.success, result.iterations, len(result.routes or []),
-            )
-        except Exception as exc:
-            logger.warning("Phase 2 - routing-aware échoué (%s) — Phase 1 conservé", exc)
+                seed_pcb = PCB.load(str(interm))
+                pro = PlaceRouteOptimizer.from_pcb(
+                    seed_pcb,
+                    pcb_path=str(interm),
+                    manufacturer="jlcpcb",
+                    verbose=False,
+                    fixed_refs=conn,
+                )
+                result = pro.optimize(
+                    max_iterations=_ROUTING_AWARE_MAX_ITER,
+                    allow_placement_changes=True,
+                    skip_drc=False,
+                )
+                logger.info(
+                    "Phase 2 - routing-aware: success=%s, %d iter, %d routes",
+                    result.success, result.iterations, len(result.routes or []),
+                )
+            except Exception as exc:
+                logger.warning("Phase 2 - routing-aware échoué (%s) — Phase 1 conservé", exc)
 
         # ── Re-ancrage : restaurer les positions connecteurs de Phase 1 ──────
         # Garde-fou : PlaceRouteOptimizer a fixed_refs=conn, mais on vérifie
