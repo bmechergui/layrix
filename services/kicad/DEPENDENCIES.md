@@ -76,8 +76,16 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
     (`Layer value not in stack`, le grid ne modélisait que F.Cu/B.Cu).
     Fix : promotion automatique de `layer_count` depuis `PCBState.layers`
     (uniquement vers le haut — une restriction explicite de l'appelant reste honorée).
-  - `src/kicad_tools/cli/optimize_placement_cmd.py` — **2 patches CMA-ES (ré-ajoutés 2026-06-16)**
-    Phase 2 = CMA-ES via `run_optimize_placement(seed_method="current")` →
+  - `src/kicad_tools/cli/optimize_placement_cmd.py` — **2 patches CMA-ES (réintroduits
+    2026-06-18, Phase 3 « Géomètre »)**
+    `tools/placement.py::_refine_with_cmaes` appelle `run_optimize_placement(
+    seed_method="current")` **après** l'Architecte (hybrid+cluster) — micro-raffine
+    (sub-mm/quelques degrés) la position déjà groupée par cluster, plutôt que de
+    remplacer le placement. Filet de sécurité : si l'Inspecteur (`PlacementFixer`)
+    ne résorbe pas tous les conflits ERROR introduits par le CMA-ES (CLI natif sans
+    verrouillage par position), `auto_place` restaure le board pré-CMA-ES — l'invariant
+    « 0 ERROR » prime toujours sur le gain d'adjacence. Voir `CLAUDE.md` §placement et
+    `docs/notefinal.md` (2026-06-18).
     5 correctifs dans ce fichier (à ré-appliquer après chaque update upstream) :
     1. **Writer 2-pass** `_write_placements_to_pcb` — KiCad 8/9 : `(at ...)` apparaît
        AVANT `fp_text reference` dans le S-expr → writer single-pass ne met jamais à
@@ -116,8 +124,9 @@ cd services/kicad/circuit_synth && git pull && pip install -e .
 #   4. CMA-ES writer 2-pass    (cli/optimize_placement_cmd.py _write_placements_to_pcb)
 #   5. CMA-ES seed="current"   (cli/optimize_placement_cmd.py _generate_seed + appel)
 # Le patch charmap n'est PLUS dans la lib (déplacé dans tools/kct_route.py — durable).
-# Phase 2 = CMA-ES via run_optimize_placement(seed_method="current") depuis 2026-06-16
-# (EvolutionaryPlacementOptimizer retiré — remplacé par CMA-ES CMAwM).
+# Phase 3 (Géomètre) = CMA-ES micro-raffinement via run_optimize_placement(seed_method="current")
+# chaîné après l'Architecte (hybrid+cluster), depuis 2026-06-18 — avec filet de sécurité
+# (revert si conflits ERROR non résorbés par l'Inspecteur). Voir tools/placement.py::_refine_with_cmaes.
 cd services/kicad/kicad-tools && pip install -e ".[placement,drc,geometry,native]" && kct build-native
 ```
 

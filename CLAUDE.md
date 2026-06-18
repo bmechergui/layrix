@@ -259,18 +259,36 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
   - Fallback final : `schematic-engine.ts generateSchematic()` (TypeScript S-expr, 0 Docker)
 - **Orchestrateur optimisé :** blobs KiCad (`kicad_sch_content`, `kicad_pcb_content`, `gerber_zip_b64`) strippés des `tool_result` Sonnet → économie ~70% tokens input
 
-**Placement actuel (100% natif, 1 appel — décision 2026-06-18) :** gen_pcb fournit
-une grille de départ ; l'agent placement fait **un seul appel natif** kicad-tools
-`OptimizationWorkflow(pcb, WorkflowConfig(strategy="hybrid", enable_clustering=True,
-fixed_refs=<J*/P*>, generations=100, population=50, iterations=1000)).run()` **puis
-`.write_to_pcb()`** (OBLIGATOIRE — `run()` calcule mais n'écrit pas ; sans cet appel
-le placement est un no-op) **puis `pcb.save()`**. La stratégie `hybrid` enchaîne en
-INTERNE une phase évolutionnaire (GA, groupement fonctionnel) + un raffinement
-physique force-directed ; `cluster` regroupe bypass caps/quartz ; les connecteurs
-J*/P* sont ancrés + clampés dans Edge.Cuts. **Pas de snap déterministe** : les
-caps/quartz finissent à 13-28mm du MCU — accepté comme routable (adjacence serrée
-reportée Phase 6 RL_PCB). Routage rapide (gros boards) = backend C++ `kct build-native`
-(Docker). Voir `services/kicad/DEPENDENCIES.md`.
+**Placement actuel (100% natif, pipeline 3 étapes — Phase 3 ajoutée 2026-06-18) :**
+gen_pcb fournit une grille de départ ; `tools/placement.py::auto_place()` enchaîne :
+  ① **Architecte** — `OptimizationWorkflow(pcb, WorkflowConfig(strategy="hybrid",
+     enable_clustering=True, fixed_refs=<J*/P*>, generations=100, population=50,
+     iterations=1000)).run()` **puis `.write_to_pcb()`** (OBLIGATOIRE — `run()` calcule
+     mais n'écrit pas ; sans cet appel le placement est un no-op) **puis `pcb.save()`**.
+     `hybrid` enchaîne en INTERNE GA (groupement fonctionnel) + raffinement physique
+     force-directed ; `cluster` regroupe bypass caps/quartz ; connecteurs J*/P* ancrés
+     + clampés Edge.Cuts. Stochastique (pas de seed fixe) → l'Inspecteur tourne une
+     première fois ici pour garantir 0 ERROR avant de tenter le Géomètre.
+  ② **Géomètre** (`_refine_with_cmaes`, kct optimize-placement --strategy cmaes
+     --seed-method current) — micro-raffine la position ① (décalages sub-mm,
+     rotations fines) ; connecteurs restaurés après coup (le CLI natif n'a pas de
+     verrouillage par position). **Filet de sécurité obligatoire** : le CLI peut
+     introduire PLUS de conflits que l'Inspecteur n'en répare (benchmark board STM32
+     réel 17 composants, 2026-06-18 : 17 conflits → 3 ERROR résiduels après 10 passes
+     de fix) → si l'Inspecteur ne ramène pas 0 ERROR après le CMA-ES, le board
+     pré-CMA-ES (① + fix, déjà garanti propre) est restauré tel quel.
+  ③ **Inspecteur** (`_resolve_remaining_conflicts`, kct placement fix natif chaîné) —
+     `PlacementFixer.iterative_fix` (réparation locale ~0.05-0.1s, pas de ré-exécution
+     GA), appelé après ① (garantie de base) et après ② si le Géomètre a été appliqué.
+  **Pas de snap déterministe** custom — l'adjacence resserrée est un effet du Géomètre,
+  pas garantie : ablation contrôlée (board STM32 réel, CMA-ES seul sur un board déjà
+  placé) = 8/10 paires resserrées (ex. Y1-U2 16.7→7.5mm), 2 légèrement dégradées,
+  toujours 0 ERROR final (1 ERROR + 6 WARNING bruts nettoyés par l'Inspecteur à
+  0 ERROR / 2 WARNING). Sur le board complet (GA+CMA-ES enchaînés), le filet de
+  sécurité s'est déclenché une fois (17 conflits non résorbés → revert), confirmé
+  zéro régression sur l'invariant 0-ERROR par 11/11 tests (`test_placement.py`).
+  Routage rapide (gros boards) = backend C++ `kct build-native` (Docker).
+  Voir `services/kicad/DEPENDENCIES.md`.
 **Placement futur (Phase 6+) : RL_PCB** — hybride LLM + Reinforcement Learning :
   - Sonnet analyse le schéma et suggère une stratégie (groupes fonctionnels, zones sensibles)
   - RL_PCB optimise mathématiquement les positions X/Y
@@ -556,6 +574,28 @@ chaîner `PlacementAnalyzer.find_conflicts()` puis si erreurs ERROR détectées,
 `PlacementFixer.iterative_fix()` (réparation locale ~0.05-0.1s, PAS de ré-exécution GA).
 Validé : 3 runs complets sur le board STM32 réel = 0 conflit / 0 erreur (vs 8/0/3/0/5
 sans le fix). 100% natif (PlacementAnalyzer + PlacementFixer), zéro algo custom.
+
+### Phase 3 — Géomètre CMA-ES + filet de sécurité (2026-06-18) :
+Réintroduction du CMA-ES (`kct optimize-placement --strategy cmaes --seed-method
+current`) comme **3e étape optionnelle** après Architecte+Inspecteur, pour répondre
+à la limite ci-dessus (adjacence 13-28mm) — PAS un remplacement de la décision
+« pas de snap déterministe », un raffinement best-effort en plus.
+**Ablation contrôlée** (CMA-ES seul sur un board STM32 déjà placé+fixé, 0 erreur) :
+9.4s, 8/10 paires d'adjacence resserrées (Y1-U2 16.73→7.50mm, C11-Y1 17.47→13.34mm,
+C1-U1 8.37→4.51mm…), 2 légèrement dégradées (C13-U2, C3-U1, +1.1/+1.4mm). Le CMA-ES
+brut introduit 1 ERROR + 6 WARNING (son modèle de faisabilité interne ≠ DesignRules
+de PlacementAnalyzer) — l'Inspecteur les nettoie à 0 ERROR / 2 WARNING.
+**Benchmark pipeline complet** (GA aléatoire + CMA-ES enchaînés, board STM32 réel,
+17 composants) : un run a produit 17 conflits post-CMA-ES que l'Inspecteur (10 passes)
+n'a pas pu résorber (oscillation, 3 ERROR résiduels) — **régression détectée avant
+livraison**, jamais en prod grâce au filet de sécurité ci-dessous.
+**Filet de sécurité obligatoire** (`auto_place`) : snapshot du board juste après
+Architecte+Inspecteur (déjà garanti 0 ERROR) ; si après le Géomètre+Inspecteur il
+reste des erreurs ERROR, le snapshot est restauré — le board livré est TOUJOURS
+0 ERROR, que le CMA-ES ait réussi ou non. Test de régression :
+`test_auto_place_reverts_cmaes_if_unresolved_conflicts_remain`. 11/11 tests
+`test_placement.py` verts. 100% natif (`run_optimize_placement` + `PlacementAnalyzer`
++ `PlacementFixer`), zéro algo de placement custom.
 
 ---
 

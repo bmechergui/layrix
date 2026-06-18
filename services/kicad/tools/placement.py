@@ -3,13 +3,20 @@ Layrix — Placement (tools/placement.py)
 
 100% commandes natives kicad-tools (aucun algo custom — règle CLAUDE.md) :
   1. place_components()  — positions explicites fournies par l'agent (pcbnew)
-  2. auto_place()        — commande native `kct placement optimize
-                           --strategy hybrid --cluster` via OptimizationWorkflow :
-       hybrid  = phase évolutionnaire (groupement fonctionnel) + raffinement
-                 physique force-directed
-       cluster = detect_functional_clusters natif (bypass caps près des ICs,
-                 quartz + load caps groupés) — générique, n'importe quel board
-       fixed   = connecteurs (J*/P*) ancrés, clampés dans le contour Edge.Cuts
+  2. auto_place()        — pipeline natif 3 étapes (kct placement / kct
+                           optimize-placement) :
+       ① Architecte  `kct placement optimize --strategy hybrid --cluster`
+          OptimizationWorkflow : phase évolutionnaire (groupement fonctionnel
+          via detect_functional_clusters) + raffinement physique
+          force-directed. Connecteurs (J*/P*) ancrés, clampés Edge.Cuts.
+       ② Géomètre    `kct optimize-placement --strategy cmaes --seed-method
+          current` (_refine_with_cmaes) — CMA-ES (CMAwM) seedé sur la
+          position issue de ①, micro-raffine (décalages sub-mm, rotations
+          fines, alignement broches). Connecteurs préservés (le CLI natif
+          n'a pas de notion de verrouillage — restauré après coup).
+       ③ Inspecteur  `kct placement fix` (_resolve_remaining_conflicts) —
+          PlacementFixer.iterative_fix, élimine les conflits ERROR restants
+          (court-circuits réels) en réparation locale (~0.05-0.1s).
 """
 
 from __future__ import annotations
@@ -17,6 +24,7 @@ from __future__ import annotations
 import base64
 import logging
 import tempfile
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -104,6 +112,62 @@ def _resolve_remaining_conflicts(pcb_path: Path, anchored: list[str]) -> tuple[i
     return n_errors_before, n_errors_after
 
 
+def _refine_with_cmaes(pcb_path: Path, anchored: list[str], time_budget_s: float = 20.0) -> dict:
+    """Micro-raffinement natif — équivalent ``kct optimize-placement --strategy
+    cmaes --seed-method current`` (CMAwM, patch Layrix ``seed="current"`` :
+    encode la position issue de l'hybrid+cluster comme moyenne initiale, donc
+    le CMA-ES RAFFINE — décale/tourne les composants de quelques dixièmes de
+    millimètre pour aligner les broches et résorber les chevauchements —
+    plutôt que de relancer un placement depuis zéro.
+
+    Le CLI natif n'a pas de notion de position verrouillée (seul
+    ``time_budget`` borne le temps de calcul) : il traite tous les footprints,
+    y compris les connecteurs, comme mobiles. On laisse le CMA-ES voir le
+    board complet (les connecteurs comptent comme obstacles dans l'évaluation
+    overlap/wirelength) puis on restaure la position pré-CMA-ES des refs
+    ``anchored`` avant d'écraser le fichier — l'ancrage mécanique des
+    connecteurs (J*/P*) reste garanti.
+
+    Retourne ``{"refined": bool, "elapsed_s": float}``.
+    """
+    from kicad_tools.cli.optimize_placement_cmd import run_optimize_placement
+    from kicad_tools.schema.pcb import PCB
+
+    before = {fp.reference: (fp.position, fp.rotation) for fp in PCB.load(str(pcb_path)).footprints}
+
+    cmaes_out = pcb_path.with_name(pcb_path.stem + "_cmaes" + pcb_path.suffix)
+    start = time.monotonic()
+    exit_code = run_optimize_placement(
+        str(pcb_path),
+        strategy_name="cmaes",
+        seed_method="current",
+        output_path=str(cmaes_out),
+        time_budget=time_budget_s,
+        quiet=True,
+        allow_infeasible=True,
+    )
+    elapsed = time.monotonic() - start
+
+    if exit_code not in (0, 2) or not cmaes_out.exists():
+        logger.warning(
+            "auto_place: CMA-ES refine natif a échoué (exit=%d, %.1fs) — board hybrid+cluster conservé",
+            exit_code, elapsed,
+        )
+        return {"refined": False, "elapsed_s": elapsed}
+
+    refined_pcb = PCB.load(str(cmaes_out))
+    for fp in refined_pcb.footprints:
+        if fp.reference in before and fp.reference in anchored:
+            fp.position, fp.rotation = before[fp.reference]
+    refined_pcb.save(str(pcb_path))
+
+    logger.info(
+        "auto_place: CMA-ES refine natif (seed=current) — %.1fs, %d réf(s) ancrée(s) préservée(s)",
+        elapsed, len(anchored),
+    )
+    return {"refined": True, "elapsed_s": elapsed}
+
+
 def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 2.0) -> list[str]:
     """Ramène les footprints ``fixed_refs`` à l'intérieur du contour Edge.Cuts.
 
@@ -146,6 +210,11 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
 _WF_ITERATIONS: int = 1000   # raffinement physique force-directed
 _WF_GENERATIONS: int = 100   # phase évolutionnaire (groupement)
 _WF_POPULATION: int = 50
+
+# Budget temps du micro-raffinement CMA-ES (Géomètre) — borné pour rester
+# compatible avec l'appel synchrone POST /place/auto (le GA hybrid+cluster
+# prend déjà ~100s sur le board STM32 réel).
+_CMAES_TIME_BUDGET_S: float = 20.0
 
 
 def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float) -> dict:
@@ -207,12 +276,41 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
 
         pcb.save(str(out))
 
-        n_err_before, n_err_after = _resolve_remaining_conflicts(out, conn)
-        if n_err_before:
-            logger.info(
-                "auto_place: kct placement fix natif — %d erreur(s) court-circuit -> %d après réparation",
-                n_err_before, n_err_after,
-            )
+        # Architecte garanti 0 erreur AVANT le micro-raffinement — snapshot de
+        # secours : le CLI CMA-ES n'a pas de verrouillage de position et peut
+        # introduire plus de chevauchements que l'Inspecteur ne peut en réparer
+        # (benchmark board STM32 réel, 2026-06-18 : 17 conflits → 3 ERROR
+        # restants après 10 passes). Mieux vaut garder un board moins "tassé"
+        # mais garanti propre que livrer un court-circuit potentiel.
+        _resolve_remaining_conflicts(out, conn)
+        pre_cmaes_bytes = out.read_bytes()
+
+        # ── Géomètre : kct optimize-placement --strategy cmaes --seed-method current ──
+        # Raffine la position issue du GA (décalages sub-mm, rotations fines,
+        # alignement broches) — connecteurs préservés (voir _refine_with_cmaes).
+        # Le CLI natif peut lever (pas seulement renvoyer un code d'échec) : une
+        # exception ici ne doit jamais faire échouer toute la requête tant que le
+        # board pré-CMA-ES (déjà garanti 0 erreur) est disponible en snapshot.
+        try:
+            refine = _refine_with_cmaes(out, conn, time_budget_s=_CMAES_TIME_BUDGET_S)
+        except Exception:
+            logger.exception("auto_place: CMA-ES refine natif a levé une exception — board pré-CMA-ES conservé")
+            refine = {"refined": False, "elapsed_s": 0.0}
+
+        if refine["refined"]:
+            n_err_before, n_err_after = _resolve_remaining_conflicts(out, conn)
+            if n_err_after > 0:
+                logger.warning(
+                    "auto_place: CMA-ES a introduit %d conflit(s) ERROR non résorbé(s) "
+                    "par l'Inspecteur (%d avant fix) — board pré-CMA-ES restauré",
+                    n_err_after, n_err_before,
+                )
+                out.write_bytes(pre_cmaes_bytes)
+            elif n_err_before:
+                logger.info(
+                    "auto_place: kct placement fix natif (post-CMA-ES) — %d erreur(s) -> %d après réparation",
+                    n_err_before, n_err_after,
+                )
 
         footprints = PCB.load(str(out)).footprints
         return {

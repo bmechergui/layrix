@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+import tools.placement as placement_module
+
 from kicad_tools.placement.analyzer import DesignRules, PlacementAnalyzer
 from kicad_tools.placement.conflict import ConflictSeverity
 from kicad_tools.schema.pcb import PCB
@@ -27,6 +29,7 @@ from tools.placement import (
     _connector_refs,
     _clamp_fixed_refs_to_outline,
     _resolve_remaining_conflicts,
+    _refine_with_cmaes,
 )
 
 _BOARD_W_MM, _BOARD_H_MM = 60.0, 40.0
@@ -90,6 +93,30 @@ def _board_with_movable_components(tmp_path: Path) -> bytes:
     close_idx = text.rstrip().rfind(")")
 
     inject = ""
+    for i, ref in enumerate(("R1", "R2", "R3")):
+        uuid = f"3333333{i}-3333-3333-3333-333333333333"
+        inject += _resistor_sexp(ref, uuid, ox + 30.0, oy + 20.0, net=1)
+
+    text = text[:close_idx] + inject + text[close_idx:]
+    board_path.write_text(text, encoding="utf-8")
+    return board_path.read_bytes()
+
+
+def _board_with_connector_and_movable(tmp_path: Path) -> bytes:
+    """Board 60x40mm avec 1 connecteur ancré (J1) + 3 résistances mobiles empilées.
+
+    Sert à vérifier que le micro-raffinement CMA-ES (_refine_with_cmaes) sépare
+    les composants mobiles SANS jamais déplacer J1 (ancrage mécanique).
+    """
+    pcb = PCB.create(width=_BOARD_W_MM, height=_BOARD_H_MM, layers=2)
+    ox, oy = pcb.board_origin
+    board_path = tmp_path / "board.kicad_pcb"
+    pcb.save(str(board_path))
+
+    text = board_path.read_text(encoding="utf-8")
+    close_idx = text.rstrip().rfind(")")
+
+    inject = _footprint_sexp("J1", "11111111-1111-1111-1111-111111111111", ox + 5.0, oy + 5.0)
     for i, ref in enumerate(("R1", "R2", "R3")):
         uuid = f"3333333{i}-3333-3333-3333-333333333333"
         inject += _resistor_sexp(ref, uuid, ox + 30.0, oy + 20.0, net=1)
@@ -268,3 +295,110 @@ def test_auto_place_result_has_no_error_conflicts(tmp_path):
     conflicts = PlacementAnalyzer().find_conflicts(str(out_path), DesignRules())
     errors = [c for c in conflicts if c.severity == ConflictSeverity.ERROR]
     assert not errors, f"conflits ERROR restants après auto_place : {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Tests — _refine_with_cmaes (kct optimize-placement --strategy cmaes natif)
+# ---------------------------------------------------------------------------
+
+def test_refine_with_cmaes_separates_overlap_and_preserves_anchored(tmp_path):
+    """_refine_with_cmaes (CMA-ES seed=current, micro-raffinement natif) doit
+    séparer les composants mobiles empilés SANS jamais déplacer un ref ancré.
+
+    Le CLI natif (kct optimize-placement) n'a pas de notion de verrouillage par
+    position — il traite tous les footprints comme mobiles. La fonction doit
+    donc restaurer la position pré-CMA-ES des refs ``anchored`` après l'appel.
+    """
+    pcb_bytes = _board_with_connector_and_movable(tmp_path)
+    board_path = tmp_path / "board.kicad_pcb"
+    board_path.write_bytes(pcb_bytes)
+
+    j1_before = next(
+        fp.position for fp in PCB.load(str(board_path)).footprints if fp.reference == "J1"
+    )
+
+    _refine_with_cmaes(board_path, anchored=["J1"], time_budget_s=5.0)
+
+    pcb_after = PCB.load(str(board_path))
+    pos = {fp.reference: fp.position for fp in pcb_after.footprints}
+
+    assert pos["J1"] == pytest.approx(j1_before, abs=1e-6), "connecteur ancré déplacé par le CMA-ES"
+    moved = [r for r in ("R1", "R2", "R3")
+             if abs(pos[r][0] - 30.0) > 0.5 or abs(pos[r][1] - 20.0) > 0.5]
+    assert moved, f"aucune résistance affinée par le CMA-ES — positions={pos}"
+
+
+def test_auto_place_keeps_connector_anchored_with_cmaes_step(tmp_path):
+    """Régression : avec le micro-raffinement CMA-ES chaîné dans auto_place,
+    un connecteur déjà bien placé (ancrage mécanique) ne doit toujours pas bouger.
+    """
+    pcb_bytes = _board_with_connectors(
+        tmp_path, j1_board_xy=(30.0, 135.0), j2_board_xy=(30.0, 20.0),
+    )
+    b64 = base64.b64encode(pcb_bytes).decode()
+
+    result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
+
+    j2 = next(p for p in result["positions"] if p["ref"] == "J2")
+    assert j2["x"] == pytest.approx(30.0, abs=0.5)
+    assert j2["y"] == pytest.approx(20.0, abs=0.5)
+
+
+def test_auto_place_reverts_cmaes_if_unresolved_conflicts_remain(tmp_path, monkeypatch):
+    """Filet de sécurité — benchmark réel (board STM32, 17 composants) : le
+    CLI natif CMA-ES (sans verrouillage de position) peut introduire plus de
+    chevauchements que l'Inspecteur (PlacementFixer, 10 passes) ne peut en
+    résorber (observé : 17 conflits -> oscillation -> 3 ERROR restants).
+
+    auto_place doit alors REJETER le résultat du CMA-ES et conserver le board
+    Architecte (hybrid+cluster + fix), déjà garanti 0 erreur — jamais livrer
+    un board avec des conflits ERROR non résolus.
+
+    Note : ce test exerce le MÉCANISME de revert (snapshot/restore) en pilotant
+    `_resolve_remaining_conflicts` par compteur d'appels, pas la détection réelle
+    des conflits introduits par le CMA-ES — celle-ci est validée séparément par le
+    benchmark manuel sur le board STM32 réel (voir docs/notefinal.md 2026-06-18).
+    """
+    pcb_bytes = _board_with_movable_components(tmp_path)
+    b64 = base64.b64encode(pcb_bytes).decode()
+
+    calls = {"n": 0}
+
+    def fake_refine(pcb_path, anchored, time_budget_s=20.0):
+        pcb = PCB.load(str(pcb_path))
+        for fp in pcb.footprints:
+            if fp.reference == "R1":
+                fp.position = (1.0, 1.0)
+        pcb.save(str(pcb_path))
+        return {"refined": True, "elapsed_s": 0.1}
+
+    def fake_resolve(pcb_path, anchored):
+        calls["n"] += 1
+        return (0, 0) if calls["n"] == 1 else (5, 3)
+
+    monkeypatch.setattr(placement_module, "_refine_with_cmaes", fake_refine)
+    monkeypatch.setattr(placement_module, "_resolve_remaining_conflicts", fake_resolve)
+
+    result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
+
+    r1 = next(p for p in result["positions"] if p["ref"] == "R1")
+    assert (r1["x"], r1["y"]) != (1.0, 1.0), "board CMA-ES non-résolu livré malgré conflits ERROR restants"
+
+
+def test_auto_place_survives_cmaes_exception(tmp_path, monkeypatch):
+    """Filet de sécurité — si le CLI natif CMA-ES LÈVE une exception (pas
+    seulement un code retour non-zéro), auto_place ne doit pas planter :
+    le board pré-CMA-ES (Architecte + Inspecteur, déjà garanti 0 erreur) doit
+    être livré tel quel, comme si le CMA-ES avait simplement échoué.
+    """
+    pcb_bytes = _board_with_movable_components(tmp_path)
+    b64 = base64.b64encode(pcb_bytes).decode()
+
+    def fake_refine_raises(pcb_path, anchored, time_budget_s=20.0):
+        raise RuntimeError("CMA-ES natif a crashé")
+
+    monkeypatch.setattr(placement_module, "_refine_with_cmaes", fake_refine_raises)
+
+    result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
+
+    assert result["placed_count"] > 0

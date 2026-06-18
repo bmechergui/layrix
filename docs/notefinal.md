@@ -1174,6 +1174,70 @@ RED confirmé (ImportError) avant l'implémentation, GREEN après (8/8 tests).
 
 ---
 
+### 2026-06-18 (suite) — Phase 3 « Géomètre » CMA-ES + filet de sécurité revert
+
+**Contexte :** demande utilisateur d'ajouter une étape CMA-ES finale, en référence
+à `docs/layrix-full-resume.md` (« Le Mathématicien — décale les puces d'un
+demi-millimètre… élimine 100% des chevauchements »). Avant cette session, le
+CMA-ES avait déjà été essayé (Phase 2, 2026-06-15/16) puis retiré au profit de
+l'EVO natif seul (`c462178`, `095d564`).
+
+**Décision :** réintroduire le CMA-ES, mais comme **3e étape de raffinement**
+(Géomètre) après Architecte (hybrid+cluster) + Inspecteur — pas un remplacement.
+`tools/placement.py::_refine_with_cmaes()` appelle `run_optimize_placement(
+seed_method="current")` sur le board déjà placé, puis restaure la position des
+connecteurs (le CLI natif n'a pas de verrouillage par référence).
+
+**TDD :** `test_refine_with_cmaes_separates_overlap_and_preserves_anchored` +
+`test_auto_place_keeps_connector_anchored_with_cmaes_step` — RED (ImportError)
+puis GREEN.
+
+**Benchmark 1 — pipeline complet (GA aléatoire + CMA-ES, board STM32 réel,
+17 composants) :** le CMA-ES a introduit 17 conflits que l'Inspecteur (10 passes)
+n'a PAS pu résorber entièrement (oscillation 17→15→12→6→2→5→3→5→2→6→5,
+**3 ERROR résiduels**) — régression contre l'invariant « 0 erreur garanti »
+établi à l'entrée précédente. Détectée avant livraison grâce à la vérification
+explicite des conflits post-CMA-ES (pas juste post-Architecte).
+
+**Décision corrective :** filet de sécurité dans `auto_place()` — snapshot du
+board juste après Architecte+Inspecteur (0 erreur garanti), tentative CMA-ES,
+ré-Inspecteur ; si des ERROR subsistent, restauration du snapshot (le CMA-ES
+est purement et simplement annulé pour ce run). Test de garde :
+`test_auto_place_reverts_cmaes_if_unresolved_conflicts_remain` (RED confirmé
+sur l'implémentation sans filet, GREEN après). Suite complète : 11/11.
+
+**Benchmark 2 — ablation contrôlée (CMA-ES seul, sur un board STM32 déjà
+placé+fixé par l'Architecte, 0 erreur en entrée) :** isole l'effet du CMA-ES
+sans le bruit du tirage aléatoire du GA entre deux runs.
+- Avant : 0 ERROR / 0 WARNING.
+- CMA-ES brut (9.4s) : 1 ERROR / 6 WARNING — le modèle de faisabilité interne
+  du CMA-ES (AABB) ne coïncide pas exactement avec `DesignRules` de
+  `PlacementAnalyzer`.
+- Après Inspecteur : 0 ERROR / 2 WARNING (1 erreur réparée, 0.05-0.1s).
+- Adjacence : 8/10 paires resserrées — Y1-U2 16.73→7.50mm (-9.23), C11-Y1
+  17.47→13.34mm (-4.13), C1-U1 8.37→4.51mm (-3.86), C2-U1 10.09→6.87mm
+  (-3.22). 2 légèrement dégradées : C13-U2 +1.13mm, C3-U1 +1.36mm.
+
+**Vérité sur la citation `layrix-full-resume.md` :** « élimine 100% des
+chevauchements » n'est PAS littéralement vrai pour le CMA-ES seul (il en
+introduit, mesuré ci-dessus) — c'est le **pipeline complet avec filet de
+sécurité** qui garantit 0 ERROR livré, pas le CMA-ES isolément. « Aligne
+parfaitement les broches » n'a pas été mesuré (seule l'adjacence centre à
+centre l'a été) — affirmation non vérifiée, à ne pas répéter comme un fait
+établi sans benchmark dédié.
+
+**Écarté :**
+- Best-of-N sur le CMA-ES (relancer jusqu'à 0 conflit) — même raisonnement
+  que l'entrée précédente pour le GA : trop lent en synchrone.
+- Verrouillage natif par référence dans le CLI CMA-ES — pas exposé par
+  `run_optimize_placement` ; contournement par restauration post-hoc retenu.
+
+**Fichiers concernés :** `services/kicad/tools/placement.py` +
+`services/kicad/tests/test_placement.py` + `CLAUDE.md` +
+`services/kicad/DEPENDENCIES.md`. Branche `feat/placement-cmaes`, PR #36.
+
+---
+
 ## Template pour la prochaine décision
 
 ```
