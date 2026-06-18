@@ -627,6 +627,10 @@ C'est la fonctionnalité la plus innovante de kicad-tools. Au lieu d'utiliser de
 
 En combinant un agent IA avec KiBot, on obtient un combo puissant : l'IA génère la config YAML pour JLCPCB (panelisation, Gerbers, BOM), et KiBot exécute les binaires KiCad en tâche de fond sans manipuler l'API Python. KiBot gère les rapports DRC, l'export Gerbers, le drill, la BOM LCSC et le CPL — exactement ce dont Layrix a besoin pour automatiser le pipeline fabrication de A à Z.
 
+-------------------------
+Placement
+------------------------
+
  Voici le déroulé exact, étape par étape, tracé dans le code source réel (de la
   commande jusqu'à la sauvegarde) :
 
@@ -703,8 +707,26 @@ En combinant un agent IA avec KiBot, on obtient un combo puissant : l'IA génèr
   physique (Phase 2) affine localement. Les clusters cap/IC sont des ressorts dans
   les deux phases — forts mais battables par les rails GND, d'où l'espacement de
   13-28mm qu'on a constaté.
+----- 
+option phase 3
 
+Le Micro-Raffinement ➔ Le Mathématicien (CMA-ES) On lance le CMA-ES en mode seed="current". Il prend la carte, calcule sa matrice géante, et commence à "vibrer". Il décale les puces d'un demi-millimètre, les tourne de quelques degrés, aligne parfaitement les broches et élimine 100% des chevauchements. [FIN DU PLACEMENT : La carte est géométriquement parfaite]
+----
+kct optimize-placement votre_carte.kicad_pcb --strategy cmaes --max-iterations 500
 
+Voici pourquoi c'est l'ordre magique :
+Étape 1 : Le "Hybrid Cluster" (L'Architecte) Quand vous lancez la stratégie Hybride, l'IA (le LLM) regarde votre schéma et comprend la logique de votre carte. Elle dit : "Ok, tous ces composants font partie de l'alimentation, je vais les mettre à gauche. Ces composants sont l'audio, je vais les mettre en bas à droite." Elle regroupe les composants par "clusters" logiques. Mais son placement n'est pas "mathématiquement parfait" au millimètre près, et il peut y avoir de petits chevauchements.
+
+Étape 2 : Le "CMA-ES" (Le Géomètre) C'est ici qu'intervient le CMA-ES. Attention, c'est crucial : vous devez rajouter l'option --seed-method current à votre commande CMA-ES. Pourquoi ? Parce que --seed-method current dit au CMA-ES : "Surtout, ne mélange pas la carte ! Prends le placement tel que l'Architecte Hybride vient de le laisser, et utilise tes mathématiques pour tasser les composants parfaitement au millimètre près, sans aucun chevauchement, en réduisant la longueur des pistes au maximum."
+
+En résumé, le flux de travail (Workflow) parfait sur Layrix c'est :
+
+L'Architecte intelligent (hybrid --cluster) place les quartiers de la ville.
+L'Optimiseur mathématique (cmaes) range parfaitement les maisons à l'intérieur des
+
+--------------
+palcement IA avec RL
+-----------------
 
   C'est le "God-Tier Pipeline". Vous venez de fusionner toutes les technologies de pointe de l'IA et de l'ingénierie électronique en un seul flux de travail ultime.
 
@@ -727,7 +749,9 @@ PARTIE 2 : LE ROUTAGE (Tirer les câbles)
 Résultat : Vous obtenez une carte conçue avec l'intuition d'un ingénieur expert (RL), le respect des règles électriques (Hybride/A*), la perfection géométrique (CMA-ES) et complétée en quelques secondes (Freerouting). C'est le flux de travail absolu de l'industrie du futur !
 
 
-
+---------------
+Comment?
+---------------
 C'est le projet ultime ! Puisque kicad-tools (kct) possède déjà toute la logique mathématique, construire un modèle RL par-dessus est tout à fait réalisable.
 
 Pour faire cela en Python, la norme industrielle est d'utiliser deux bibliothèques : Gymnasium (l'ancien OpenAI Gym, pour créer le "Simulateur") et Stable Baselines3 (pour l'algorithme RL, souvent "PPO").
