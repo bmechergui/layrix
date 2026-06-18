@@ -1129,6 +1129,51 @@ connecteurs (`fixed_refs`, immobiles par design) → le no-op passait inaperçu.
 
 ---
 
+### 2026-06-18 (suite) — Non-déterminisme hybrid+cluster → kct placement fix natif chaîné
+
+**Constat :** `OptimizationWorkflow` (hybrid+cluster) n'a pas de seed fixe.
+Variance test : 5 runs sur le board STM32 réel (même input) →
+**8 / 0 / 3 / 0 / 5 conflits** détectés par `PlacementAnalyzer.find_conflicts()`
+(`kct placement check`), dont des erreurs ERROR (pad clearance ≤0 = court-circuit
+réel). Conclusion : l'algo natif est correct mais **stochastique** — explique
+les deux observations contradictoires de l'utilisateur (« hier c'était top » /
+« aujourd'hui il y a un problème ») : les deux étaient vrais, simplement des
+tirages différents du même process.
+
+**Décision :** chaîner une réparation native **après** l'optimisation plutôt que
+la relancer. `tools/placement.py::_resolve_remaining_conflicts()` appelle
+`PlacementAnalyzer.find_conflicts()` puis, si erreurs ERROR détectées,
+`PlacementFixer(strategy=SPREAD, anchored=<connecteurs>).iterative_fix()`
+(équivalent `kct placement fix` — passes locales de nudge, ~0.05-0.1s).
+
+**Écarté : best-of-N (relancer le GA jusqu'à 0 conflit).** Mesuré : 1 run complet
+`auto_place` sur le board STM32 = **97-105s**. Un best-of-6-8 aurait coûté
+10-13min — inutilisable en synchrone dans le pipeline agent. La réparation
+locale coûte ~0.1s contre 98s pour un nouveau run GA : 1000× moins cher pour
+le même résultat (0 erreur).
+
+**Validé :** 3 runs complets `auto_place` sur le board STM32 réel = **0 conflit
+/ 0 erreur** sur les 3 (vs 8/0/3/0/5 sans le fix). 100% natif
+(`PlacementAnalyzer` + `PlacementFixer` kicad-tools), zéro algo custom.
+
+**Limite non couverte :** la qualité du clustering (cap↔IC, quartz↔MCU) varie
+aussi d'un run à l'autre (run3 du variance test : caps à 20-27mm d'un IC) —
+`PlacementFixer` ne corrige que les **conflits** (overlap physique), pas la
+**qualité** de regroupement fonctionnel. Ce n'est pas un conflit détectable par
+`find_conflicts()`, donc hors scope de ce fix — relève de la limite déjà
+acceptée de `detect_functional_clusters` (caps 13-28mm du MCU, voir entrée
+précédente).
+
+**Test de garde (TDD) :** `test_resolve_remaining_conflicts_removes_pad_clearance_errors`
+(déterministe, sans GA — 3 résistances empilées construites directement) +
+`test_auto_place_result_has_no_error_conflicts` (intégration, via `auto_place`).
+RED confirmé (ImportError) avant l'implémentation, GREEN après (8/8 tests).
+
+**Fichiers concernés :** `services/kicad/tools/placement.py` +
+`services/kicad/tests/test_placement.py` + `CLAUDE.md`. Commit `d16c50d`.
+
+---
+
 ## Template pour la prochaine décision
 
 ```
