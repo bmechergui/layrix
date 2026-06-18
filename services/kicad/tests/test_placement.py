@@ -48,6 +48,54 @@ def _footprint_sexp(ref: str, uuid: str, x_abs: float, y_abs: float) -> str:
 """
 
 
+def _resistor_sexp(ref: str, uuid: str, x_abs: float, y_abs: float, net: int) -> str:
+    """Footprint mobile minimal (résistance 2 pads SMD) à la position donnée.
+
+    Les deux pads partagent le même ``net`` qu'une autre résistance pour que
+    l'optimiseur ait un wirelength à minimiser (composant mobile, non ancré).
+    """
+    return f"""\
+  (footprint "Resistor_SMD:R_0402_1005Metric"
+    (layer "F.Cu")
+    (uuid "{uuid}")
+    (at {x_abs} {y_abs})
+    (property "Reference" "{ref}" (at 0 -2 0) (layer "F.SilkS")
+      (effects (font (size 1 1) (thickness 0.15))))
+    (property "Value" "10k" (at 0 2 0) (layer "F.Fab")
+      (effects (font (size 1 1) (thickness 0.15))))
+    (pad "1" smd roundrect (at -0.5 0) (size 0.6 0.6) (layers "F.Cu" "F.Paste" "F.Mask")
+      (net {net} "SIG"))
+    (pad "2" smd roundrect (at 0.5 0) (size 0.6 0.6) (layers "F.Cu" "F.Paste" "F.Mask")
+      (net 0 ""))
+  )
+"""
+
+
+def _board_with_movable_components(tmp_path: Path) -> bytes:
+    """Board 60x40mm avec 3 résistances mobiles empilées au centre (overlap).
+
+    Aucune n'est un connecteur → toutes mobiles. Partagent le net 1 (SIG) →
+    l'optimiseur a un wirelength à minimiser + un overlap à résoudre. Un
+    placement réellement appliqué DOIT les séparer.
+    """
+    pcb = PCB.create(width=_BOARD_W_MM, height=_BOARD_H_MM, layers=2)
+    ox, oy = pcb.board_origin
+    board_path = tmp_path / "board.kicad_pcb"
+    pcb.save(str(board_path))
+
+    text = board_path.read_text(encoding="utf-8")
+    close_idx = text.rstrip().rfind(")")
+
+    inject = ""
+    for i, ref in enumerate(("R1", "R2", "R3")):
+        uuid = f"3333333{i}-3333-3333-3333-333333333333"
+        inject += _resistor_sexp(ref, uuid, ox + 30.0, oy + 20.0, net=1)
+
+    text = text[:close_idx] + inject + text[close_idx:]
+    board_path.write_text(text, encoding="utf-8")
+    return board_path.read_bytes()
+
+
 def _board_with_connectors(
     tmp_path: Path,
     j1_board_xy: tuple[float, float],
@@ -126,6 +174,29 @@ def test_clamp_leaves_connector_inside_unchanged(tmp_path):
 # ---------------------------------------------------------------------------
 # Tests intégration — auto_place (commande native)
 # ---------------------------------------------------------------------------
+
+def test_auto_place_actually_moves_movable_components(tmp_path):
+    """Régression : auto_place DOIT appliquer les positions optimisées.
+
+    3 résistances mobiles empilées au même point (overlap) doivent être
+    séparées par l'optimiseur. Sans ``write_to_pcb()`` (bug d43ab8b),
+    ``run()`` calcule mais n'écrit jamais → les positions sortent identiques
+    à l'entrée → ce test échoue (RED).
+    """
+    pcb_bytes = _board_with_movable_components(tmp_path)
+    b64 = base64.b64encode(pcb_bytes).decode()
+
+    result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
+
+    pos = {p["ref"]: (p["x"], p["y"]) for p in result["positions"]
+           if p["ref"] in ("R1", "R2", "R3")}
+    # au moins un composant doit avoir quitté le point de départ (30, 20)
+    moved = [r for r, (x, y) in pos.items()
+             if abs(x - 30.0) > 0.5 or abs(y - 20.0) > 0.5]
+    assert moved, f"aucune résistance déplacée — positions={pos} (write_to_pcb manquant ?)"
+    # les 3 ne doivent plus être empilées au même point
+    assert len(set(pos.values())) > 1, f"composants toujours empilés : {pos}"
+
 
 def test_auto_place_clamps_connector_outside_outline(tmp_path):
     """J1 ancré hors du contour Edge.Cuts doit être ramené dedans (clamp natif)."""

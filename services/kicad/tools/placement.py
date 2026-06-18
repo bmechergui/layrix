@@ -159,10 +159,15 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
             generations=_WF_GENERATIONS,
             population=_WF_POPULATION,
         )
-        result = OptimizationWorkflow(pcb=pcb, config=cfg).run()
+        workflow = OptimizationWorkflow(pcb=pcb, config=cfg)
+        result = workflow.run()
+        # run() calcule l'optimisation mais N'ÉCRIT PAS les positions dans le PCB.
+        # write_to_pcb() applique les positions optimisées dans `pcb` — sans cet
+        # appel, pcb.save() sauve le board NON MODIFIÉ (placement = no-op).
+        updated = workflow.write_to_pcb()
         logger.info(
-            "auto_place natif (hybrid+cluster): %d composants, wirelength=%.1fmm, %d connecteurs ancrés",
-            getattr(result, "components_updated", 0) or len(pcb.footprints),
+            "auto_place natif (hybrid+cluster): %d composants écrits, wirelength=%.1fmm, %d connecteurs ancrés",
+            updated,
             getattr(result, "wire_length_mm", 0.0) or getattr(result, "wire_length", 0.0),
             len(conn),
         )
