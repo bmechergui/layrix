@@ -724,6 +724,12 @@ En résumé, le flux de travail (Workflow) parfait sur Layrix c'est :
 L'Architecte intelligent (hybrid --cluster) place les quartiers de la ville.
 L'Optimiseur mathématique (cmaes) range parfaitement les maisons à l'intérieur des
 
+L'Architecte (Macro-Placement) : kct placement optimize --strategy hybrid --cluster carte.kicad_pcb (Place les grands groupes logiques)
+
+Le Géomètre (Micro-Placement) : kct optimize-placement --strategy cmaes --seed-method current carte.kicad_pcb (Tasse les composants parfaitement)
+
+L'Inspecteur (Correction Finale) : kct placement fix carte.kicad_pcb (Corrige les tout derniers petits chevauchements de millimètres)
+
 --------------
 palcement IA avec RL
 -----------------
