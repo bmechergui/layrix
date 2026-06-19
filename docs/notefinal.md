@@ -1238,6 +1238,83 @@ centre l'a été) — affirmation non vérifiée, à ne pas répéter comme un f
 
 ---
 
+### 2026-06-19 — Bug max_iterations non plafonné + filet de sécurité Option B
+
+**Symptôme observé :** « Architecte good, Final bad » — le board issu de
+l'Architecte (① + Inspecteur) était propre, mais le board final livré par
+`auto_place()` (après Géomètre + ré-Inspecteur) était visuellement dégradé,
+malgré 0 ERROR / 0 WARNING rapportés. Le filet de sécurité de l'entrée
+précédente (basé sur le compte d'ERROR) ne s'est PAS déclenché — ce qui a
+mis en doute, à tort, le bénéfice du seed `"current"` lui-même.
+
+**Cause racine identifiée :** `_refine_with_cmaes()` appelait
+`run_optimize_placement(seed_method="current", time_budget=20.0, ...)` SANS
+plafonner `max_iterations` — défaut de la lib = 1000. Vérification dans
+`kicad_tools/placement/cmaes_strategy.py` : `seed_method="current"` seede
+bien correctement la moyenne initiale du CMA-ES sur la position issue de
+l'Architecte (le seed n'était pas le problème). Mais le budget de 20s
+laissait largement le temps à 1000 itérations de dériver loin de ce point de
+départ : benchmark réel (board STM32, 17 composants, repartant du même run
+GA Architecte) → déplacement moyen 7.5mm, max 15mm (jusqu'à 68mm observé sur
+un autre run). PAS un micro-raffinement sub-mm comme documenté avant ce fix.
+
+**Fix root-cause :** constante `_CMAES_MAX_ITERATIONS = 30`, passée en kwarg
+à `run_optimize_placement`. Benchmark après fix : 2.1-3.1mm moyen,
+4.0-11.8mm max, stable sur 5 essais déterministes (board fixture de test :
+~9mm à 1000 itérations contre ~5mm à 30).
+
+**TDD :** test renommé `test_refine_with_cmaes_passes_bounded_max_iterations_kwarg`
+(wiring, mocké — insuffisant seul, cf. code review ci-dessous) + nouveau
+`test_refine_with_cmaes_keeps_displacement_small` (comportemental, CMA-ES
+réel non mocké, seuil `< 6.0mm` validé empiriquement avant d'écrire
+l'assertion).
+
+**Option B — filet de sécurité additionnel, orthogonal au filet ERROR :**
+même avec le fix root-cause en place, le compte d'ERROR seul ne peut
+structurellement pas détecter une dérive silencieuse "0 ERROR mais board
+dégradé" — c'est exactement le symptôme du bug ci-dessus. Ajout de
+`_max_displacement_mm(before_positions, pcb_path, exclude)` : compare la
+position de chaque footprint non-ancré entre le snapshot pré-CMA-ES et le
+board final. Nouvelle constante `_CMAES_MAX_DISPLACEMENT_MM = 20.0` — si
+dépassée, revert vers le snapshot pré-CMA-ES MÊME SI l'Inspecteur rapporte
+0 ERROR. TDD : RED confirmé en désactivant temporairement le check
+(`if max_disp > seuil` → `if False`), test échouant comme prévu
+(`assert 60.1 == 30.099 ± 0.01`), puis GREEN avec le check actif.
+Garde de régression : `test_auto_place_reverts_cmaes_if_displacement_exceeds_threshold`.
+
+**Code review (avant merge) :** 1 HIGH trouvé et corrigé —
+`_max_displacement_mm()` ignorait silencieusement toute référence présente
+sur le board après coup mais absente du snapshot `before_positions`
+(renommage/ajout inattendu côté CLI natif) — exactement le genre de cas
+qu'un filet de sécurité ne doit jamais exclure silencieusement. Fix :
+référence non-matchée → déplacement traité comme infini (`float("inf")`),
+revert garanti. Couvre aussi le cas dégénéré `before_positions={}`. Tests :
+`test_max_displacement_mm_treats_unmatched_ref_as_infinite`,
+`test_max_displacement_mm_empty_before_positions_with_tracked_refs_is_unsafe`.
+3 MEDIUM / 2 LOW notés comme follow-ups non bloquants (duplication de
+benchmark chiffré CLAUDE.md vs commentaire code — acceptée, CLAUDE.md est
+un résumé humain séparé du commentaire source de vérité ; fichier proche de
+la limite 400 lignes — à surveiller).
+
+**Incident opérateur (sans perte finale) :** pendant la vérification RED
+manuelle, un `git checkout -- tools/placement.py` mal ciblé (censé annuler
+uniquement la patch de sabotage temporaire `if False`) a restauré TOUT le
+fichier à son dernier état committé, effaçant tout le travail non-committé
+de la session (fix max_iterations + Option B). Reconstruit intégralement à
+l'identique. **Règle retenue : ne jamais utiliser `git checkout -- <fichier>`
+pour annuler une édition précise quand d'autres éditions non-committées
+coexistent dans le même fichier.**
+
+**État final :** 17/17 tests `test_placement.py` verts. 100% natif
+(paramétrage de `run_optimize_placement`, `_max_displacement_mm` est une
+comparaison Python pure, pas un algo de placement).
+
+**Fichiers concernés :** `services/kicad/tools/placement.py` +
+`services/kicad/tests/test_placement.py` + `CLAUDE.md`. Branche
+`feat/placement-cmaes`, PR #36.
+
+---
+
 ## Template pour la prochaine décision
 
 ```

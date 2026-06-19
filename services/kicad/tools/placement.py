@@ -10,10 +10,10 @@ Layrix — Placement (tools/placement.py)
           via detect_functional_clusters) + raffinement physique
           force-directed. Connecteurs (J*/P*) ancrés, clampés Edge.Cuts.
        ② Géomètre    `kct optimize-placement --strategy cmaes --seed-method
-          current` (_refine_with_cmaes) — CMA-ES (CMAwM) seedé sur la
-          position issue de ①, micro-raffine (décalages sub-mm, rotations
-          fines, alignement broches). Connecteurs préservés (le CLI natif
-          n'a pas de notion de verrouillage — restauré après coup).
+          current --max-iterations 30` (_refine_with_cmaes) — CMA-ES (CMAwM)
+          seedé sur la position issue de ①, micro-raffine (voir benchmark
+          chiffré sur _CMAES_MAX_ITERATIONS). Connecteurs préservés (le CLI
+          natif n'a pas de notion de verrouillage — restauré après coup).
        ③ Inspecteur  `kct placement fix` (_resolve_remaining_conflicts) —
           PlacementFixer.iterative_fix, élimine les conflits ERROR restants
           (court-circuits réels) en réparation locale (~0.05-0.1s).
@@ -112,6 +112,40 @@ def _resolve_remaining_conflicts(pcb_path: Path, anchored: list[str]) -> tuple[i
     return n_errors_before, n_errors_after
 
 
+def _max_displacement_mm(
+    before_positions: dict[str, tuple[float, float]], pcb_path: Path, exclude: list[str]
+) -> float:
+    """Déplacement max (mm) entre ``before_positions`` et l'état actuel de
+    ``pcb_path``, hors références ``exclude`` (connecteurs ancrés). Utilisé
+    par le filet de sécurité Option B (_CMAES_MAX_DISPLACEMENT_MM).
+
+    Une référence présente après coup mais absente de ``before_positions``
+    (renommage/ajout inattendu côté CLI natif) est traitée comme un
+    déplacement infini plutôt qu'ignorée — un filet de sécurité ne doit
+    jamais exclure silencieusement un footprint qu'il ne peut pas comparer.
+    """
+    from kicad_tools.schema.pcb import PCB
+
+    after = {fp.reference: fp.position for fp in PCB.load(str(pcb_path)).footprints}
+    excluded = set(exclude)
+    tracked = {ref: pos for ref, pos in after.items() if ref not in excluded}
+
+    unmatched = [ref for ref in tracked if ref not in before_positions]
+    if unmatched:
+        logger.warning(
+            "_max_displacement_mm: référence(s) %s absente(s) du snapshot pré-CMA-ES "
+            "— déplacement non vérifiable, traité comme dépassement du seuil",
+            unmatched,
+        )
+        return float("inf")
+
+    displacements = [
+        ((before_positions[ref][0] - pos[0]) ** 2 + (before_positions[ref][1] - pos[1]) ** 2) ** 0.5
+        for ref, pos in tracked.items()
+    ]
+    return max(displacements) if displacements else 0.0
+
+
 def _refine_with_cmaes(pcb_path: Path, anchored: list[str], time_budget_s: float = 20.0) -> dict:
     """Micro-raffinement natif — équivalent ``kct optimize-placement --strategy
     cmaes --seed-method current`` (CMAwM, patch Layrix ``seed="current"`` :
@@ -120,12 +154,15 @@ def _refine_with_cmaes(pcb_path: Path, anchored: list[str], time_budget_s: float
     millimètre pour aligner les broches et résorber les chevauchements —
     plutôt que de relancer un placement depuis zéro.
 
+    ``max_iterations`` est plafonné à ``_CMAES_MAX_ITERATIONS`` — voir sa
+    docstring pour le détail chiffré du benchmark qui justifie ce plafond.
+
     Le CLI natif n'a pas de notion de position verrouillée (seul
-    ``time_budget`` borne le temps de calcul) : il traite tous les footprints,
-    y compris les connecteurs, comme mobiles. On laisse le CMA-ES voir le
-    board complet (les connecteurs comptent comme obstacles dans l'évaluation
-    overlap/wirelength) puis on restaure la position pré-CMA-ES des refs
-    ``anchored`` avant d'écraser le fichier — l'ancrage mécanique des
+    ``time_budget``/``max_iterations`` borne le calcul) : il traite tous les
+    footprints, y compris les connecteurs, comme mobiles. On laisse le CMA-ES
+    voir le board complet (les connecteurs comptent comme obstacles dans
+    l'évaluation overlap/wirelength) puis on restaure la position pré-CMA-ES
+    des refs ``anchored`` avant d'écraser le fichier — l'ancrage mécanique des
     connecteurs (J*/P*) reste garanti.
 
     Retourne ``{"refined": bool, "elapsed_s": float}``.
@@ -142,6 +179,7 @@ def _refine_with_cmaes(pcb_path: Path, anchored: list[str], time_budget_s: float
         strategy_name="cmaes",
         seed_method="current",
         output_path=str(cmaes_out),
+        max_iterations=_CMAES_MAX_ITERATIONS,
         time_budget=time_budget_s,
         quiet=True,
         allow_infeasible=True,
@@ -216,6 +254,41 @@ _WF_POPULATION: int = 50
 # prend déjà ~100s sur le board STM32 réel).
 _CMAES_TIME_BUDGET_S: float = 20.0
 
+# Plafond d'itérations du Géomètre — SEULE source de vérité pour ces chiffres
+# (ne pas dupliquer ailleurs, juste y faire référence). Le défaut de la lib
+# (1000) laisse le CMA-ES dériver loin du seed "current" malgré une moyenne
+# initiale correcte : avec seed_method="current", la moyenne initiale EST la
+# position Architecte (vérifié dans kicad_tools/placement/cmaes_strategy.py),
+# mais le budget de 20s laisse largement le temps à 1000 itérations de
+# s'éloigner de ce point de départ. Benchmark réel (board STM32, 17
+# composants, 2026-06-19, repartant du même run GA Architecte) :
+#   max_iterations=1000 -> déplacement moyen 7.5mm, max 15mm (jusqu'à 68mm
+#     sur un autre run, comparaison run-à-run)
+#   max_iterations=30   -> déplacement moyen 2.1-3.1mm, max 4.0-11.8mm,
+#     stable sur 5 essais déterministes (board fixture test : ~9mm à 1000
+#     itérations contre ~5mm à 30)
+# Garde le Géomètre fidèle à sa description : un micro-raffinement, pas un
+# quasi-re-placement. Plafonné à 30 indépendamment de _CMAES_TIME_BUDGET_S
+# (20s) : sur un board plus gros/lent, le budget temps peut interrompre avant
+# 30 itérations (encore moins de raffinement, pas un problème) ; sur un board
+# petit/rapide, 30 itérations se terminent bien avant 20s (budget inutilisé,
+# comportement voulu — le plafond d'itérations est le frein actif, pas le
+# temps). Si ce plafond est augmenté, re-mesurer le déplacement avant de
+# merger (voir test_refine_with_cmaes_keeps_displacement_small).
+_CMAES_MAX_ITERATIONS: int = 30
+
+# Filet de sécurité défense-en-profondeur (Option B) — REVERT si le Géomètre
+# déplace un composant non-ancré de plus de ce seuil, MÊME si l'Inspecteur
+# ramène 0 ERROR. Complète le revert existant basé sur le compte d'ERROR
+# (n_err_after > 0) : ce dernier ne détecte que les chevauchements/court-
+# circuits, pas une dérive silencieuse "0 ERROR mais board dégradé" — le bug
+# trouvé le 2026-06-19 (max_iterations non plafonné) produisait exactement ce
+# symptôme (0 ERROR/0 WARNING, mais des déplacements de 15-68mm). Avec le
+# plafond _CMAES_MAX_ITERATIONS=30 ce filet ne devrait jamais se déclencher en
+# fonctionnement normal (benchmark : max 4.0-11.8mm) — il protège contre une
+# régression future de ce plafond ou un comportement inattendu de la lib.
+_CMAES_MAX_DISPLACEMENT_MM: float = 20.0
+
 
 def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float) -> dict:
     """Auto-placement via la commande native kicad-tools (agent placement ⑤).
@@ -284,6 +357,7 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         # mais garanti propre que livrer un court-circuit potentiel.
         _resolve_remaining_conflicts(out, conn)
         pre_cmaes_bytes = out.read_bytes()
+        pre_cmaes_positions = {fp.reference: fp.position for fp in PCB.load(str(out)).footprints}
 
         # ── Géomètre : kct optimize-placement --strategy cmaes --seed-method current ──
         # Raffine la position issue du GA (décalages sub-mm, rotations fines,
@@ -306,11 +380,26 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                     n_err_after, n_err_before,
                 )
                 out.write_bytes(pre_cmaes_bytes)
-            elif n_err_before:
-                logger.info(
-                    "auto_place: kct placement fix natif (post-CMA-ES) — %d erreur(s) -> %d après réparation",
-                    n_err_before, n_err_after,
-                )
+            else:
+                # Filet de sécurité Option B (défense en profondeur, voir
+                # _CMAES_MAX_DISPLACEMENT_MM) : 0 ERROR ne garantit pas une
+                # bonne qualité de placement — une dérive silencieuse du
+                # Géomètre (ex. max_iterations non plafonné, bug 2026-06-19)
+                # passerait ce contrôle ERROR alors que le board livré est
+                # dégradé. On vérifie donc aussi le déplacement max.
+                max_disp = _max_displacement_mm(pre_cmaes_positions, out, exclude=conn)
+                if max_disp > _CMAES_MAX_DISPLACEMENT_MM:
+                    logger.warning(
+                        "auto_place: déplacement CMA-ES %.1fmm > seuil %.1fmm "
+                        "(0 ERROR mais dérive excessive) — board pré-CMA-ES restauré",
+                        max_disp, _CMAES_MAX_DISPLACEMENT_MM,
+                    )
+                    out.write_bytes(pre_cmaes_bytes)
+                elif n_err_before:
+                    logger.info(
+                        "auto_place: kct placement fix natif (post-CMA-ES) — %d erreur(s) -> %d après réparation",
+                        n_err_before, n_err_after,
+                    )
 
         footprints = PCB.load(str(out)).footprints
         return {

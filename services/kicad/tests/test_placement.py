@@ -30,6 +30,7 @@ from tools.placement import (
     _clamp_fixed_refs_to_outline,
     _resolve_remaining_conflicts,
     _refine_with_cmaes,
+    _max_displacement_mm,
 )
 
 _BOARD_W_MM, _BOARD_H_MM = 60.0, 40.0
@@ -328,6 +329,69 @@ def test_refine_with_cmaes_separates_overlap_and_preserves_anchored(tmp_path):
     assert moved, f"aucune résistance affinée par le CMA-ES — positions={pos}"
 
 
+def test_refine_with_cmaes_passes_bounded_max_iterations_kwarg(tmp_path, monkeypatch):
+    """Vérifie le câblage de l'appel : ``max_iterations`` est passé
+    explicitement à ``run_optimize_placement`` (test de wiring — ne fait
+    pas tourner le vrai CMA-ES, voir le test comportemental suivant pour la
+    mesure de déplacement réelle, seule garante d'une régression du réglage).
+    """
+    pcb_bytes = _board_with_connector_and_movable(tmp_path)
+    board_path = tmp_path / "board.kicad_pcb"
+    board_path.write_bytes(pcb_bytes)
+
+    captured: dict = {}
+
+    def fake_run_optimize_placement(*args, **kwargs):
+        captured.update(kwargs)
+        return 1  # échec forcé — on n'a besoin que des kwargs passés
+
+    monkeypatch.setattr(
+        "kicad_tools.cli.optimize_placement_cmd.run_optimize_placement",
+        fake_run_optimize_placement,
+    )
+
+    _refine_with_cmaes(board_path, anchored=["J1"], time_budget_s=5.0)
+
+    assert "max_iterations" in captured, "max_iterations doit être passé explicitement"
+    assert captured["max_iterations"] <= 30, (
+        f"max_iterations={captured['max_iterations']} trop élevé pour un micro-raffinement"
+    )
+
+
+def test_refine_with_cmaes_keeps_displacement_small(tmp_path):
+    """Test comportemental (vrai CMA-ES, pas de mock) : sur le board fixture,
+    le déplacement des résistances mobiles reste petit avec le plafond actuel.
+
+    Garde de régression pour le bug du 2026-06-19 : sans plafond explicite de
+    ``max_iterations`` (défaut lib = 1000), ``seed_method="current"`` seede
+    bien la moyenne initiale sur la position Architecte (vérifié dans
+    kicad_tools/placement/cmaes_strategy.py) mais l'optimiseur a largement le
+    temps, dans le budget de 20s, de dériver loin de ce seed — sur ce board
+    fixture, max_iterations=1000 déplace les résistances de ~8-9mm contre
+    ~3-5mm avec le plafond de 30 (board STM32 réel : 7.5mm moyen/68mm max
+    contre 2.1mm moyen/4.0mm). Si ce test casse après une hausse de
+    ``_CMAES_MAX_ITERATIONS``, re-mesurer le déplacement avant d'augmenter
+    le seuil ci-dessous.
+    """
+    pcb_bytes = _board_with_connector_and_movable(tmp_path)
+    board_path = tmp_path / "board.kicad_pcb"
+    board_path.write_bytes(pcb_bytes)
+
+    before = {fp.reference: fp.position for fp in PCB.load(str(board_path)).footprints}
+
+    _refine_with_cmaes(board_path, anchored=["J1"], time_budget_s=20.0)
+
+    after = {fp.reference: fp.position for fp in PCB.load(str(board_path)).footprints}
+    displacements = [
+        ((before[r][0] - after[r][0]) ** 2 + (before[r][1] - after[r][1]) ** 2) ** 0.5
+        for r in ("R1", "R2", "R3")
+    ]
+    assert max(displacements) < 6.0, (
+        f"déplacement trop important pour un micro-raffinement : {displacements} "
+        "(la version sans plafond max_iterations atteint ~9mm sur ce board)"
+    )
+
+
 def test_auto_place_keeps_connector_anchored_with_cmaes_step(tmp_path):
     """Régression : avec le micro-raffinement CMA-ES chaîné dans auto_place,
     un connecteur déjà bien placé (ancrage mécanique) ne doit toujours pas bouger.
@@ -383,6 +447,86 @@ def test_auto_place_reverts_cmaes_if_unresolved_conflicts_remain(tmp_path, monke
 
     r1 = next(p for p in result["positions"] if p["ref"] == "R1")
     assert (r1["x"], r1["y"]) != (1.0, 1.0), "board CMA-ES non-résolu livré malgré conflits ERROR restants"
+
+
+def test_auto_place_reverts_cmaes_if_displacement_exceeds_threshold(tmp_path, monkeypatch):
+    """Filet de sécurité Option B (défense en profondeur, 2026-06-19) — un
+    Géomètre qui rapporte 0 ERROR mais déplace un composant non-ancré de
+    plus de ``_CMAES_MAX_DISPLACEMENT_MM`` doit aussi déclencher le revert.
+
+    Le revert existant (test ci-dessus) ne se déclenche que sur un compte
+    d'ERROR > 0. Le bug du 2026-06-19 (max_iterations CMA-ES non plafonné)
+    produisait un board 0 ERROR / 0 WARNING mais avec des déplacements de
+    15-68mm — un revert basé uniquement sur le compte d'ERROR ne l'aurait
+    jamais détecté. Ce test simule ce symptôme précis : `_resolve_remaining_
+    conflicts` retourne toujours ``(0, 0)`` (aucune ERROR, jamais), mais
+    `_refine_with_cmaes` déplace R1 de 30mm — au-delà du seuil.
+    """
+    pcb_bytes = _board_with_movable_components(tmp_path)
+    b64 = base64.b64encode(pcb_bytes).decode()
+
+    captured: dict = {}
+
+    def fake_refine(pcb_path, anchored, time_budget_s=20.0):
+        pcb = PCB.load(str(pcb_path))
+        for fp in pcb.footprints:
+            if fp.reference == "R1":
+                x, y = fp.position
+                captured["pre_x"] = x  # position pré-CMA-ES, telle que snapshotée par auto_place
+                fp.position = (x + 30.0, y)
+        pcb.save(str(pcb_path))
+        return {"refined": True, "elapsed_s": 0.1}
+
+    def fake_resolve(pcb_path, anchored):
+        return (0, 0)  # jamais d'ERROR — simule le symptôme "0 ERROR mais dérive excessive"
+
+    monkeypatch.setattr(placement_module, "_refine_with_cmaes", fake_refine)
+    monkeypatch.setattr(placement_module, "_resolve_remaining_conflicts", fake_resolve)
+
+    result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
+
+    r1 = next(p for p in result["positions"] if p["ref"] == "R1")
+    assert r1["x"] == pytest.approx(captured["pre_x"], abs=0.01), (
+        "le board livré inclut le déplacement de 30mm du CMA-ES malgré 0 ERROR — "
+        "le filet de sécurité Option B (déplacement) ne s'est pas déclenché"
+    )
+
+
+def test_max_displacement_mm_treats_unmatched_ref_as_infinite(tmp_path):
+    """Filet de sécurité — une référence présente sur le board mais absente du
+    snapshot ``before_positions`` (renommage/ajout inattendu côté CLI natif)
+    ne doit JAMAIS être ignorée silencieusement : un filet de sécurité dont le
+    seul rôle est de détecter une dérive ne peut pas se permettre de sauter
+    un footprint qu'il ne sait pas comparer. Doit renvoyer un déplacement
+    infini (donc toujours > _CMAES_MAX_DISPLACEMENT_MM) plutôt que de
+    l'exclure du calcul du max.
+    """
+    pcb_bytes = _board_with_movable_components(tmp_path)
+    pcb_path = tmp_path / "board.kicad_pcb"
+    pcb_path.write_bytes(pcb_bytes)
+
+    # before_positions ne connaît qu'une partie des refs du board — simule
+    # un ref renommé/ajouté par le CLI natif entre les deux snapshots.
+    before_positions = {"R1": (0.0, 0.0)}
+
+    max_disp = _max_displacement_mm(before_positions, pcb_path, exclude=[])
+
+    assert max_disp == float("inf")
+
+
+def test_max_displacement_mm_empty_before_positions_with_tracked_refs_is_unsafe(tmp_path):
+    """Un snapshot ``before_positions`` vide alors que le board a des
+    footprints non-exclus doit être traité comme non-vérifiable (infini),
+    pas comme "aucune dérive" — sinon un snapshot dégénéré ferait passer le
+    filet de sécurité silencieusement.
+    """
+    pcb_bytes = _board_with_movable_components(tmp_path)
+    pcb_path = tmp_path / "board.kicad_pcb"
+    pcb_path.write_bytes(pcb_bytes)
+
+    max_disp = _max_displacement_mm({}, pcb_path, exclude=[])
+
+    assert max_disp == float("inf")
 
 
 def test_auto_place_survives_cmaes_exception(tmp_path, monkeypatch):

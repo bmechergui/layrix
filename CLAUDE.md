@@ -270,13 +270,35 @@ gen_pcb fournit une grille de départ ; `tools/placement.py::auto_place()` encha
      + clampés Edge.Cuts. Stochastique (pas de seed fixe) → l'Inspecteur tourne une
      première fois ici pour garantir 0 ERROR avant de tenter le Géomètre.
   ② **Géomètre** (`_refine_with_cmaes`, kct optimize-placement --strategy cmaes
-     --seed-method current) — micro-raffine la position ① (décalages sub-mm,
-     rotations fines) ; connecteurs restaurés après coup (le CLI natif n'a pas de
-     verrouillage par position). **Filet de sécurité obligatoire** : le CLI peut
-     introduire PLUS de conflits que l'Inspecteur n'en répare (benchmark board STM32
-     réel 17 composants, 2026-06-18 : 17 conflits → 3 ERROR résiduels après 10 passes
-     de fix) → si l'Inspecteur ne ramène pas 0 ERROR après le CMA-ES, le board
-     pré-CMA-ES (① + fix, déjà garanti propre) est restauré tel quel.
+     --seed-method current --max-iterations 30) — micro-raffine la position ①
+     (déplacement moyen 2-3mm, max <12mm sur le board STM32 réel) ; connecteurs
+     restaurés après coup (le CLI natif n'a pas de verrouillage par position).
+     **Bug trouvé + corrigé (2026-06-19)** : `seed_method="current"` seede bien
+     la moyenne initiale du CMA-ES sur la position ① (vérifié dans
+     `kicad_tools/placement/cmaes_strategy.py`), mais l'appel ne plafonnait pas
+     `max_iterations` (défaut lib = 1000) → dans le budget de 20s, l'optimiseur
+     avait largement le temps de dériver loin du seed malgré le bon point de
+     départ (déplacements de 7-16mm en moyenne, jusqu'à 68mm max observés —
+     PAS un "micro-raffinement sub-mm" comme documenté avant ce fix). Plafond
+     `_CMAES_MAX_ITERATIONS=30` ajouté, validé déterministe sur 5 essais
+     (2.1mm moyen / 4.0mm max). Garde de régression : `test_refine_with_cmaes_
+     keeps_displacement_small`. **Filet de sécurité obligatoire** (conservé en
+     défense en profondeur) : le CLI peut introduire PLUS de conflits que
+     l'Inspecteur n'en répare (benchmark board STM32 réel 17 composants,
+     2026-06-18 : 17 conflits → 3 ERROR résiduels après 10 passes de fix) → si
+     l'Inspecteur ne ramène pas 0 ERROR après le CMA-ES, le board pré-CMA-ES
+     (① + fix, déjà garanti propre) est restauré tel quel. **Filet de sécurité
+     additionnel — Option B (2026-06-19)** : un compte d'ERROR à 0 ne suffit pas
+     à détecter une dérive silencieuse (c'était exactement le symptôme du bug
+     `max_iterations` ci-dessus : 0 ERROR/0 WARNING mais déplacements de 15-68mm).
+     `_max_displacement_mm()` compare la position de chaque footprint non-ancré
+     avant/après le Géomètre ; si le déplacement max dépasse
+     `_CMAES_MAX_DISPLACEMENT_MM=20.0`, le board pré-CMA-ES est restauré MÊME SI
+     l'Inspecteur rapporte 0 ERROR. Défense en profondeur orthogonale au check
+     ERROR existant — ne devrait jamais se déclencher en fonctionnement normal
+     (benchmark max 4.0-11.8mm) ; protège contre une régression future du plafond
+     d'itérations ou un comportement inattendu de la lib. Garde de régression :
+     `test_auto_place_reverts_cmaes_if_displacement_exceeds_threshold`.
   ③ **Inspecteur** (`_resolve_remaining_conflicts`, kct placement fix natif chaîné) —
      `PlacementFixer.iterative_fix` (réparation locale ~0.05-0.1s, pas de ré-exécution
      GA), appelé après ① (garantie de base) et après ② si le Géomètre a été appliqué.
