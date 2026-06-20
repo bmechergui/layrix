@@ -1,40 +1,41 @@
 #!/usr/bin/env python3
-"""Route + finit le board STM32 à partir du PLACEMENT FINAL
+"""Route + FINIT (qualité layout) le board STM32 depuis le PLACEMENT FINAL
 (output/phase3/3_final.kicad_pcb) — pour inspection visuelle dans KiCad.
 
-Chaîne 100% native kicad-tools, escalade de couches NATIVE (pas de boucle custom) :
+Chaîne 100% native kicad-tools, trois étapes de qualité de routage :
 
-  ① kct route --auto-layers --max-layers 6 --auto-fix
-       escalade native 2L → 4L → 4L-all-sig → 6L jusqu'à ce que le board route
-       (le STM32 QFP-48 0.5mm ne s'échappe pas en 2 couches → passe en 4 tout seul)
-  ② kct pipeline --layers <N résolu> --best-effort
-       finition au nombre de couches trouvé par ① : fix-silkscreen, fix-vias,
-       stitch des plans, optimize-traces, fix-drc, audit, export
+  ① kct route            — route les signaux (escalade native de couches si le
+                           backend C++ est dispo, sinon 2 couches en local)
+  ② kct optimize-traces  — remplace les coins 90° par des chamfers 45°
+                           (--chamfer-size 0.5) : JAMAIS d'angle droit
+  ③ kct zones fill       — REMPLIT le plan de masse GND (cuivre rouge F.Cu +
+                           bleu B.Cu) au lieu du chevelu ; nécessite kicad-cli
 
-Pourquoi pas le pipeline seul : `kct pipeline --layers auto` fige le board à
-2 couches (pipeline_cmd.py: layer_count("auto")==2) → ne peut pas router ce
-STM32. Seul `kct route --auto-layers` escalade nativement (route_cmd.py: tries
-2L,4L,4L-all-sig,6L). On enchaîne donc route(escalade) → pipeline(finition).
+Sorties (dans output/routage/) :
+  4_routed.kicad_pcb   <- board final propre (45° + plan GND rempli)
+  4_routed.png         <- rendu top (kicad-cli) pour vérif visuelle rapide
+  report.txt           <- métriques qualité (90° vs 45°, plan rempli, couches)
 
-Sorties :
-  output/routage/4_routed.kicad_pcb   <- board routé par ① (au N de couches résolu)
-  output/routage/5_pipeline.kicad_pcb <- board après finition pipeline ②
-  output/routage/manufacturing/vN/    <- audit fab (report.md + JSON)
-  output/routage/report.txt           <- couches résolues, signal %, DRC, verdict
-
-⚠️ Local : routeur Python pur (kct build-native non compilé) → l'escalade 4L
-peut être lente ; `zones fill`/`export` Gerber sautés sans kicad-cli. Docker
-prod : backend C++ + kicad-cli → complet et rapide.
+Détails d'implémentation Windows :
+  • kicad-cli n'est pas dans le PATH → détecté dans C:\\Program Files\\KiCad\\*\\bin
+    et injecté dans le PATH des sous-process (sinon zones fill + render échouent
+    silencieusement → plan GND vide, c'était la cause du « mauvais routage »).
+  • toutes les commandes kct tournent dans un TEMPDIR puis le board final est
+    COPIÉ dans output/routage : `kct route -o` écrit directement dans le dossier
+    projet échoue sur Windows (writer fsync / watcher .history) et le fichier
+    disparaît. Le tempdir contourne ça ; shutil.copy persiste bien.
 
 Usage : python run_routing_visual.py
 """
 from __future__ import annotations
 
-import json
+import math
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[2]  # services/kicad
@@ -44,54 +45,97 @@ sys.path.insert(0, str(_KCT_SRC))
 
 from tools.kct_route import parse_routed_pct  # noqa: E402
 
-_ROUTE_TIMEOUT_S = 300
-_ROUTE_FLAGS = ["--auto-layers", "--max-layers", "6", "--auto-fix", "--seed", "42"]
+
+def _find_kicad_cli() -> Path | None:
+    """kicad-cli.exe le plus récent sous C:\\Program Files\\KiCad\\*\\bin."""
+    bins = sorted(Path(r"C:\Program Files\KiCad").glob("*/bin/kicad-cli.exe"))
+    return bins[-1].parent if bins else None
 
 
-def _run(cmd: list[str], timeout_s: int) -> subprocess.CompletedProcess[str]:
-    """Lance une commande kct enfant avec UTF-8 forcé (évite le crash charmap
-    Windows sur les logs emoji — cf. tools/kct_route.py)."""
+_KICAD_BIN = _find_kicad_cli()
+
+
+def _run(args: list[str], timeout_s: int) -> subprocess.CompletedProcess[str]:
+    """Lance une commande kct/kicad-cli avec UTF-8 forcé + kicad-cli dans le PATH.
+
+    PYTHONUTF8=1 évite le crash charmap (logs emoji) sur console cp1252 ; le
+    PATH enrichi rend kicad-cli visible à `kct zones fill` et au rendu.
+    """
     env = {
         **os.environ,
         "PYTHONUTF8": "1",
         "PYTHONIOENCODING": "utf-8",
         "PYTHONPATH": str(_KCT_SRC),
     }
+    if _KICAD_BIN:
+        env["PATH"] = str(_KICAD_BIN) + os.pathsep + env.get("PATH", "")
     try:
         return subprocess.run(
-            cmd, capture_output=True, text=True, encoding="utf-8",
+            args, capture_output=True, text=True, encoding="utf-8",
             errors="replace", env=env, check=False, timeout=timeout_s,
         )
     except subprocess.TimeoutExpired as e:
-        # Dégrade proprement au lieu de crasher : sans backend C++ (kct
-        # build-native) l'escalade 4L en Python pur peut dépasser le budget.
-        # On garde la sortie partielle éventuelle du routeur.
         out = e.stdout.decode("utf-8", "replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
-        print(f"  [timeout] commande tuée après {timeout_s}s (routeur Python pur trop lent).")
-        return subprocess.CompletedProcess(cmd, returncode=-1, stdout=out, stderr="TIMEOUT")
+        print(f"  [timeout] commande tuée après {timeout_s}s (routeur Python pur lent).")
+        return subprocess.CompletedProcess(args, returncode=-1, stdout=out, stderr="TIMEOUT")
 
 
-def _copper_layer_count(pcb_path: Path) -> int:
-    """Compte les couches cuivre déclarées (F.Cu, B.Cu, In*.Cu)."""
-    t = pcb_path.read_text(encoding="utf-8", errors="replace")
+def _native_backend_available() -> bool:
+    r = _run([sys.executable, "-m", "kicad_tools.cli", "build-native", "--check"], timeout_s=30)
+    return "available" in r.stdout.lower()
+
+
+def _copper_layers(pcb: Path) -> int:
+    t = pcb.read_text(encoding="utf-8", errors="replace")
     block = re.search(r"\(layers\b(.*?)\n\s*\)", t, re.DOTALL)
     scope = block.group(1) if block else t
     return len(re.findall(r'"(?:F|B|In\d+)\.Cu"', scope)) or 2
 
 
-def _latest_manufacturing_data(out: Path) -> Path | None:
-    versions = sorted(
-        (out / "manufacturing").glob("v*/data"),
-        key=lambda p: int(p.parent.name[1:]) if p.parent.name[1:].isdigit() else -1,
-    )
-    return versions[-1] if versions else None
+def _angle_stats(pcb: Path) -> dict[str, int]:
+    """Classe les VRAIS COINS de piste (2 segments d'un même net/layer qui se
+    rejoignent) par angle de virage : 90° (angle droit, à éviter), 45° (chamfer,
+    bon), ~180° (droit continu). Un segment droit H/V seul n'est PAS un coin —
+    seul le virage compte (la règle « jamais de 90° » porte sur les virages)."""
+    t = pcb.read_text(encoding="utf-8", errors="replace")
+    from collections import defaultdict
 
+    # Parse chaque bloc (segment ...) indépendamment du format/ordre des tokens :
+    # kicad-cli (KiCad 9/10) pretty-print sur plusieurs lignes et insère un
+    # (uuid ...) entre (layer) et (net) — d'où extraction champ par champ.
+    pts: dict[tuple, list[tuple[float, float]]] = defaultdict(list)
+    for blk in re.findall(r"\(segment\b.*?\n\s*\)", t, re.DOTALL):
+        m_s = re.search(r"\(start ([\d.eE+-]+) ([\d.eE+-]+)\)", blk)
+        m_e = re.search(r"\(end ([\d.eE+-]+) ([\d.eE+-]+)\)", blk)
+        m_l = re.search(r'\(layer "([^"]+)"\)', blk)
+        m_n = re.search(r"\(net (\d+)\)", blk)
+        if not (m_s and m_e and m_l and m_n):
+            continue
+        x1, y1 = float(m_s.group(1)), float(m_s.group(2))
+        x2, y2 = float(m_e.group(1)), float(m_e.group(2))
+        net, layer = m_n.group(1), m_l.group(1)
+        pts[(net, layer, round(x1, 3), round(y1, 3))].append((x2 - x1, y2 - y1))
+        pts[(net, layer, round(x2, 3), round(y2, 3))].append((x1 - x2, y1 - y2))
 
-def _load_json(path: Path) -> dict:
-    try:
-        return json.loads(path.read_text(encoding="utf-8")).get("data", {})
-    except (OSError, ValueError):
-        return {}
+    corner_90 = corner_45 = 0
+    for dirs in pts.values():
+        if len(dirs) != 2:
+            continue
+        (ax, ay), (bx, by) = dirs
+        a, b = math.degrees(math.atan2(ay, ax)), math.degrees(math.atan2(by, bx))
+        turn = abs((b - (a + 180)) % 360)
+        turn = min(turn, 360 - turn)
+        if abs(turn - 90) < 10:
+            corner_90 += 1
+        elif abs(turn - 45) < 10 or abs(turn - 135) < 10:
+            corner_45 += 1
+    return {
+        "segments": len(re.findall(r"\(segment", t)),
+        "vias": len(re.findall(r"\(via", t)),
+        "corner_90": corner_90,
+        "corner_45": corner_45,
+        "filled_polygon": len(re.findall(r"\(filled_polygon", t)),
+    }
 
 
 def main() -> int:
@@ -105,87 +149,108 @@ def main() -> int:
     out = example_dir / "output" / "routage"
     out.mkdir(parents=True, exist_ok=True)
 
-    # ── ① ROUTE avec escalade native de couches ────────────────────────────
-    print("=" * 60)
-    print("① kct route --auto-layers --max-layers 6 (escalade native 2→4→6)")
-    print("=" * 60)
-    src = out / "_route_src.kicad_pcb"
-    src.write_bytes(placed.read_bytes())
-    routed = out / "4_routed.kicad_pcb"
-    for old in out.glob("4_routed*.kicad_pcb"):
-        old.unlink()
+    print("=" * 64)
+    print("ROUTAGE QUALITÉ — kct route → optimize-traces (45°) → zones fill (GND)")
+    print("=" * 64)
+    print(f"kicad-cli : {_KICAD_BIN or 'ABSENT (zones fill + rendu indisponibles)'}")
+    native = _native_backend_available()
+    print(f"backend C++ : {'dispo' if native else 'absent (2 couches en local)'}\n")
 
-    cmd_route = [
-        sys.executable, "-m", "kicad_tools.cli", "route",
-        str(src), "-o", str(routed),
-        *_ROUTE_FLAGS, "--timeout", str(_ROUTE_TIMEOUT_S),
-    ]
-    r = _run(cmd_route, timeout_s=_ROUTE_TIMEOUT_S + 120)
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "in.kicad_pcb"
+        board = Path(tmp) / "routed.kicad_pcb"
+        src.write_bytes(placed.read_bytes())
 
-    # L'escalade renomme parfois la sortie (..._4layer.kicad_pcb) → on prend le
-    # plus récent des candidats.
-    candidates = sorted(out.glob("4_routed*.kicad_pcb"), key=lambda p: p.stat().st_mtime)
-    if not candidates:
-        print("Échec : ① route n'a produit aucun board.")
-        print((r.stderr or r.stdout)[-400:])
-        src.unlink(missing_ok=True)
-        return 1
-    routed_file = candidates[-1]
-    n_layers = _copper_layer_count(routed_file)
-    routed_pct = parse_routed_pct(r.stdout)
-    src.unlink(missing_ok=True)
-    print(f"  -> {routed_file.name} : {routed_pct}% · {n_layers} couches cuivre")
+        # ── ① ROUTE ──────────────────────────────────────────────────────
+        if native:
+            route_flags = ["--auto-layers", "--max-layers", "6"]
+            route_timeout = 300
+        else:
+            route_flags = ["--layers", "2"]  # local : 2 couches, rapide et viewable
+            route_timeout = 150
+        print(f"① kct route {' '.join(route_flags)} --auto-fix")
+        r = _run(
+            [sys.executable, "-m", "kicad_tools.cli", "route", str(src),
+             "-o", str(board), *route_flags, "--auto-fix", "--seed", "42",
+             "--timeout", str(route_timeout)],
+            timeout_s=route_timeout + 90,
+        )
+        routed_pct = parse_routed_pct(r.stdout)
+        if not board.exists():
+            partial = board.with_name("routed_partial.kicad_pcb")
+            if partial.exists():
+                shutil.copy(str(partial), str(board))
+            else:
+                print("Échec : route n'a produit aucun board.")
+                print((r.stderr or r.stdout)[-300:])
+                return 1
+        print(f"   -> {routed_pct}% · {_angle_stats(board)['segments']} segments\n")
 
-    # ── ② PIPELINE de finition au nombre de couches résolu ──────────────────
-    layers_arg = "auto" if n_layers <= 2 else ("6" if n_layers >= 6 else "4")
-    print("\n" + "=" * 60)
-    print(f"② kct pipeline --layers {layers_arg} --best-effort (finition)")
-    print("=" * 60)
-    board = out / "5_pipeline.kicad_pcb"
-    board.write_bytes(routed_file.read_bytes())
-    cmd_pipe = [
-        sys.executable, "-m", "kicad_tools.cli", "pipeline",
-        str(board), "--layers", layers_arg, "--best-effort",
-    ]
-    _run(cmd_pipe, timeout_s=_ROUTE_TIMEOUT_S + 120)
-    if not board.exists():
-        print("  [retry] board disparu en pipeline (fsync Windows) — relance.")
-        board.write_bytes(routed_file.read_bytes())
-        _run(cmd_pipe, timeout_s=_ROUTE_TIMEOUT_S + 120)
+        # ── ② OPTIMIZE-TRACES (45°) ──────────────────────────────────────
+        print("② kct optimize-traces --chamfer-size 0.5 (coins 90° → 45°)")
+        _run([sys.executable, "-m", "kicad_tools.cli", "optimize-traces",
+              str(board), "--chamfer-size", "0.5"], timeout_s=120)
+        s = _angle_stats(board)
+        print(f"   -> coins 45°={s['corner_45']} · coins 90°={s['corner_90']}\n")
 
-    # ── Rapport ─────────────────────────────────────────────────────────────
-    data_dir = _latest_manufacturing_data(out)
-    net_status = _load_json(data_dir / "net_status.json") if data_dir else {}
-    drc = _load_json(data_dir / "drc_summary.json") if data_dir else {}
-    audit = _load_json(data_dir / "audit.json") if data_dir else {}
+        # ── ③ ZONES FILL (plan GND) ──────────────────────────────────────
+        if _KICAD_BIN:
+            print("③ kct zones fill (remplit le plan de masse GND)")
+            _run([sys.executable, "-m", "kicad_tools.cli", "zones", "fill",
+                  str(board)], timeout_s=120)
+            print(f"   -> {_angle_stats(board)['filled_polygon']} polygones remplis\n")
+        else:
+            print("③ zones fill SAUTÉ (kicad-cli absent)\n")
 
+        # ── Copie du board propre + rendu PNG ────────────────────────────
+        final = out / "4_routed.kicad_pcb"
+        # nettoie les sorties confuses d'anciens runs
+        for stale in ("5_pipeline.kicad_pcb", "5_pipeline_partial.kicad_pcb",
+                      "4_routed_partial.kicad_pcb"):
+            try:
+                (out / stale).unlink(missing_ok=True)
+            except OSError:
+                pass  # fichier ouvert dans KiCad → on laisse
+
+        shutil.copy(str(board), str(final))
+        if not final.exists():
+            print(f"Échec : copie du board vers {final} a disparu.")
+            return 1
+
+        png = out / "4_routed.png"
+        if _KICAD_BIN:
+            rp = _run([str(_KICAD_BIN / "kicad-cli.exe"), "pcb", "render",
+                       "--side", "top", "-o", str(png), str(final)], timeout_s=120)
+            if rp.returncode != 0:
+                print(f"   (rendu PNG échoué : {(rp.stderr or '').strip()[-160:]})")
+
+    stats = _angle_stats(final)
+    n_layers = _copper_layers(final)
     report = [
-        "ROUTAGE STM32 — kct route --auto-layers (escalade native) + kct pipeline",
-        "=" * 60,
+        "ROUTAGE STM32 — qualité (route → optimize-traces 45° → zones fill GND)",
+        "=" * 64,
         f"Input            : {placed.name} (placement final auto_place)",
-        f"① Routé          : {routed_file.name} — {routed_pct}% · {n_layers} couches",
-        f"② Finition       : {board.name} (pipeline --layers {layers_arg})",
+        f"Output           : {final.name}  (+ {png.name})",
+        f"kicad-cli        : {_KICAD_BIN or 'ABSENT'}",
+        f"Backend C++      : {'dispo' if native else 'absent (2 couches local)'}",
         "",
-        f"Signaux routés   : {net_status.get('signal_completion_percent', '?')}% "
-        f"({net_status.get('signal_complete_count', '?')}/{net_status.get('signal_net_count', '?')} nets)",
-        f"Connectivité     : {net_status.get('completion_percent', '?')}% "
-        f"({net_status.get('complete_count', '?')}/{net_status.get('total_nets', '?')} nets)",
-        f"DRC              : {drc.get('error_count', '?')} erreurs / "
-        f"{drc.get('warning_count', '?')} warnings (passed={drc.get('passed', '?')})",
-        f"Verdict fab      : {audit.get('verdict', '?')}",
+        f"Couches cuivre   : {n_layers}",
+        f"Routé            : {routed_pct}%",
+        f"Segments         : {stats['segments']}  (vias {stats['vias']})",
+        f"Coins 45° (bon)  : {stats['corner_45']}",
+        f"Coins 90° (à éviter) : {stats['corner_90']}",
+        f"Plan GND rempli  : {stats['filled_polygon']} polygones "
+        f"({'OUI' if stats['filled_polygon'] else 'NON — kicad-cli manquant'})",
     ]
-    incomplete = net_status.get("signal_incomplete_net_names") or net_status.get("incomplete_net_names")
-    if incomplete:
-        report += ["", "Nets signaux incomplets :", "  " + ", ".join(incomplete)]
     (out / "report.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
 
-    print(f"\n  -> {board.name} : {n_layers} couches · "
-          f"{net_status.get('signal_completion_percent', '?')}% signaux · "
-          f"DRC {drc.get('error_count', '?')} erreurs · verdict {audit.get('verdict', '?')}")
-    print("Rapport : " + str(out / "report.txt"))
-    if data_dir:
-        print("Audit   : " + str(data_dir.parent / "report.md"))
-    print("Ouvrir dans KiCad : " + str(out))
+    print("=" * 64)
+    print(f"Board   : {final}")
+    if _KICAD_BIN:
+        print(f"Rendu   : {png}")
+    print(f"Rapport : {out / 'report.txt'}")
+    print(f"Qualité : {stats['corner_45']} coins 45° · {stats['corner_90']} coins 90° · "
+          f"plan GND {'rempli' if stats['filled_polygon'] else 'VIDE'}")
     return 0
 
 
