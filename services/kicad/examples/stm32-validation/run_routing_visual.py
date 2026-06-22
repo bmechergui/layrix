@@ -2,18 +2,14 @@
 """Route + FINIT (qualité layout) le board STM32 depuis le PLACEMENT FINAL
 (output/phase3/3_final.kicad_pcb) — pour inspection visuelle dans KiCad.
 
-Chaîne 100% native kicad-tools, qualité de routage :
+Appelle DIRECTEMENT la fonction de PRODUCTION ``tools.kct_route.route_kct()`` —
+ce test valide le vrai chemin prod (/route/auto Niveaux 1&4 + reasoner), sans
+dupliquer la logique. route_kct fait déjà : +5V/+3.3V en PISTES (renommage
+interne car kct route les classe « power » par nom) + plan GND sur F.Cu ET B.Cu.
 
-  ① kct route            — route TOUS les signaux + VCC en PISTES (+5V/+3.3V
-                           renommés en noms non-power le temps du routage, sinon
-                           kct route les coule en plan et les exclut du routage),
-                           seul GND coulé en plan. Escalade native de couches si
-                           backend C++ dispo, sinon 2 couches en local.
-  ② kct optimize-traces  — coins 90° → chamfers 45° (--chamfer-size 0.5)
-  ③ kct zones add GND    — plan de masse GND sur la face manquante → GND sur
-                           F.Cu ET B.Cu (top + bottom). PAS de plan VCC.
-  ④ kct zones fill       — remplit les plans GND autour de toutes les pistes ;
-                           nécessite kicad-cli
+  ① route_kct()          — routage prod : VCC en pistes + plan GND 2 faces
+  ② kct optimize-traces  — coins 90° → chamfers 45° (extra visuel, hors prod)
+  ③ kct zones fill       — remplit les plans GND (extra visuel ; kicad-cli)
 
 Sorties (dans output/routage/) :
   4_routed.kicad_pcb       <- board final (VCC en pistes, GND top+bottom, 45°)
@@ -47,7 +43,7 @@ _KCT_SRC = _SERVICE_ROOT / "kicad-tools" / "src"
 sys.path.insert(0, str(_SERVICE_ROOT))
 sys.path.insert(0, str(_KCT_SRC))
 
-from tools.kct_route import parse_routed_pct  # noqa: E402
+from tools.kct_route import route_kct  # noqa: E402  (fonction de PRODUCTION)
 
 
 def _find_kicad_cli() -> Path | None:
@@ -97,31 +93,18 @@ def _copper_layers(pcb: Path) -> int:
 
 
 def _zone_layers_for_net(pcb: Path, net: str) -> set[str]:
-    """Couches cuivre portant déjà une zone du net donné (ex. {'B.Cu'})."""
+    """Couches cuivre portant une zone du net donné (ex. {'B.Cu'}). Gère les deux
+    formats : natif KiCad ``(net N) (net_name "X")`` et post-cli ``(net "X")``."""
     t = pcb.read_text(encoding="utf-8", errors="replace")
     layers: set[str] = set()
     for m in re.finditer(r"\(zone\b", t):
-        blk = t[m.start():m.start() + 300]
-        z_net = re.search(r'\(net "([^"]*)"', blk)
-        z_layer = re.search(r'\(layer "([^"]+)"', blk)
+        blk = t[m.start():m.start() + 400]
+        z_net = re.search(r'\(net_name\s+"([^"]*)"', blk) or \
+            re.search(r'\(net\s+(?:\d+\s+)?"([^"]*)"', blk)
+        z_layer = re.search(r'\(layer\s+"([^"]+)"', blk)
         if z_net and z_layer and z_net.group(1) == net:
             layers.add(z_layer.group(1))
     return layers
-
-
-# VCC routé en PISTES (pas en plan) : kct route classe +5V/+3.3V comme nets
-# « power » par leur NOM et les coule en zones (auto_pour) + les exclut du
-# routage. On les renomme en noms non-power AVANT le routage → le routeur les
-# traite en signaux (pistes) ; on renomme en sens inverse APRÈS. Seul GND reste
-# coulé en plan. (Connectivité préservée : les pads référencent le net par
-# NUMÉRO, pas par nom — seul le label change.)
-_VCC_RENAME = {"+5V": "P5V0", "+3.3V": "P3V3"}
-
-
-def _rename_nets(text: str, mapping: dict[str, str]) -> str:
-    for old, new in mapping.items():
-        text = re.sub(rf'\(net (\d+) "{re.escape(old)}"\)', rf'(net \1 "{new}")', text)
-    return text
 
 
 def _segments_for_nets(pcb: Path, nets: tuple[str, ...]) -> dict[str, int]:
@@ -195,87 +178,43 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     print("=" * 64)
-    print("ROUTAGE QUALITÉ — kct route → optimize-traces (45°) → zones fill (GND)")
+    print("ROUTAGE PROD — route_kct() [VCC pistes + GND 2 faces] → 45° → fill")
     print("=" * 64)
     print(f"kicad-cli : {_KICAD_BIN or 'ABSENT (zones fill + rendu indisponibles)'}")
     native = _native_backend_available()
-    print(f"backend C++ : {'dispo' if native else 'absent (2 couches en local)'}\n")
+    print(f"backend C++ : {'dispo' if native else 'absent (Python pur — partiel en local)'}\n")
+
+    # ── ① ROUTE via la fonction de PRODUCTION route_kct() ────────────────
+    # route_kct applique la politique Layrix : +5V/+3.3V en PISTES (renommage
+    # interne) + plan GND garanti sur F.Cu ET B.Cu. Zéro duplication ici — ce
+    # test valide directement le chemin prod (/route/auto Niveaux 1&4 + reasoner).
+    print("① route_kct(vcc_as_traces=True) — fonction PROD")
+    print("   (VCC→pistes, restaure, plan GND F.Cu+B.Cu)")
+    routed_bytes, routed_pct, _analysis = route_kct(
+        placed.read_bytes(), timeout_s=150, vcc_as_traces=True
+    )
 
     with tempfile.TemporaryDirectory() as tmp:
-        src = Path(tmp) / "in.kicad_pcb"
         board = Path(tmp) / "routed.kicad_pcb"
-        # VCC renommés en noms non-power → routés en PISTES (pas en plan).
-        src.write_text(
-            _rename_nets(placed.read_text(encoding="utf-8", errors="replace"), _VCC_RENAME),
-            encoding="utf-8",
-        )
+        board.write_bytes(routed_bytes)
+        print(f"   -> {routed_pct}% · {_angle_stats(board)['segments']} segments · "
+              f"GND {sorted(_zone_layers_for_net(board, 'GND'))}\n")
 
-        # ── ① ROUTE (VCC en pistes, seul GND coulé) ──────────────────────
-        if native:
-            route_flags = ["--auto-layers", "--max-layers", "6"]
-            route_timeout = 300
-        else:
-            route_flags = ["--layers", "2"]  # local : 2 couches, rapide et viewable
-            route_timeout = 150
-        print(f"① kct route {' '.join(route_flags)} --auto-fix (VCC en pistes)")
-        r = _run(
-            [sys.executable, "-m", "kicad_tools.cli", "route", str(src),
-             "-o", str(board), *route_flags, "--auto-fix", "--seed", "42",
-             "--timeout", str(route_timeout)],
-            timeout_s=route_timeout + 90,
-        )
-        routed_pct = parse_routed_pct(r.stdout)
-        if not board.exists():
-            partial = board.with_name("routed_partial.kicad_pcb")
-            if partial.exists():
-                shutil.copy(str(partial), str(board))
-            else:
-                print("Échec : route n'a produit aucun board.")
-                print((r.stderr or r.stdout)[-300:])
-                return 1
-        # Renomme les VCC en sens inverse (P5V0→+5V, P3V3→+3.3V).
-        board.write_text(
-            _rename_nets(board.read_text(encoding="utf-8", errors="replace"),
-                         {v: k for k, v in _VCC_RENAME.items()}),
-            encoding="utf-8",
-        )
-        print(f"   -> {routed_pct}% · {_angle_stats(board)['segments']} segments\n")
-
-        # ── ② OPTIMIZE-TRACES (45°) ──────────────────────────────────────
+        # ── ② OPTIMIZE-TRACES (45°) — extra visuel, pas dans route_kct ───
         print("② kct optimize-traces --chamfer-size 0.5 (coins 90° → 45°)")
         _run([sys.executable, "-m", "kicad_tools.cli", "optimize-traces",
               str(board), "--chamfer-size", "0.5"], timeout_s=120)
         s = _angle_stats(board)
         print(f"   -> coins 45°={s['corner_45']} · coins 90°={s['corner_90']}\n")
 
-        # ── ③ PLAN DE MASSE GND sur F.Cu ET B.Cu ─────────────────────────
-        # `kct route` coule déjà GND sur une face (souvent B.Cu) ; on AJOUTE
-        # le plan GND sur la face manquante → plan de masse top + bottom.
-        # zones add exige -o (ne réécrit pas en place) → fichier temp distinct.
-        have = _zone_layers_for_net(board, "GND")
-        print(f"③ plan GND — déjà sur {sorted(have) or 'aucune face'}")
-        for layer in ("F.Cu", "B.Cu"):
-            if layer in have:
-                continue
-            withz = board.with_name(f"with_gnd_{layer.replace('.', '_')}.kicad_pcb")
-            rz = _run([sys.executable, "-m", "kicad_tools.cli", "zones", "add",
-                       str(board), "--net", "GND", "--layer", layer,
-                       "--priority", "0", "-o", str(withz)], timeout_s=60)
-            if withz.exists():
-                shutil.copy(str(withz), str(board))
-                print(f"   + plan GND ajouté sur {layer}")
-            else:
-                print(f"   ! échec ajout GND {layer}: {(rz.stderr or rz.stdout)[-120:]}")
-        print(f"   -> plan GND sur {sorted(_zone_layers_for_net(board, 'GND'))}\n")
-
-        # ── ④ ZONES FILL (remplit GND top+bottom + power islands) ────────
+        # ── ③ ZONES FILL (remplit les plans GND F.Cu+B.Cu) ───────────────
         if _KICAD_BIN:
-            print("④ kct zones fill (remplit les plans GND + îlots power)")
+            print("③ kct zones fill (remplit les plans GND top+bottom)")
             _run([sys.executable, "-m", "kicad_tools.cli", "zones", "fill",
                   str(board)], timeout_s=120)
             print(f"   -> {_angle_stats(board)['filled_polygon']} polygones remplis\n")
         else:
-            print("④ zones fill SAUTÉ (kicad-cli absent — plans non remplis)\n")
+            print("③ zones fill SAUTÉ (kicad-cli absent — plans non remplis)\n")
 
         # ── Copie du board propre + rendu PNG ────────────────────────────
         final = out / "4_routed.kicad_pcb"
