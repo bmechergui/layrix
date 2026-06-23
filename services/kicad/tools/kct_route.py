@@ -20,7 +20,12 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_ROUTE_TIMEOUT_S: int = 60
+# Budget de routage par défaut. 300s = budget « 4 couches » (cf. guide
+# kicad-tools : ~90s simple / 300s 4 couches / 600s 8 couches) : route_kct
+# escalade jusqu'à 4 couches (--auto-layers) en visant 100% (--min-completion
+# 1.0), il faut donc laisser le temps à la tentative 4L de tourner. C'est un
+# PLAFOND, pas une attente fixe : kct route rend la main dès 100% atteint.
+_ROUTE_TIMEOUT_S: int = 300
 
 # Escalade de couches : --auto-layers active l'escalade automatique ; on NE fixe
 # PAS --max-layers (plafond) → le routeur utilise son défaut (4 couches, l'outil
