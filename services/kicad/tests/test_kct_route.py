@@ -70,7 +70,7 @@ def test_unrouted_line_is_not_mistaken_for_tally():
 
 
 # ===========================================================================
-# Politique routage Layrix : VCC en PISTES + plan GND sur les 2 faces
+# Politique routage Cirqix : VCC en PISTES + plan GND sur les 2 faces
 # ===========================================================================
 #
 # kct route classe +5V/+3.3V comme nets « power » par leur NOM → les coule en

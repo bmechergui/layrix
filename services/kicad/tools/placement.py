@@ -1,5 +1,5 @@
 """
-Layrix — Placement (tools/placement.py)
+Cirqix — Placement (tools/placement.py)
 
 100% commandes natives kicad-tools (aucun algo custom — règle CLAUDE.md) :
   1. place_components()  — positions explicites fournies par l'agent (pcbnew)
@@ -173,7 +173,7 @@ def _max_displacement_mm(
 
 def _refine_with_cmaes(pcb_path: Path, anchored: list[str], time_budget_s: float = 20.0) -> dict:
     """Micro-raffinement natif — équivalent ``kct optimize-placement --strategy
-    cmaes --seed-method current`` (CMAwM, patch Layrix ``seed="current"`` :
+    cmaes --seed-method current`` (CMAwM, patch Cirqix ``seed="current"`` :
     encode la position issue de l'hybrid+cluster comme moyenne initiale, donc
     le CMA-ES RAFFINE — décale/tourne les composants de quelques dixièmes de
     millimètre pour aligner les broches et résorber les chevauchements —

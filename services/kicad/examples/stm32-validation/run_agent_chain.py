@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Chaîne agents Layrix rejouée en local avec les FONCTIONS DE PROD, étape par étape.
+"""Chaîne agents Cirqix rejouée en local avec les FONCTIONS DE PROD, étape par étape.
 
 Reproduit : call_agent_gen_pcb → call_agent_placement → call_agent_routing
 → call_agent_reason (boucle placement-feedback), en sauvegardant le board de

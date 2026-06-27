@@ -66,7 +66,7 @@ le petit routeur A* du reasoner route net par net **sans négociation de conflit
 (contrairement au routeur principal). Le concept est prouvé, pas la qualité des pistes.
 
 Leçon : l'échec du routage était un **problème de placement**, pas de routeur —
-exactement le rôle de `call_agent_reason` dans le pipeline Layrix. En prod, le bon
+exactement le rôle de `call_agent_reason` dans le pipeline Cirqix. En prod, le bon
 enchaînement est : **reasoner déplace les composants → on relance `kct route`**
 (routeur négocié complet), pas « le reasoner route lui-même ». Le backend C++
 (`kct build-native`, Docker) accélère mais ne résout pas un couloir bloqué.

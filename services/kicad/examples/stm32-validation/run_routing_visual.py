@@ -185,7 +185,7 @@ def main() -> int:
     print(f"backend C++ : {'dispo' if native else 'absent (Python pur — partiel en local)'}\n")
 
     # ── ① ROUTE via la fonction de PRODUCTION route_kct() ────────────────
-    # route_kct applique la politique Layrix : +5V/+3.3V en PISTES (renommage
+    # route_kct applique la politique Cirqix : +5V/+3.3V en PISTES (renommage
     # interne) + plan GND garanti sur F.Cu ET B.Cu. Zéro duplication ici — ce
     # test valide directement le chemin prod (/route/auto Niveaux 1&4 + reasoner).
     print("① route_kct(vcc_as_traces=True) — fonction PROD")

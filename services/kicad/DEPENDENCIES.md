@@ -9,7 +9,7 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
 - **Version locale :** 3.12 (0.12.1 selon git commit)
 - **Chemin :** `services/kicad/circuit_synth/`
 - **Install Docker :** `pip3 install --no-cache-dir ./circuit_synth`
-- **Patches Layrix :**
+- **Patches Cirqix :**
   - `src/circuit_synth/kicad/sch_gen/circuit_loader.py` — fix pin_identifier vide
     → `_parse_circuit`: exclure `""` et `None` (pas seulement `"~"`) du test de nom de pin.
     Sans ce fix: Device:R et Device:C → pin_identifier="" → find_pin retourne toujours pin 1
@@ -26,7 +26,7 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
   « fix(router): 45-align length-tuning meander emitter »). Version pyproject
   affichée `0.13.0` (le tag publié v0.13.0 est d'avril — `main` est très en avance,
   surtout côté routeur, mais non re-taggé). Update du 2026-06-14 : ~718 fichiers
-  routeur récupérés depuis le snapshot de début juin ; 4 patches Layrix réappliqués
+  routeur récupérés depuis le snapshot de début juin ; 4 patches Cirqix réappliqués
   (cf. ci-dessous). Validé localement : 20/20 tests + smoke route 100% (compat API).
   Qualité de routage à valider en Docker (backend C++ requis, indispo en local).
 - **Chemin :** `services/kicad/kicad-tools/` (tiret ; le package Python reste `kicad_tools`).
@@ -39,7 +39,7 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
     (GA global, cluster-aware, fitness routabilité). API natives, zéro patch.
   - Routage   : `kct route --mfr jlcpcb --auto-layers --auto-fix --seed`
   - Voir `docs/guides/placement-optimization.md` + `docs/guides/routing.md`.
-- **Patches Layrix :**
+- **Patches Cirqix :**
   - `src/kicad_tools/cli/route_cmd.py` `_write_routed_pcb` — **fix fsync Windows (2026-06-02)**
     → `os.fsync` était appelé sur un handle ouvert en `"rb"` (read-only) → `OSError
     [Errno 9] Bad file descriptor` sur Windows → tout le build/route échoue.
@@ -67,7 +67,7 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
     Fix : helper `_resolve_net_node()` (state.py) — accepte `(net 1 "GND")`,
     `(net 1)` et `(net "GND")` avec résolution inverse nom→id ; appliqué aux
     parsers pad/segment/via/zone + comparaison défensive dans interpreter.py.
-    ⚠️ **Critique pour l'agent reasoner Layrix en prod** : Docker a kicad-cli →
+    ⚠️ **Critique pour l'agent reasoner Cirqix en prod** : Docker a kicad-cli →
     zone fill systématique ; passage de l'image à KiCad 9/10 = crash garanti
     du `/reason/auto` sur tout PCB avec zones, sans ce patch.
   - `src/kicad_tools/reasoning/interpreter.py` — **fix layer_count 4/6 couches (2026-06-09)**

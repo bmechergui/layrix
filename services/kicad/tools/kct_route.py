@@ -1,4 +1,4 @@
-"""Layrix — routeur officiel kct route, partagé routers/routing + reasoner.
+"""Cirqix — routeur officiel kct route, partagé routers/routing + reasoner.
 
 Extrait de routers/routing.py pour que la boucle placement-feedback du reasoner
 (tools/reasoning.py) puisse rerouter avec le VRAI routeur négocié entre deux
@@ -20,12 +20,15 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Budget de routage par défaut. 300s = budget « 4 couches » (cf. guide
+# Budget de routage par défaut. 600s = budget « 8 couches » (cf. guide
 # kicad-tools : ~90s simple / 300s 4 couches / 600s 8 couches) : route_kct
-# escalade jusqu'à 4 couches (--auto-layers) en visant 100% (--min-completion
-# 1.0), il faut donc laisser le temps à la tentative 4L de tourner. C'est un
-# PLAFOND, pas une attente fixe : kct route rend la main dès 100% atteint.
-_ROUTE_TIMEOUT_S: int = 300
+# escalade jusqu'à 6-8 couches (--auto-layers) en visant 100% (--min-completion
+# 1.0), il faut donc laisser le temps aux tentatives multicouches de tourner.
+# Mesuré sur STM32 LQFP-48 (3_final) : 60s→9%, 300s→36%, 600s→55% (converge
+# en 431s). C'est un PLAFOND, pas une attente fixe : kct route rend la main dès
+# 100% atteint. ⚠ Production : 600s = 10 min par appel route ; la boucle du
+# reasoner (≤3 appels) peut atteindre 30 min — à arbitrer vs coût cible 0,12€.
+_ROUTE_TIMEOUT_S: int = 600
 
 # Escalade de couches : --auto-layers active l'escalade automatique ; on NE fixe
 # PAS --max-layers (plafond) → le routeur utilise son défaut (4 couches, l'outil
@@ -38,7 +41,7 @@ _MIN_COMPLETION: str = "1.0"
 _SERVICE_ROOT = Path(__file__).resolve().parents[1]  # services/kicad
 _KCT_SRC = _SERVICE_ROOT / "kicad-tools" / "src"
 
-# Politique routage Layrix (vcc_as_traces) : kct route classe +5V/+3.3V comme
+# Politique routage Cirqix (vcc_as_traces) : kct route classe +5V/+3.3V comme
 # nets « power » par leur NOM (kicad_tools.router.net_class) → auto_pour les
 # coule en plan AVANT le routage et le routeur les EXCLUT du pathfinding. Aucun
 # flag CLI ne désactive ce comportement. On contourne en renommant +5V/+3.3V en
@@ -216,7 +219,7 @@ def route_kct(
 ) -> tuple[bytes, int, str]:
     """Route via the official ``kct route`` CLI (negotiated, auto-layers, auto-fix).
 
-    Delegates routing to kicad-tools. By default applies the Layrix routing
+    Delegates routing to kicad-tools. By default applies the Cirqix routing
     policy (``vcc_as_traces=True``): +5V/+3.3V routed as TRACES (not poured as
     planes) and a GND plane guaranteed on BOTH faces (F.Cu + B.Cu). Set
     ``vcc_as_traces=False`` for the historical behaviour (kct auto-pours every

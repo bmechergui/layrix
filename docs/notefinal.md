@@ -1,4 +1,4 @@
-# Layrix — Journal de Décisions
+# Cirqix — Journal de Décisions
 
 > Chaque décision prise ensemble est documentée ici : ce qu'on a décidé, pourquoi, et ce qu'on a écarté.
 > Mis à jour au fil des conversations.
@@ -78,7 +78,7 @@ Utilisateur (texte naturel)
        CMA-ES (Covariance Matrix Adaptation) : optimise positions X/Y/rotation.
        Nécessite bon starting point — fonctionne depuis le résultat place_unplaced.
 
-     Pipeline Layrix (ordre optimal) :
+     Pipeline Cirqix (ordre optimal) :
      Niveau 1 : kicad-tools
        a. place_unplaced(cluster=True)        ← grille déterministe cluster-by-net
           footprints déjà à (-1000,-1000) par call_agent_gen_pcb (pré-unplace)
@@ -207,7 +207,7 @@ ask_user({
 
 ### Engines — Moteurs de génération KiCad
 
-#### Layrix Schematic Generator — Architecture dual-mode (Phase 4+)
+#### Cirqix Schematic Generator — Architecture dual-mode (Phase 4+)
 
 ```
 Fichier TS  : packages/agents/src/engines/circuit-synth-engine.ts   (fallback si Docker absent)
@@ -226,7 +226,7 @@ pip install git+https://github.com/circuit-synth/circuit-synth.git
 
 Backend Docker ABSENT
         ↓
-schematic_gen.py (fallback custom Layrix)
+schematic_gen.py (fallback custom Cirqix)
 → S-expression Python/TS → .kicad_sch basique ✅
 ```
 
@@ -333,7 +333,7 @@ FREEROUTING_API_URL=http://127.0.0.1:37864       # défini dans Dockerfile
 
 **Bug corrigé 2026-05-31 :** `KICAD_FOOTPRINT_DIR` manquant → kicad-tools PCBFromSchematic ne chargeait pas les footprints → 0 composant placé dans le PCB. Fixé dans `main.py` (auto-detect) et `docker-compose.yml`.
 
-**Dépendances vendorées :** circuit_synth v0.12.1 et kicad_tools v0.13.0 utilisés avec patches Layrix — voir `CLAUDE.md` section "Dépendances vendorées" et `services/kicad/DEPENDENCIES.md`.
+**Dépendances vendorées :** circuit_synth v0.12.1 et kicad_tools v0.13.0 utilisés avec patches Cirqix — voir `CLAUDE.md` section "Dépendances vendorées" et `services/kicad/DEPENDENCIES.md`.
 
 #### Pipeline routing — 4 niveaux (mis à jour 2026-05-31)
 
@@ -454,7 +454,7 @@ L'agent analyse densité, signaux et contraintes (alimentation/masse séparées,
 `call_agent_export` → génère les Gerbers, BOM CSV et CPL pour JLCPCB, puis obtient un devis. Confirmation "OUI JE CONFIRME" obligatoire avant commande — jamais automatique.
 
 **Version avancée — CLI-Anything pour autres outils EDA :**
-[CLI-Anything (HKUDS)](https://github.com/HKUDS/CLI-Anything) transforme n'importe quel logiciel en CLI accessible aux agents IA. Non utilisé pour Layrix MVP car KiCad dispose déjà de `pcbnew` (API Python officielle) qui est plus direct. Potentiellement utile si on veut piloter d'autres outils EDA sans API Python (Altium, Eagle, OrCAD) dans une version future multi-EDA. KiCad GUI headless (lancer KiCad sans afficher l'interface) n'est pas nécessaire — pcbnew fait la même chose directement en code.
+[CLI-Anything (HKUDS)](https://github.com/HKUDS/CLI-Anything) transforme n'importe quel logiciel en CLI accessible aux agents IA. Non utilisé pour Cirqix MVP car KiCad dispose déjà de `pcbnew` (API Python officielle) qui est plus direct. Potentiellement utile si on veut piloter d'autres outils EDA sans API Python (Altium, Eagle, OrCAD) dans une version future multi-EDA. KiCad GUI headless (lancer KiCad sans afficher l'interface) n'est pas nécessaire — pcbnew fait la même chose directement en code.
 
 **Version avancée — Circuit-Synth TS autonome :**
 À terme, on pourrait utiliser uniquement la solution TypeScript `circuit-synth-engine.ts`, en s'inspirant du code open source Python `circuit_synth` pour enrichir le générateur S-expressions TS. Cela éliminerait la dépendance FastAPI pour la génération de base et simplifierait le déploiement. La bibliothèque Python resterait uniquement pour pcbnew (placement réel, DRC, export Gerbers) — pas pour la génération de fichiers KiCad.
@@ -558,7 +558,7 @@ SKiDL produit un fichier `.net` (format KiCad XML ou SPICE). Circuit-Synth atten
 
 **Raison technique :** TSCircuit génère du `circuit-json` (format JSON custom de tscircuit.io), pas du `.kicad_sch` / `.kicad_pcb` natif. Il faudrait un convertisseur `circuit-json → KiCad` — non officiel, perd des informations (symboles, annotations, design rules KiCad). Circuit-Synth produit directement des S-expressions KiCad 7 — format natif, lisible par KiCad et KiCanvas sans conversion.
 
-**Raison projet :** TSCircuit déprécié depuis la v0.3.0 de Layrix. Dépendances supprimées : `circuit-json`, `circuit-json-to-gerber`, export `tscircuit-engine`.
+**Raison projet :** TSCircuit déprécié depuis la v0.3.0 de Cirqix. Dépendances supprimées : `circuit-json`, `circuit-json-to-gerber`, export `tscircuit-engine`.
 
 ---
 
@@ -598,7 +598,7 @@ SKiDL produit un fichier `.net` (format KiCad XML ou SPICE). Circuit-Synth atten
 
 **Décision :** Implémenter la simulation SPICE complète via le pipeline : `call_agent_simulation` → `POST /simulate/auto` (base64 .kicad_sch) → kicad-cli SPICE export → ngspice batch → parsing tabular output → vecteurs `SimulationData` → `SimulationView` Recharts.
 
-**Pourquoi :** La simulation SPICE valide électriquement le circuit AVANT la fabrication — c'est une étape critique qui différencie Layrix des outils qui génèrent juste du PCB sans vérification fonctionnelle. ngspice est disponible dans le Docker KiCad existant.
+**Pourquoi :** La simulation SPICE valide électriquement le circuit AVANT la fabrication — c'est une étape critique qui différencie Cirqix des outils qui génèrent juste du PCB sans vérification fonctionnelle. ngspice est disponible dans le Docker KiCad existant.
 
 **Fallback :** Quand ngspice ou kicad-cli est indisponible (dev local), des waveformes synthétiques RC/AC réalistes sont retournées pour que le pipeline reste fonctionnel et que l'UI reste testable.
 
@@ -750,20 +750,20 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 → Pour un PCB de 100 composants → ~5000 paires → CPU commence à ralentir (quelques secondes).
 → **Mode GPU** : `kicad-tools` envoie ces calculs de forces sur la carte graphique (NVIDIA CUDA ou Apple Metal) qui les fait tous en parallèle → 10-50× plus rapide sur grands PCBs.
 → `pip install kicad-tools[cuda]` (NVIDIA) ou `kicad-tools[metal]` (Mac Apple Silicon).
-→ **Pour Layrix** : nos PCBs = 5-30 composants en moyenne → CPU suffit largement. GPU = optimisation future si on supporte des PCBs >100 composants.
+→ **Pour Cirqix** : nos PCBs = 5-30 composants en moyenne → CPU suffit largement. GPU = optimisation future si on supporte des PCBs >100 composants.
 
 
 → 
  — MIT, PyPI `kicad-tools` v0.13.0, Python 3.10+, actif (push 2026-05-29)
 → Tagline : *"Tools for AI agents to work with KiCad projects"* — conçu exactement pour notre cas d'usage.
 → **Force-directed board-aware** : repulsion edge-to-edge sur outlines, borné au board, `slide_off`, poids configurables.
-→ Contrat parfait : `.kicad_pcb` en entrée → `.kicad_pcb` en sortie — identique au flux `/place/auto` de Layrix.
+→ Contrat parfait : `.kicad_pcb` en entrée → `.kicad_pcb` en sortie — identique au flux `/place/auto` de Cirqix.
 → **Sans KiCad ni kicad-cli** pour le placement/routage — pur Python (numpy). Seuls DRC/Gerber utilisent kicad-cli (déjà présent).
 → **Multi-utilisateurs natif** : aucun état global, aucun daemon — 1 process/job, parallélisable comme BullMQ (10 PCBs simultanés).
 → Accélération GPU optionnelle (CUDA/Metal) — CPU pur suffit pour démarrer.
 → Couvre aussi : routeur natif C++, DRC avec règles fabricant JLCPCB intégrées, analyse congestion/thermique/SI, serveur MCP.
 → **Risque** : Beta, 1 mainteneur, 30 ⭐ → vendorer + pinner la version comme circuit_synth.
-→ **Prochaine étape décidée** : spike isolé — tester `kct optimize-placement` sur un `.kicad_pcb` Layrix réel avant intégration.
+→ **Prochaine étape décidée** : spike isolé — tester `kct optimize-placement` sur un `.kicad_pcb` Cirqix réel avant intégration.
 
 **Algorithme placement — `PlacementOptimizer` (physique simulée)**
 → **Modèle physique** : chaque composant = charge électrique, chaque net = ressort (spring)
@@ -794,7 +794,7 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 → **Principe** : chaque net = force attractive entre les composants connectés ; chaque paire de composants = force répulsive ; itérations jusqu'à convergence.
 → **Avantages** :
   - Zéro dépendance externe — pur Python (numpy), même env Docker actuel
-  - Contrôle total : paramètres Layrix-specific (bypass caps restent à <2mm des ICs, connecteurs ancrés aux bords)
+  - Contrôle total : paramètres Cirqix-specific (bypass caps restent à <2mm des ICs, connecteurs ancrés aux bords)
   - Pas de vendoring à maintenir
   - Peut être GPU-accéléré (numpy → cupy) si besoin plus tard
 → **Entrée** : `refs: list[str]`, `connections: list[{name, pins}]`, `board_w_mm`, `board_h_mm`
@@ -810,7 +810,7 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 → Contrat identique au flux actuel : `.kicad_pcb` en entrée → `.kicad_pcb` routé en sortie
 → **Avantage vs Freerouting** : pas de dépendance Java/openjdk-17, démarrage instantané (pas de JVM warmup), même parallélisation multi-users
 → **Risque** : qualité du routage C++ vs Freerouting (30 ans d'algorithme industriel) — à valider sur circuits réels avec % routé + DRC clean
-→ **Statut** : non testé sur Layrix — à inclure dans le spike `kicad-tools`
+→ **Statut** : non testé sur Cirqix — à inclure dans le spike `kicad-tools`
 
 **Fichiers concernés :**
 - `packages/agents/src/tools.ts` — `call_agent_placement` + `call_agent_routing`
@@ -1077,7 +1077,7 @@ patches CMA-ES « au cas où » — dette inutile, lib remise pure upstream.
 **Note clé (routage) :** le plafond 33%/75% en local n'est PAS le placement —
 c'est le **backend C++ non compilé** (pas de g++/cl en local). Prouvé : le board
 benchmark *facile* du dépôt (`charlieplex`, 100% attendu) tombe à 75% en Python
-pur. Le dépôt route à 100% car il compile le C++ (`kct build-native`). Layrix le
+pur. Le dépôt route à 100% car il compile le C++ (`kct build-native`). Cirqix le
 compile en Docker (Dockerfile) → validation routage = Docker, pas local.
 
 **Fichiers concernés :** `services/kicad/tools/placement.py` +
@@ -1177,7 +1177,7 @@ RED confirmé (ImportError) avant l'implémentation, GREEN après (8/8 tests).
 ### 2026-06-18 (suite) — Phase 3 « Géomètre » CMA-ES + filet de sécurité revert
 
 **Contexte :** demande utilisateur d'ajouter une étape CMA-ES finale, en référence
-à `docs/layrix-full-resume.md` (« Le Mathématicien — décale les puces d'un
+à `docs/cirqix-full-resume.md` (« Le Mathématicien — décale les puces d'un
 demi-millimètre… élimine 100% des chevauchements »). Avant cette session, le
 CMA-ES avait déjà été essayé (Phase 2, 2026-06-15/16) puis retiré au profit de
 l'EVO natif seul (`c462178`, `095d564`).
@@ -1218,7 +1218,7 @@ sans le bruit du tirage aléatoire du GA entre deux runs.
   17.47→13.34mm (-4.13), C1-U1 8.37→4.51mm (-3.86), C2-U1 10.09→6.87mm
   (-3.22). 2 légèrement dégradées : C13-U2 +1.13mm, C3-U1 +1.36mm.
 
-**Vérité sur la citation `layrix-full-resume.md` :** « élimine 100% des
+**Vérité sur la citation `cirqix-full-resume.md` :** « élimine 100% des
 chevauchements » n'est PAS littéralement vrai pour le CMA-ES seul (il en
 introduit, mesuré ci-dessus) — c'est le **pipeline complet avec filet de
 sécurité** qui garantit 0 ERROR livré, pas le CMA-ES isolément. « Aligne

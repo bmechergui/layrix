@@ -1,23 +1,23 @@
-# ⬡ Layrix.ai — Résumé complet startup
+# ⬡ Cirqix.ai — Résumé complet startup
 
 ---
 
 ## IDENTITÉ
 
-- Nom : Layrix.ai
+- Nom : Cirqix.ai
 - Prononciation : "Lay-rix"
 - Signification : Layer (couche PCB) + -ix (tech)
-- Domaine : layrix.ai — Cloudflare ~33$/an
+- Domaine : cirqix.ai — Cloudflare ~33$/an
 - Tagline : "Every layer, perfectly designed by AI"
 - Positionnement : La puissance d'Altium sans payer 3000€/an
 
 ---
 
-## LAYRIX EST UN AGENT — PAS UN CHATBOT
+## CIRQIX EST UN AGENT — PAS UN CHATBOT
 
 Un chatbot répond à des questions. Un agent agit dans le monde réel.
 
-Layrix est un agent IA autonome qui reçoit un objectif ("crée ce PCB") et exécute toutes les étapes nécessaires jusqu'au résultat final sans intervention humaine — il planifie, appelle des outils, observe les résultats, corrige les erreurs, et boucle jusqu'à obtenir un PCB DRC-clean prêt à fabriquer. Il peut même commander la fabrication directement chez JLCPCB sans quitter le chat.
+Cirqix est un agent IA autonome qui reçoit un objectif ("crée ce PCB") et exécute toutes les étapes nécessaires jusqu'au résultat final sans intervention humaine — il planifie, appelle des outils, observe les résultats, corrige les erreurs, et boucle jusqu'à obtenir un PCB DRC-clean prêt à fabriquer. Il peut même commander la fabrication directement chez JLCPCB sans quitter le chat.
 
 Boucle agentique complète :
 Percevoir → Planifier → Agir → Observer → Corriger → Recommencer
@@ -90,7 +90,7 @@ Résultat : fichiers KiCad natifs + Gerbers RS-274X + JLCPCB-ready ✅
 
 ---
 
-## FOOTPRINT INTROUVABLE — LAYRIX GÉNÈRE AUTOMATIQUEMENT
+## FOOTPRINT INTROUVABLE — CIRQIX GÉNÈRE AUTOMATIQUEMENT
 
 Cascade de recherche de l'agent Footprint (8 étapes) :
 
@@ -105,7 +105,7 @@ Cascade de recherche de l'agent Footprint (8 étapes) :
 
 Génération footprint = 3 crédits (plan Maker+)
 
-### Dashboard Footprint Library (app.layrix.ai/footprints)
+### Dashboard Footprint Library (app.cirqix.ai/footprints)
 
 Chaque utilisateur a sa propre librairie privée de footprints :
 
@@ -196,7 +196,7 @@ L'agent répond en JSON strict avec : part_number, manufacturer, description, pr
 - Module Python embarqué dans KiCad
 - Opérations : charger/sauvegarder .kicad_pcb, placer composants au micron, créer traces/vias, définir zones cuivre, lancer DRC, exporter Gerbers
 - Chaque worker Python = instance pcbnew isolée par utilisateur
-- Microservice : Python + FastAPI sur kicad.layrix.ai
+- Microservice : Python + FastAPI sur kicad.cirqix.ai
 
 ---
 
@@ -253,7 +253,7 @@ Sécurité : jamais de commande automatique sans confirmation. Carte de paiement
 
 Roadmap fabricants : JLCPCB (Phase 1) → PCBWay (Phase 2) → Eurocircuits (Phase 3) → OSHPark (Phase 4)
 
-Commission Layrix : 5–10% par commande → +1 000–2 000€/mois dès mois 12.
+Commission Cirqix : 5–10% par commande → +1 000–2 000€/mois dès mois 12.
 
 ---
 
@@ -292,11 +292,11 @@ Commission Layrix : 5–10% par commande → +1 000–2 000€/mois dès mois 12
 
 ### TSCircuit (open source)
 - "React for Electronics", Skill Claude Code officiel
-- Framework open source — Layrix l'utilise comme moteur interne
+- Framework open source — Cirqix l'utilise comme moteur interne
 
 ### Tableau comparatif :
 
-|                    | Flux  | Quilter | DeepPCB | KiCad MCP | Layrix |
+|                    | Flux  | Quilter | DeepPCB | KiCad MCP | Cirqix |
 |--------------------|-------|---------|---------|-----------|--------|
 | Langage naturel    |  ✅   |   ❌    |   ❌    |    ✅     |   ✅   |
 | 100% cloud         |  ✅   |   ✅    |   ✅    |    ❌     |   ✅   |
@@ -308,15 +308,15 @@ Commission Layrix : 5–10% par commande → +1 000–2 000€/mois dès mois 12
 | Simulation SPICE   |  ❌   |   ❌    |   ❌    |    ❌     |   ✅   |
 | Financement        | 37M$  |    ?    |    ?    |    0$     |   0$   |
 
-Layrix est le seul outil qui couvre le cycle complet de l'idée au PCB dans ta boîte aux lettres, avec génération automatique des footprints manquants.
+Cirqix est le seul outil qui couvre le cycle complet de l'idée au PCB dans ta boîte aux lettres, avec génération automatique des footprints manquants.
 
 ---
 
-## POURQUOI LAYRIX EST UNE IDÉE PORTEUSE
+## POURQUOI CIRQIX EST UNE IDÉE PORTEUSE
 
 ### 6 signaux convergents :
 
-1. Validation marché : Flux.ai a levé 37M$ en 2026 sur exactement ce segment. Les VCs valident que le marché est réel. Flux cible les entreprises. Layrix cible les makers — segment 10× plus large en volume.
+1. Validation marché : Flux.ai a levé 37M$ en 2026 sur exactement ce segment. Les VCs valident que le marché est réel. Flux cible les entreprises. Cirqix cible les makers — segment 10× plus large en volume.
 
 2. Marché en forte croissance : marché PCB mondial à 85.4B$ en 2025 → 117.5B$ en 2035. Le segment cloud/SaaS EDA croît 3× plus vite que le marché global.
 
@@ -369,11 +369,11 @@ Pourquoi  Next.js pour le dashboard :
 - Phase 3 : API REST publique JWT + webhooks + SDK Node.js/Python (Enterprise)
 
 Endpoints futurs :
-- POST api.layrix.ai/v1/pcb/generate
-- POST api.layrix.ai/v1/drc/check
-- POST api.layrix.ai/v1/simulate
-- POST api.layrix.ai/v1/footprint
-- GET  api.layrix.ai/v1/components/search
+- POST api.cirqix.ai/v1/pcb/generate
+- POST api.cirqix.ai/v1/drc/check
+- POST api.cirqix.ai/v1/simulate
+- POST api.cirqix.ai/v1/footprint
+- GET  api.cirqix.ai/v1/components/search
 
 ---
 
@@ -453,12 +453,12 @@ Version complète : 10 semaines
 
 ## VISION
 
-Layrix n'est pas un chatbot PCB — c'est un agent IA autonome qui conçoit, route, valide, génère les footprints manquants, exporte et commande la fabrication de PCBs complets sans quitter le chat.
+Cirqix n'est pas un chatbot PCB — c'est un agent IA autonome qui conçoit, route, valide, génère les footprints manquants, exporte et commande la fabrication de PCBs complets sans quitter le chat.
 
-Aucun composant ne bloque l'agent — si le footprint n'existe pas, Layrix le crée.
+Aucun composant ne bloque l'agent — si le footprint n'existe pas, Cirqix le crée.
 
 Flux a levé 37M$ pour les entreprises.
-Layrix prend le marché des makers et startups — 2 millions de personnes qui ne peuvent pas payer Altium à 3000€/an.
+Cirqix prend le marché des makers et startups — 2 millions de personnes qui ne peuvent pas payer Altium à 3000€/an.
 
 35 millions d'ingénieurs dans le monde.
 25€/mois. Zéro installation. Langage naturel. Commande JLCPCB intégrée.
@@ -479,13 +479,13 @@ Si ton MVP est ultra-simple (un seul type d’agent tool-heavy, pas de complexit
 Si tu veux sortir un prototype en 1-2 semaines.
 Si tu es 100 % sûr de rester sur Claude pour toujours.
 
-Pour un vrai SaaS Layrix avec plusieurs templates, utilisateurs payants, et agents "deep" → LangGraph (hybride avec Claude SDK) est le choix le plus durable.
+Pour un vrai SaaS Cirqix avec plusieurs templates, utilisateurs payants, et agents "deep" → LangGraph (hybride avec Claude SDK) est le choix le plus durable.
 
 
 pour protypage on utulise claude SDK
 
 
-Important pour ton RL (Layrix)
+Important pour ton RL (Cirqix)
 
 Oui, c’est crucial :
 
@@ -494,7 +494,7 @@ Oui, c’est crucial :
 
 
 Oui tu peux utiliser FreeRouting + RL
-✔ C’est même la meilleure stratégie pour Layrix aujourd’hui
+✔ C’est même la meilleure stratégie pour Cirqix aujourd’hui
 ✔ RL seul = trop difficile
 ✔ FreeRouting seul = pas intelligent
 ✔ ensemble = solution réaliste startup
@@ -522,7 +522,7 @@ Puis :
 
 ✔ très stable
 ✔ facile à entraîner
-✔ bon pour MVP Layrix
+✔ bon pour MVP Cirqix
 
 Option 2 — FreeRouting → RL
 FreeRouting fait un routage initial
@@ -542,7 +542,7 @@ RL apprend à améliorer FreeRouting
 
 👉 c’est le plus puissant mais aussi le plus complexe
 
-3. Pourquoi c’est très puissant pour Layrix
+3. Pourquoi c’est très puissant pour Cirqix
 
 FreeRouting te donne :
 
@@ -625,7 +625,7 @@ C'est la fonctionnalité la plus innovante de kicad-tools. Au lieu d'utiliser de
 
 ## Note — KiBot (export pipeline)
 
-En combinant un agent IA avec KiBot, on obtient un combo puissant : l'IA génère la config YAML pour JLCPCB (panelisation, Gerbers, BOM), et KiBot exécute les binaires KiCad en tâche de fond sans manipuler l'API Python. KiBot gère les rapports DRC, l'export Gerbers, le drill, la BOM LCSC et le CPL — exactement ce dont Layrix a besoin pour automatiser le pipeline fabrication de A à Z.
+En combinant un agent IA avec KiBot, on obtient un combo puissant : l'IA génère la config YAML pour JLCPCB (panelisation, Gerbers, BOM), et KiBot exécute les binaires KiCad en tâche de fond sans manipuler l'API Python. KiBot gère les rapports DRC, l'export Gerbers, le drill, la BOM LCSC et le CPL — exactement ce dont Cirqix a besoin pour automatiser le pipeline fabrication de A à Z.
 
 -------------------------
 Placement
@@ -719,7 +719,7 @@ Voici pourquoi c'est l'ordre magique :
 
 Étape 2 : Le "CMA-ES" (Le Géomètre) C'est ici qu'intervient le CMA-ES. Attention, c'est crucial : vous devez rajouter l'option --seed-method current à votre commande CMA-ES. Pourquoi ? Parce que --seed-method current dit au CMA-ES : "Surtout, ne mélange pas la carte ! Prends le placement tel que l'Architecte Hybride vient de le laisser, et utilise tes mathématiques pour tasser les composants parfaitement au millimètre près, sans aucun chevauchement, en réduisant la longueur des pistes au maximum."
 
-En résumé, le flux de travail (Workflow) parfait sur Layrix c'est :
+En résumé, le flux de travail (Workflow) parfait sur Cirqix c'est :
 
 L'Architecte intelligent (hybrid --cluster) place les quartiers de la ville.
 L'Optimiseur mathématique (cmaes) range parfaitement les maisons à l'intérieur des
@@ -741,7 +741,7 @@ Si vous deviez construire l'usine de création de PCB la plus avancée du monde,
 PARTIE 1 : LE PLACEMENT (Construire la ville)
 1. La Stratégie Macro ➔ L'Architecte (Modèle RL) L'IA d'Apprentissage par Renforcement (RL) lit le schéma. Grâce à son intuition acquise en observant des milliers de cartes humaines, elle dépose les blocs principaux (Processeur au centre, Alimentation en haut, Connecteurs sur les bords). Elle comprend les flux de données.
 
-2. Le Regroupement Logique ➔ La Physique (Algorithme Hybride) Le RL n'est pas parfait sur les petits détails. L'algorithme Hybride prend le relais. Il active les "Super Ressorts" de Layrix. Tous les condensateurs de découplage qui s'étaient un peu éloignés sont "aspirés" vers leurs puces respectives par la physique. Les clusters sont maintenant parfaits et respectent l'électronique.
+2. Le Regroupement Logique ➔ La Physique (Algorithme Hybride) Le RL n'est pas parfait sur les petits détails. L'algorithme Hybride prend le relais. Il active les "Super Ressorts" de Cirqix. Tous les condensateurs de découplage qui s'étaient un peu éloignés sont "aspirés" vers leurs puces respectives par la physique. Les clusters sont maintenant parfaits et respectent l'électronique.
 
 3. Le Micro-Raffinement ➔ Le Mathématicien (CMA-ES) On lance le CMA-ES en mode seed="current". Il prend la carte, calcule sa matrice géante, et commence à "vibrer". Il décale les puces d'un demi-millimètre, les tourne de quelques degrés, aligne parfaitement les broches et élimine 100% des chevauchements. [FIN DU PLACEMENT : La carte est géométriquement parfaite]
 
@@ -762,7 +762,7 @@ C'est le projet ultime ! Puisque kicad-tools (kct) possède déjà toute la logi
 
 Pour faire cela en Python, la norme industrielle est d'utiliser deux bibliothèques : Gymnasium (l'ancien OpenAI Gym, pour créer le "Simulateur") et Stable Baselines3 (pour l'algorithme RL, souvent "PPO").
 
-Voici le plan de bataille exact pour coder cela en utilisant le code source de Layrix :
+Voici le plan de bataille exact pour coder cela en utilisant le code source de Cirqix :
 
 1. Le Simulateur RL pour le PLACEMENT
 L'objectif est d'entraîner l'IA à poser les puces pour minimiser la longueur des fils.
@@ -784,7 +784,7 @@ m
 −1mm en X ou Y.
 Le Coeur (La fonction step()) :
 L'IA choisit une action (déplacer la puce U1).
-Vous importez le calculateur natif de Layrix : from kicad_tools.optim.evolutionary import EvolutionaryPlacementOptimizer.
+Vous importez le calculateur natif de Cirqix : from kicad_tools.optim.evolutionary import EvolutionaryPlacementOptimizer.
 Vous appelez sa méthode _evaluate_fitness(). Cette méthode calcule déjà toute la physique de KiCad (les croisements de fils, les ressorts des clusters, les chevauchements).
 La Récompense (Reward) : Si le score de _evaluate_fitness() s'améliore, vous donnez Reward = +10. S'il se dégrade, Reward = -5.
 L'IA PPO (Proximal Policy Optimization) va jouer à ce jeu des millions de fois jusqu'à comprendre la logique !
@@ -801,8 +801,27 @@ La Récompense (Reward) :
 Si l'IA avance sur une case vide : Reward = -1 (pour l'obliger à faire le chemin le plus court).
 Si l'IA percute un mur ou une autre piste : Reward = -100 et "Game Over" (on recommence l'épisode).
 Si l'IA touche la pastille cible : Reward = +1000 et "Victoire !".
-Une fois que l'IA a gagné la partie dans le simulateur, vous utilisez la commande native RouteNetCommand de Layrix pour que le fil soit officiellement dessiné sur le vrai fichier .kicad_pcb.
+Une fois que l'IA a gagné la partie dans le simulateur, vous utilisez la commande native RouteNetCommand de Cirqix pour que le fil soit officiellement dessiné sur le vrai fichier .kicad_pcb.
 Pourquoi c'est très réaliste à coder ?
-Normalement, le plus dur en RL, c'est de coder le moteur physique (détecter si deux puces se touchent, ou si un fil en coupe un autre). Mais vous n'avez pas à le faire ! Les modules evolutionary.py (pour les collisions) et interpreter.py (pour les grilles de routage) de Layrix font déjà tout le calcul lourd.
+Normalement, le plus dur en RL, c'est de coder le moteur physique (détecter si deux puces se touchent, ou si un fil en coupe un autre). Mais vous n'avez pas à le faire ! Les modules evolutionary.py (pour les collisions) et interpreter.py (pour les grilles de routage) de Cirqix font déjà tout le calcul lourd.
 
-Votre seul travail serait d'écrire le "Gym Environment" (le script Python de 150 lignes qui relie les bibliothèques RL à ces fichiers Layrix) !
+Votre seul travail serait d'écrire le "Gym Environment" (le script Python de 150 lignes qui relie les bibliothèques RL à ces fichiers Cirqix) !
+
+
+Recommandations pour ton flux Cirqix
+
+Utilise PPO comme base (comme indiqué dans ta description). C’est le choix « state-of-the-art » actuel avec SB3.
+Pour améliorer :
+Représentation d’état : Graph Neural Networks (GNN) sur le netlist (très important pour généralisation).
+Reward shaping : combinaison wirelength + congestion + routability proxy + éventuels metrics PPA.
+Curriculum learning : commencer par petits netlists → plus gros.
+Multi-agent ou hiérarchique si placement + routage sont trop couplés.
+
+Teste aussi A2C ou SAC (pour actions continues) si PPO ne converge pas bien.
+
+Conseils pratiques
+
+Features d’état : GNN sur le netlist/hypergraphe est crucial (comme dans les papiers Google sur chip placement).
+Reward : Multi-objectif (wirelength, congestion, timing proxy, PPA). Utilise du reward shaping + curriculum (petits → gros designs).
+Hyperparams : Utilise les configs RL Zoo de SB3 pour un bon départ.
+Évaluation : Toujours valider avec des metrics réels de placement/routage (pas seulement la reward RL)

@@ -1,5 +1,5 @@
 """
-Layrix — Reasoning LLM (sauvetage de routage agentique)
+Cirqix — Reasoning LLM (sauvetage de routage agentique)
 
 Quand le routeur classique (`kct route`) laisse des nets bloqués, on confie la
 carte au reasoner LLM officiel de kicad-tools (`PCBReasoningAgent`) piloté par
